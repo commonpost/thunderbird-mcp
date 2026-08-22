@@ -5586,6 +5586,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             folderPath: { type: "string", description: "Optional folder URI (from listFolders) to list only that folder and its subfolders" },
             format: { type: "string", enum: ["objects", "table"], description: "Response format: 'objects' (default, existing array of folder objects) or 'table' ({ columns, rows } compact form)" },
             favoritesOnly: { type: "boolean", description: "If true, return only folders the user has marked as favorites in Thunderbird (default: false). Useful for finding the folders that matter without listing hundreds." },
+            savedSearches: { type: "boolean", description: "If true, return only saved searches (virtual folders) with their folders and conditions" },
           },
           required: [],
         },
@@ -6169,6 +6170,16 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           properties: {
             parentFolderPath: { type: "string", description: "URI of the parent folder (from listFolders)" },
             name: { type: "string", description: "Name for the new subfolder" },
+            savedSearch: {
+              type: "object",
+              description: "Create a saved search (live view, nothing moved) instead of a subfolder",
+              properties: {
+                searchFolderPaths: { type: "array", items: { type: "string" }, description: "Folder URIs to search" },
+                conditions: { type: "array", items: { type: "object" }, description: "As createFilter conditions" },
+                searchOnline: { type: "boolean", description: "Search on the server (IMAP only)" },
+              },
+              required: ["searchFolderPaths", "conditions"],
+            },
           },
           required: ["parentFolderPath", "name"],
         },
@@ -6191,7 +6202,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "deleteFolder",
         group: "folders", crud: "delete",
         title: "Delete Folder",
-        description: "Delete a mail folder and all its contents. Moves to Trash, or permanently deletes if already in Trash. Note: permanent deletion may prompt the user for confirmation. On IMAP accounts, server-side completion is asynchronous; verify with listFolders.",
+        description: "Delete a mail folder and all its contents; a saved search is only a view (no mail deleted). Moves to Trash, or permanently deletes if already in Trash. Note: permanent deletion may prompt the user for confirmation. On IMAP accounts, server-side completion is asynchronous; verify with listFolders.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7067,7 +7078,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * Lists all folders (optionally limited to a single account).
              * Depth is 0 for root children, increasing for subfolders.
              */
-            function listFolders(accountId, folderPath, format, favoritesOnly) {
+            function listFolders(accountId, folderPath, format, favoritesOnly, savedSearches) {
               const results = [];
               const outputFormat = format == null ? "objects" : format;
               const folderKeys = ["name", "path", "type", "accountId", "totalMessages", "unreadMessages", "depth"];
@@ -7075,6 +7086,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               if (outputFormat !== "objects" && outputFormat !== "table") {
                 return { error: `Invalid format: "${outputFormat}". Must be one of: objects, table` };
               }
+
+              if (savedSearches === true) return listVirtualFolders(accountId);
 
               function formatFolderResults() {
                 // Favorites are filtered after the walk so that a favorited
@@ -13664,7 +13677,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // filesystems/protocols; the check errs toward rejecting them).
             const FOLDER_TEXT_NOTE = "it is not a printable, unambiguous folder name";
 
-            function createFolder(parentFolderPath, name) {
+            function createFolder(parentFolderPath, name, savedSearch) {
               try {
                 if (typeof parentFolderPath !== "string" || !parentFolderPath) {
                   return { error: "parentFolderPath must be a non-empty string" };
@@ -13680,6 +13693,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   assertFilterText("Folder name", name, FILTER_NAME_MAX_LENGTH, FOLDER_TEXT_NOTE);
                 } catch (e) {
                   return { error: e.message };
+                }
+
+                if (savedSearch !== undefined && savedSearch !== null) {
+                  return createVirtualFolder(name, parentFolderPath, savedSearch.searchFolderPaths, savedSearch.conditions, savedSearch.searchOnline);
                 }
 
                 const parentResult = getAccessibleFolder(parentFolderPath);
@@ -13716,6 +13733,209 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 return { error: msg };
               }
             }
+
+            // BEGIN VIRTUAL FOLDER (SAVED SEARCH) HELPERS
+            function getVirtualFolderHelper() {
+              return ChromeUtils.importESModule(
+                "resource:///modules/VirtualFolderWrapper.sys.mjs"
+              ).VirtualFolderHelper;
+            }
+
+            /**
+             * Build nsIMsgSearchTerm objects outside of a filter. Filters mint
+             * terms via filter.createTerm(); a saved search has no filter, so we
+             * borrow a throwaway search session as the term factory. Same strict
+             * ATTRIB_MAP/OP_MAP allow-lists as buildTerms -- raw enum values must
+             * not be reachable from MCP input.
+             */
+            function buildSearchTerms(conditions) {
+              const session = Cc["@mozilla.org/messenger/searchSession;1"]
+                .createInstance(Ci.nsIMsgSearchSession);
+              const terms = [];
+              for (const cond of conditions) {
+                if (!Object.prototype.hasOwnProperty.call(ATTRIB_MAP, cond.attrib)) {
+                  throw new Error(`Unknown attribute: ${cond.attrib}`);
+                }
+                if (!Object.prototype.hasOwnProperty.call(OP_MAP, cond.op)) {
+                  throw new Error(`Unknown operator: ${cond.op}`);
+                }
+                const term = session.createTerm();
+                term.attrib = ATTRIB_MAP[cond.attrib];
+                term.op = OP_MAP[cond.op];
+
+                // nsIMsgSearchValue is a tagged union: only the member matching
+                // the attribute's type may be written. Assigning .str to a
+                // numeric/status attribute throws NS_ERROR_ILLEGAL_VALUE, so
+                // dispatch on the attribute rather than assuming everything is
+                // a string.
+                const value = term.value;
+                value.attrib = term.attrib;
+                const raw = cond.value == null ? "" : String(cond.value);
+                const num = parseInt(raw, 10);
+                switch (term.attrib) {
+                  case 13: // hasAttachment -- matched via the message flag
+                    value.status = Ci.nsMsgMessageFlags.Attachment;
+                    break;
+                  case 5:  // status
+                  case 14: // junkStatus
+                    value.status = Number.isNaN(num) ? 0 : num;
+                    break;
+                  case 4: // priority
+                    value.priority = Number.isNaN(num) ? 0 : num;
+                    break;
+                  case 10: // ageInDays
+                    value.age = Number.isNaN(num) ? 0 : num;
+                    break;
+                  case 11: // size
+                    value.size = Number.isNaN(num) ? 0 : num;
+                    break;
+                  case 15: // junkPercent
+                    value.junkPercent = Number.isNaN(num) ? 0 : num;
+                    break;
+                  case 3: { // date -- nsIMsgSearchValue.date is PRTime (microseconds)
+                    const parsed = Date.parse(raw);
+                    if (Number.isNaN(parsed)) throw new Error(`Invalid date value: ${raw}`);
+                    value.date = parsed * 1000;
+                    break;
+                  }
+                  default:
+                    value.str = raw;
+                }
+                term.value = value;
+
+                term.booleanAnd = cond.booleanAnd !== false;
+                if (cond.header) term.arbitraryHeader = cond.header;
+                terms.push(term);
+              }
+              return terms;
+            }
+
+            function createVirtualFolder(name, parentFolderPath, searchFolderPaths, conditions, searchOnline) {
+              try {
+                if (typeof name !== "string" || !name) {
+                  return { error: "name must be a non-empty string" };
+                }
+                if (typeof parentFolderPath !== "string" || !parentFolderPath) {
+                  return { error: "parentFolderPath must be a non-empty string" };
+                }
+                if (!Array.isArray(searchFolderPaths) || searchFolderPaths.length === 0) {
+                  return { error: "searchFolderPaths must be a non-empty array of folder URIs" };
+                }
+                if (!Array.isArray(conditions) || conditions.length === 0) {
+                  return { error: "conditions must be a non-empty array" };
+                }
+
+                const parentResult = getAccessibleFolder(parentFolderPath);
+                if (parentResult.error) return parentResult;
+
+                // Every searched folder goes through the same access check as the
+                // parent -- otherwise a saved search would be a way to read mail
+                // from an account the user excluded in settings.
+                const searchFolders = [];
+                for (const p of searchFolderPaths) {
+                  const r = getAccessibleFolder(p);
+                  if (r.error) return { error: `searchFolderPaths: ${p}: ${r.error}` };
+                  searchFolders.push(r.folder);
+                }
+
+                const terms = buildSearchTerms(conditions);
+                const wrapper = getVirtualFolderHelper().createNewVirtualFolder(
+                  name,
+                  parentResult.folder,
+                  searchFolders,
+                  terms,
+                  searchOnline === true
+                );
+
+                let newPath = null;
+                try {
+                  if (wrapper && wrapper.virtualFolder) newPath = wrapper.virtualFolder.URI;
+                } catch { /* wrapper shape varies across versions */ }
+
+                return {
+                  success: true,
+                  message: `Saved search "${name}" created`,
+                  path: newPath,
+                  searchFolders: searchFolders.map((f) => f.URI),
+                };
+              } catch (e) {
+                const msg = e.toString();
+                if (msg.includes("NS_MSG_FOLDER_EXISTS")) {
+                  return { error: `A folder named "${name}" already exists under this parent` };
+                }
+                return { error: msg };
+              }
+            }
+
+            function listVirtualFolders(accountId) {
+              try {
+                const helper = getVirtualFolderHelper();
+                const out = [];
+                for (const folder of MailServices.accounts.allFolders) {
+                  if (!(folder.flags & Ci.nsMsgFolderFlags.Virtual)) continue;
+                  if (getAccessibleFolder(folder.URI).error) continue;
+                  const serverKey = folder.server ? folder.server.key : null;
+                  if (accountId && serverKey !== accountId) continue;
+
+                  let searchFolders = [];
+                  let terms = [];
+                  let onlineSearch = false;
+                  try {
+                    const w = helper.wrapVirtualFolder(folder);
+                    searchFolders = (w.searchFolders || []).map((f) => f.URI);
+                    onlineSearch = !!w.onlineSearch;
+                    terms = (w.searchTerms || []).map((t) => ({
+                      attrib: ATTRIB_NAMES[t.attrib] ?? t.attrib,
+                      op: OP_NAMES[t.op] ?? t.op,
+                      value: t.value ? t.value.str : "",
+                      booleanAnd: t.booleanAnd,
+                    }));
+                  } catch { /* unreadable wrapper -- still report the folder */ }
+
+                  out.push({
+                    name: folder.prettyName || folder.name,
+                    path: folder.URI,
+                    accountId: serverKey,
+                    searchFolders,
+                    onlineSearch,
+                    terms,
+                  });
+                }
+                return out;
+              } catch (e) {
+                return { error: e.toString() };
+              }
+            }
+
+            function deleteVirtualFolder(folderPath) {
+              try {
+                if (typeof folderPath !== "string" || !folderPath) {
+                  return { error: "folderPath must be a non-empty string" };
+                }
+                const r = getAccessibleFolder(folderPath);
+                if (r.error) return r;
+                const folder = r.folder;
+
+                // Guard: deleting a real folder here would destroy mail, whereas
+                // deleting a saved search only removes a view.
+                if (!(folder.flags & Ci.nsMsgFolderFlags.Virtual)) {
+                  return { error: "Not a saved search (virtual folder). Use deleteFolder for real folders." };
+                }
+                const parent = folder.parent;
+                if (!parent) return { error: "Saved search has no parent folder" };
+
+                const label = folder.prettyName || folder.name;
+                try {
+                  parent.propagateDelete(folder, true);
+                } catch {
+                  parent.propagateDelete(folder, true, null);
+                }
+                return { success: true, message: `Saved search "${label}" deleted (no message was deleted)` };
+              } catch (e) {
+                return { error: e.toString() };
+              }
+            }
+            // END VIRTUAL FOLDER (SAVED SEARCH) HELPERS
 
             function renameFolder(folderPath, newName) {
               try {
@@ -13761,6 +13981,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (!parent) {
                   return { error: "Cannot delete a root folder" };
                 }
+
+                // A saved search is a view: remove only the view, never
+                // through Trash.
+                if (folder.flags & Ci.nsMsgFolderFlags.Virtual) return deleteVirtualFolder(folderPath);
 
                 // Check if folder is already in Trash — if so, permanently delete
                 if (isTrashOrDescendant(folder)) {
@@ -15096,7 +15320,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "listAccounts":
                   return listAccounts();
                 case "listFolders":
-                  return listFolders(args.accountId, args.folderPath, args.format, args.favoritesOnly);
+                  return listFolders(args.accountId, args.folderPath, args.format, args.favoritesOnly, args.savedSearches);
                 case "searchMessages":
                   return await searchMessages({ ...args, query: args.query || "" });
                 case "getMessage":
@@ -15152,7 +15376,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "updateMessage":
                   return updateMessage(args.messageId, args.messageIds, args.folderPath, args.read, args.flagged, args.addTags, args.removeTags, args.moveTo, args.trash);
                 case "createFolder":
-                  return createFolder(args.parentFolderPath, args.name);
+                  return createFolder(args.parentFolderPath, args.name, args.savedSearch);
                 case "renameFolder":
                   return renameFolder(args.folderPath, args.newName);
                 case "deleteFolder":

@@ -144,7 +144,7 @@ describe("api.js source contract", () => {
   it("threads favoritesOnly from the tool call into listFolders", () => {
     assert.match(
       source,
-      /return listFolders\(args\.accountId,\s*args\.folderPath,\s*args\.format,\s*args\.favoritesOnly\)/,
+      /return listFolders\(args\.accountId,\s*args\.folderPath,\s*args\.format,\s*args\.favoritesOnly,\s*args\.savedSearches\)/,
       "the listFolders tool handler does not pass args.favoritesOnly through"
     );
   });
