@@ -42,6 +42,10 @@
           "favoritesOnly": {
             "type": "boolean",
             "description": "If true, return only folders the user has marked as favorites in Thunderbird (default: false). Useful for finding the folders that matter without listing hundreds."
+          },
+          "savedSearches": {
+            "type": "boolean",
+            "description": "If true, return only saved searches (virtual folders) with their folders and conditions"
           }
         },
         "required": []
@@ -1775,6 +1779,34 @@
           "name": {
             "type": "string",
             "description": "Name for the new subfolder"
+          },
+          "savedSearch": {
+            "type": "object",
+            "description": "Create a saved search (live view, nothing moved) instead of a subfolder",
+            "properties": {
+              "searchFolderPaths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Folder URIs to search"
+              },
+              "conditions": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                },
+                "description": "As createFilter conditions"
+              },
+              "searchOnline": {
+                "type": "boolean",
+                "description": "Search on the server (IMAP only)"
+              }
+            },
+            "required": [
+              "searchFolderPaths",
+              "conditions"
+            ]
           }
         },
         "required": [
@@ -1820,7 +1852,7 @@
     {
       "name": "deleteFolder",
       "title": "Delete Folder",
-      "description": "Delete a mail folder and all its contents. Moves to Trash, or permanently deletes if already in Trash. Note: permanent deletion may prompt the user for confirmation. On IMAP accounts, server-side completion is asynchronous; verify with listFolders.",
+      "description": "Delete a mail folder and all its contents; a saved search is only a view (no mail deleted). Moves to Trash, or permanently deletes if already in Trash. Note: permanent deletion may prompt the user for confirmation. On IMAP accounts, server-side completion is asynchronous; verify with listFolders.",
       "inputSchema": {
         "type": "object",
         "properties": {

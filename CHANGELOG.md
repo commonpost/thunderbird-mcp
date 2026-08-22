@@ -13,6 +13,9 @@ project is kept in this repository.
   It uses the notifications of the system; on a Linux desktop without a notification service nothing is shown.
 - The options page (section Bridge) shows "Newer version available" for a bridge that works but is not the one
   published with the add-on, and names that version.
+- Saved searches (virtual folders), through `createFolder` (`savedSearch`), `listFolders` (`savedSearches`) and
+  `deleteFolder` (a saved search is deleted as a view, never as mail). By Sven Scharmentke (@svnscha), from
+  TKasperczyk/thunderbird-mcp#198.
 
 ### Changed
 
