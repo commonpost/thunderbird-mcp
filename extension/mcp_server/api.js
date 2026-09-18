@@ -781,9 +781,12 @@ const _claimedComposeWindows = new WeakSet();
 // BEGIN INLINE ATTACHMENT BASE64 HELPERS
 // Require canonical RFC 4648 base64: complete quartets with padding only in
 // the final quartet. In particular, do not silently discard invalid bytes.
-const STRICT_BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+// Avoid a repeated capture/group for every quartet: large valid attachments
+// can exhaust the JavaScript regexp engine stack. Length enforces quartets.
+// The final lookahead requires the absolute end, unlike $ before a newline.
+const STRICT_BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}(?![\s\S])/;
 function isValidBase64(value) {
-  return typeof value === "string" && value.length > 0 && STRICT_BASE64_PATTERN.test(value);
+  return typeof value === "string" && value.length > 0 && value.length % 4 === 0 && STRICT_BASE64_PATTERN.test(value);
 }
 // END INLINE ATTACHMENT BASE64 HELPERS
 // BEGIN OUTBOUND ATTACHMENT LIMITS
@@ -2740,12 +2743,14 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                   } else if (entry && typeof entry === "object" && (entry.base64 || entry.content) && entry.name) {
                     // Inline base64 attachment — decode and write to temp file
                     const b64Data = entry.base64 || entry.content;
-                    if (!isValidBase64(b64Data)) {
-                      failed.push(`${entry.name} (invalid base64 data)`);
+                    // Size first: never run the Base64 pattern over an
+                    // oversized payload (cheap length check before the regexp).
+                    if (typeof b64Data === "string" && b64Data.length > MAX_BASE64_SIZE) {
+                      failed.push(`${entry.name} (exceeds ${MAX_BASE64_SIZE / 1024 / 1024}MB size limit)`);
                       continue;
                     }
-                    if (b64Data.length > MAX_BASE64_SIZE) {
-                      failed.push(`${entry.name} (exceeds ${MAX_BASE64_SIZE / 1024 / 1024}MB size limit)`);
+                    if (!isValidBase64(b64Data)) {
+                      failed.push(`${entry.name} (invalid base64 data)`);
                       continue;
                     }
                     // Decode base64 to binary bytes
@@ -8168,8 +8173,14 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 if (schema.minLength !== undefined && value.length < schema.minLength) {
                   errors.push(`Parameter '${path}' must contain at least ${schema.minLength} character(s)`);
                 }
-                if (schema.contentEncoding === "base64" && !isValidBase64(value)) {
-                  errors.push(`Parameter '${path}' must contain valid base64 data`);
+                if (schema.contentEncoding === "base64") {
+                  // Size first: the Base64 pattern never runs over an
+                  // oversized payload, and the error says what is wrong.
+                  if (value.length > MAX_BASE64_SIZE) {
+                    errors.push(`Parameter '${path}' exceeds the ${MAX_BASE64_SIZE / 1024 / 1024} MB inline attachment limit (${value.length} base64 characters)`);
+                  } else if (!isValidBase64(value)) {
+                    errors.push(`Parameter '${path}' must contain valid base64 data`);
+                  }
                 }
               }
 

@@ -49,7 +49,7 @@ function loadProductionAttachmentValidation(overrides = {}) {
     'this.buildTools = buildTools;',
     'this.validateAgainstSchema = validateAgainstSchema;',
     'this.filePathsToAttachDescs = filePathsToAttachDescs;',
-    'this.attachmentLimits = { MAX_TOTAL_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE };',
+    'this.attachmentLimits = { MAX_TOTAL_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, MAX_BASE64_SIZE };',
   ].join('\n'), sandbox);
   return sandbox;
 }
@@ -1447,3 +1447,62 @@ describe('isSensitiveFilePath: case insensitivity and slash normalization', () =
     assert.equal(isSensitiveFilePath('C:\\Users\\x\\.ssh\\id_rsa'), true);
   });
 });
+
+describe('large inline attachment Base64 validation', () => {
+  it('accepts a 12 MiB file without exhausting the regexp stack', () => {
+    const encoded = Buffer.alloc(12 * 1024 * 1024, 0x61).toString('base64');
+    assert.equal(productionAttachmentValidation.isValidBase64(encoded), true);
+  });
+
+  it('retains strict quartet, alphabet and final-padding checks', () => {
+    for (const value of ['Zg==', 'Zm8=', 'Zm9v', 'AAAA']) {
+      assert.equal(productionAttachmentValidation.isValidBase64(value), true);
+    }
+    for (const value of ['', 'A', 'AA', 'AAA', 'A===', 'AA=A', 'AAAA=', 'AA==AAAA', 'AAAA\n', 'AAA\n', 'AAA\r', 'AAA\u2028', 'AAA\u2029', 'data:;base64,AAAA', '____', null]) {
+      assert.equal(productionAttachmentValidation.isValidBase64(value), false);
+    }
+  });
+});
+
+describe('Base64 size limit is checked before the pattern', () => {
+  const { MAX_BASE64_SIZE } = productionAttachmentValidation.attachmentLimits;
+
+  it('exposes the 25 MB limit to the tests', () => {
+    assert.equal(MAX_BASE64_SIZE, 25 * 1024 * 1024);
+  });
+
+  it('schema validator reports an oversized payload as too large, not as invalid Base64', () => {
+    const tool = productionAttachmentValidation.buildTools().find(t => t.name === 'saveDraft');
+    const itemSchema = tool.inputSchema.properties.attachments.items.oneOf
+      .find(b => b.type === 'object');
+    const errors = [];
+    // Not valid Base64 at all: if the pattern ran first, the message would say "valid base64".
+    const oversized = '!'.repeat(MAX_BASE64_SIZE + 4);
+    productionAttachmentValidation.validateAgainstSchema(oversized, itemSchema.properties.base64, 'attachments[0].base64', errors);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /exceeds the 25 MB inline attachment limit/);
+    assert.doesNotMatch(errors[0], /valid base64/);
+  });
+
+  it('schema validator still rejects malformed Base64 under the limit', () => {
+    const tool = productionAttachmentValidation.buildTools().find(t => t.name === 'saveDraft');
+    const itemSchema = tool.inputSchema.properties.attachments.items.oneOf
+      .find(b => b.type === 'object');
+    const errors = [];
+    productionAttachmentValidation.validateAgainstSchema('AAA\n', itemSchema.properties.base64, 'attachments[0].base64', errors);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /must contain valid base64 data/);
+  });
+
+  it('runtime attachment conversion checks MAX_BASE64_SIZE before isValidBase64', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../extension/mcp_server/api.js'), 'utf8');
+    const at = src.indexOf('const b64Data = entry.base64 || entry.content;');
+    assert.ok(at > 0, 'inline attachment conversion not found');
+    const block = src.slice(at, at + 1200);
+    const sizeIdx = block.indexOf('b64Data.length > MAX_BASE64_SIZE');
+    const patternIdx = block.indexOf('isValidBase64(b64Data)');
+    assert.ok(sizeIdx > 0 && patternIdx > 0, 'checks not found');
+    assert.ok(sizeIdx < patternIdx, 'size check must come before the Base64 pattern');
+  });
+});
+
