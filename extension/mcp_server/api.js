@@ -84,6 +84,62 @@ function ensureFreshConnectionInfo({
 }
 // END CONNECTION INFO REFRESH HELPERS
 
+// BEGIN SERVER START STATE HELPERS
+// Start bookkeeping (#179). The start body is fully synchronous, so a reset of
+// __tbMcpStartPromise inside its catch block ran BEFORE start() stored the
+// promise: a failed start then left a truthy promise behind, getServerInfo
+// reported "running", and every later start() returned the cached failure until
+// Thunderbird was restarted. These helpers own the sentinel instead:
+//   - a failed start drops the cached promise so a retry can bind again;
+//   - the failure is remembered in __tbMcpStartError ({ message, at }) and
+//     cleared by the next successful start;
+//   - "running" is derived from the real server object, not the promise.
+function describeStartError(e) {
+  if (e === null || e === undefined) return "Unknown error";
+  if (typeof e === "string") return e;
+  try { return String(e && e.toString ? e.toString() : e); } catch { return "Unknown error"; }
+}
+
+async function runGuardedStart(state, startBody) {
+  // Concurrent callers share one attempt (extension reload, onStartup + init()).
+  if (state.__tbMcpStartPromise) {
+    return await state.__tbMcpStartPromise;
+  }
+  const attempt = (async () => {
+    try {
+      return await startBody();
+    } catch (e) {
+      return { success: false, error: describeStartError(e) };
+    }
+  })();
+  // Stored before the body's result is examined; the body cannot clear it.
+  state.__tbMcpStartPromise = attempt;
+  const result = await attempt;
+  if (result && result.success) {
+    state.__tbMcpStartError = null;
+  } else {
+    state.__tbMcpStartError = {
+      message: describeStartError(result && result.error),
+      at: new Date().toISOString(),
+    };
+    if (state.__tbMcpStartPromise === attempt) {
+      state.__tbMcpStartPromise = null;
+    }
+  }
+  return result;
+}
+
+function computeServerRunState(state) {
+  const running = !!state.__tbMcpServer;
+  const err = running ? null : (state.__tbMcpStartError || null);
+  return {
+    running,
+    startError: err ? err.message : null,
+    startErrorAt: err ? err.at : null,
+  };
+}
+// END SERVER START STATE HELPERS
+
 // BEGIN CONTACT FIELD HELPERS
 // BEGIN CONTACT FIELD CONSTANTS
 const CONTACT_PHONE_TYPES = ["work", "home", "mobile", "fax", "pager"];
@@ -1979,11 +2035,9 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
     return {
       mcpServer: {
         start: async function() {
-          // Guard against double-start on extension reload (port conflict)
-          if (globalThis.__tbMcpStartPromise) {
-            return await globalThis.__tbMcpStartPromise;
-          }
-          const startPromise = (async () => {
+          // runGuardedStart owns the double-start guard (extension reload,
+          // port conflict), the cached promise and the remembered error (#179).
+          return await runGuardedStart(globalThis, async () => {
           try {
             // Stop any previously running server (e.g. extension reload)
             if (globalThis.__tbMcpServer) {
@@ -8570,15 +8624,29 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
               globalThis.__tbMcpServer = null;
             }
             stopConnectionInfoRefreshTimer();
-            // Clear cached promise so a retry can attempt to bind again
-            globalThis.__tbMcpStartPromise = null;
+            // The cached promise is dropped by runGuardedStart (clearing it
+            // here ran before it was stored, which is the #179 bug).
             removeConnectionInfo();
-            return { success: false, error: e.toString() };
+            return { success: false, error: describeStartError(e) };
           }
-          })();
-          // Set sentinel BEFORE awaiting to prevent race with concurrent start() calls
-          globalThis.__tbMcpStartPromise = startPromise;
-          return await startPromise;
+          });
+        },
+
+        retryStart: async function() {
+          // Options-page "Retry" (#179): start again after a failed start
+          // without restarting Thunderbird. No-op while the server runs.
+          if (globalThis.__tbMcpStartPromise) {
+            const pending = await globalThis.__tbMcpStartPromise;
+            if (pending && pending.success && globalThis.__tbMcpServer) {
+              return pending;
+            }
+          }
+          if (globalThis.__tbMcpServer) {
+            return { success: true, alreadyRunning: true };
+          }
+          globalThis.__tbMcpStartPromise = null;
+          stopConnectionInfoRefreshTimer();
+          return await this.start();
         },
 
         getServerInfo: async function() {
@@ -8623,12 +8691,17 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             }
           }
 
+          // "running" reflects the bound HTTP server, not the (possibly failed)
+          // start promise; a failed start is reported with its error (#179).
+          const runState = computeServerRunState(globalThis);
           return {
-            running: !!globalThis.__tbMcpStartPromise,
+            running: runState.running,
             port,
             connectionFile,
             buildVersion,
             buildDate,
+            startError: runState.startError,
+            startErrorAt: runState.startErrorAt,
           };
         },
 
@@ -8911,6 +8984,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
     stopConnectionInfoRefreshTimer();
     // Clear the start promise so a fresh start can occur on reload
     globalThis.__tbMcpStartPromise = null;
+    globalThis.__tbMcpStartError = null;
 
     // Always clean up the connection info file so stale tokens don't linger
     // (Inlined because getAPI() helpers are not in scope in onShutdown().)

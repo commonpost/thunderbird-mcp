@@ -8,6 +8,10 @@ const statusText = document.getElementById("statusText");
 const serverPort = document.getElementById("serverPort");
 const connFile = document.getElementById("connFile");
 const buildInfo = document.getElementById("buildInfo");
+const startErrorRow = document.getElementById("startErrorRow");
+const startErrorText = document.getElementById("startErrorText");
+const retryStartBtn = document.getElementById("retryStartBtn");
+const retryStartStatus = document.getElementById("retryStartStatus");
 const accountList = document.getElementById("accountList");
 const saveBtn = document.getElementById("saveBtn");
 const saveStatus = document.getElementById("saveStatus");
@@ -63,11 +67,27 @@ async function loadServerInfo() {
       statusText.textContent = "Running";
       serverPort.textContent = info.port || "--";
       connFile.textContent = info.connectionFile || "--";
+    } else if (info.startError) {
+      // A failed start used to be shown as "Running" (#179): show the error.
+      statusDot.className = "status-dot stopped";
+      statusText.textContent = "Start failed";
+      serverPort.textContent = "--";
+      connFile.textContent = "--";
     } else {
       statusDot.className = "status-dot stopped";
       statusText.textContent = "Not running";
       serverPort.textContent = "--";
       connFile.textContent = "--";
+    }
+    if (!info.running) {
+      // Offered whenever the server is not bound (failed or never started).
+      startErrorText.textContent = info.startError
+        ? info.startError + (info.startErrorAt ? " (" + info.startErrorAt.replace("T", " ").replace(/\.\d+Z$/, " UTC") + ")" : "")
+        : "Server is not running.";
+      startErrorRow.hidden = false;
+    } else {
+      startErrorRow.hidden = true;
+      startErrorText.textContent = "";
     }
     if (info.buildVersion) {
       // Parse git describe: "v0.2.0-7-g1461f1a+dirty" → tag, commits, hash, dirty
@@ -564,3 +584,26 @@ saveListenAllBtn.addEventListener("click", async () => {
 });
 
 loadListenAllPref();
+
+// --- Retry a failed start (#179) ---
+retryStartBtn.addEventListener("click", async () => {
+  retryStartBtn.disabled = true;
+  retryStartStatus.textContent = "Starting...";
+  retryStartStatus.className = "save-status";
+  try {
+    const result = await browser.mcpServer.retryStart();
+    if (result && result.success) {
+      retryStartStatus.textContent = result.alreadyRunning ? "Already running." : "Started.";
+    } else {
+      retryStartStatus.textContent = "Failed: " + ((result && result.error) || "unknown error");
+      retryStartStatus.className = "save-status error";
+    }
+  } catch (e) {
+    retryStartStatus.textContent = "Error: " + e.message;
+    retryStartStatus.className = "save-status error";
+  }
+  retryStartBtn.disabled = false;
+  await loadServerInfo();
+  // The session token and connection file change on a successful start.
+  loadAuthenticationConfig().catch(e => console.error("thunderbird-mcp options:", "loadAuthenticationConfig failed:", e));
+});

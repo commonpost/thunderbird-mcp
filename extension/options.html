@@ -38,6 +38,8 @@
       display: inline-block;
     }
     .status-dot.running { background: #30e60b; }
+    .start-error { margin: 6px 0 10px; color: #d70022; }
+    .start-error .info-value { color: #d70022; white-space: pre-wrap; word-break: break-word; }
     .status-dot.stopped { background: #ff0039; }
     .info-label {
       color: #5b5b66;
@@ -191,6 +193,14 @@
   <div class="status-row">
     <span id="statusDot" class="status-dot stopped"></span>
     <span id="statusText">Checking...</span>
+  </div>
+  <div id="startErrorRow" class="start-error" hidden>
+    <span class="info-label">Start error:</span>
+    <span id="startErrorText" class="info-value"></span>
+    <div class="save-row">
+      <button id="retryStartBtn">Retry start</button>
+      <span id="retryStartStatus" class="save-status"></span>
+    </div>
   </div>
   <div>
     <span class="info-label">Port:</span>

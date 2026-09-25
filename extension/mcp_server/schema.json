@@ -11,10 +11,17 @@
         "parameters": []
       },
       {
+        "name": "retryStart",
+        "type": "function",
+        "async": true,
+        "description": "Start the MCP HTTP server again after a failed start, without restarting Thunderbird. Does nothing when the server is already running.",
+        "parameters": []
+      },
+      {
         "name": "getServerInfo",
         "type": "function",
         "async": true,
-        "description": "Get current server status, port, and connection file path",
+        "description": "Get current server status (running is true only when the HTTP server is bound), port, connection file path and the last start error, if any",
         "parameters": []
       },
       {
