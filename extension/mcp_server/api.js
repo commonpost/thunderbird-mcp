@@ -1050,6 +1050,7 @@ const PREF_BLOCK_SKIPREVIEW = "extensions.thunderbird-mcp.blockSkipReview";
 const PREF_STABLE_AUTH_TOKEN = "extensions.thunderbird-mcp.stableAuthToken";
 const PREF_GET_MESSAGES_LIMIT = "extensions.thunderbird-mcp.getMessagesLimit";
 const PREF_LISTEN_ALL = "extensions.thunderbird-mcp.listenAll";
+const PREF_BLOCK_FILTER_FORWARD_REPLY = "extensions.thunderbird-mcp.blockFilterForwardReply";
 const AUTH_TOKEN_PATTERN = /^[0-9a-f]{64}$/;
 // Valid group and CRUD values for tool metadata validation
 const VALID_GROUPS = ["messages", "folders", "contacts", "calendar", "filters", "system"];
@@ -1559,7 +1560,7 @@ function copyRuleAction(filter, action) {
 
 // Build the actions requested through MCP. `resolveFolder(uri)` returns
 // { folder } or { error } for an accessible folder.
-function buildRuleActions(filter, actions, resolveFolder) {
+function buildRuleActions(filter, actions, resolveFolder, { allowSendActions = false } = {}) {
   if (!FILTER_ACTIONS_AVAILABLE) {
     throw new Error("Cannot build filter actions -- this Thunderbird did not expose nsMsgFilterAction");
   }
@@ -1577,6 +1578,11 @@ function buildRuleActions(filter, actions, resolveFolder) {
     const spec = ACTION_SPECS[ACTION_MAP[act.type]];
     if (FILTER_ACTION_CUSTOM !== undefined && spec.value === FILTER_ACTION_CUSTOM) {
       throw new Error("Custom (add-on) filter actions cannot be created through MCP");
+    }
+    // Guard on the RESOLVED type (fail closed: only an explicit
+    // allowSendActions === true lets Forward/Reply through).
+    if (isSendingActionType(spec.value) && allowSendActions !== true) {
+      throw new Error(`Filter action "${act.type}" sends mail automatically; ${FILTER_SEND_GUARD_NOTE}`);
     }
     const hasValue = act.value !== undefined && act.value !== null && act.value !== "";
     if (!spec.member) {
@@ -1681,13 +1687,25 @@ function serializeFilterRule(filter, index) {
 // is not replaced is COPIED typed, and any copy failure throws before the
 // filter list is touched. Returns { changes, replacement } -- replacement is
 // null when only name/enabled/type change (applied in place by the caller).
-function planFilterUpdate(filterList, filter, update, resolveFolder) {
+function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSendActions = false } = {}) {
   const changes = [];
   if (update.name !== undefined) changes.push("name");
   if (update.enabled !== undefined) changes.push("enabled");
   if (update.type !== undefined) changes.push("type");
   const replaceConditions = Array.isArray(update.conditions) && update.conditions.length > 0;
   const replaceActions = Array.isArray(update.actions) && update.actions.length > 0;
+  if (allowSendActions !== true && !replaceActions) {
+    // A rule that sends mail (or runs an add-on action) keeps its actions
+    // here: it may not be renamed, (re)enabled, retargeted or marked for
+    // outgoing mail through MCP while the guard is on.
+    const kinds = filterSendingActionKinds(filter);
+    if (kinds.length) {
+      const newType = update.type !== undefined ? update.type : filter.filterType;
+      const outgoing = (newType & FILTER_TYPE_POST_OUTGOING) !== 0;
+      throw new Error(`Filter "${filter.filterName}" sends mail or runs add-on actions (${kinds.join(", ")}); `
+        + `it cannot be modified${outgoing ? " or marked for outgoing mail" : ""} through MCP -- ${FILTER_SEND_GUARD_NOTE}`);
+    }
+  }
   if (!replaceConditions && !replaceActions) {
     return { changes, replacement: null };
   }
@@ -1718,7 +1736,7 @@ function planFilterUpdate(filterList, filter, update, resolveFolder) {
   }
 
   if (replaceActions) {
-    buildRuleActions(replacement, update.actions, resolveFolder);
+    buildRuleActions(replacement, update.actions, resolveFolder, { allowSendActions });
     changes.push("actions");
   } else {
     const count = filter.actionCount;
@@ -1734,6 +1752,79 @@ function planFilterUpdate(filterList, filter, update, resolveFolder) {
     }
   }
   return { changes, replacement };
+}
+
+// ── "No sending rule without review" guard ──
+//
+// Preference extensions.thunderbird-mcp.blockFilterForwardReply (default
+// true). A filter that forwards or replies sends mail automatically, without
+// the review window the compose tools keep: a prompt-injected client could use
+// one to exfiltrate every incoming message. While the guard is on:
+//   - no Forward or Reply action can be created or added (buildRuleActions);
+//   - a filter list that already holds a rule sending mail (Forward/Reply) or
+//     running an add-on action (Custom, effect unknown) cannot be changed or
+//     run through MCP (create/update/reorder/apply), except deleting those
+//     rules; changing what surrounds such a rule changes what it sends.
+//   - in particular a sending rule can never be (re)enabled, retargeted or
+//     marked for outgoing mail (nsMsgFilterType.PostOutgoing) through MCP.
+// The check uses the action types resolved from Ci.nsMsgFilterAction.
+const FILTER_SEND_ACTION_TYPES = ["Forward", "Reply"]
+  .map((idl) => resolveXpcomConstant("nsMsgFilterAction", idl))
+  .filter((v) => v !== undefined);
+const FILTER_TYPE_POST_OUTGOING = resolveXpcomConstant("nsMsgFilterType", "PostOutgoing") ?? 0x40;
+const FILTER_SEND_GUARD_NOTE =
+  'blocked by the "Block filter forward/reply" setting (extensions.thunderbird-mcp.blockFilterForwardReply, on by default); '
+  + "review and change such rules in Thunderbird's filter editor";
+
+function isSendingActionType(type) {
+  return FILTER_SEND_ACTION_TYPES.includes(type);
+}
+
+// Kinds of the actions in `filter` that send mail or run add-on code. A rule
+// whose actions cannot be read is reported as "unreadable" (fail closed).
+function filterSendingActionKinds(filter) {
+  const kinds = [];
+  const count = filter.actionCount;
+  for (let a = 0; a < count; a++) {
+    let type;
+    try {
+      type = filter.getActionAt(a).type;
+    } catch (e) {
+      kinds.push(`unreadable (${describeError(e)})`);
+      continue;
+    }
+    if (isSendingActionType(type)) kinds.push(ACTION_SPECS[type] ? ACTION_SPECS[type].action : String(type));
+    else if (FILTER_ACTION_CUSTOM !== undefined && type === FILTER_ACTION_CUSTOM) kinds.push("custom");
+  }
+  return kinds;
+}
+
+function listSendingRules(filterList) {
+  const rules = [];
+  const count = filterList.filterCount;
+  for (let i = 0; i < count; i++) {
+    const filter = filterList.getFilterAt(i);
+    const kinds = filterSendingActionKinds(filter);
+    if (kinds.length) rules.push({ index: i, name: filter.filterName, enabled: filter.enabled, actions: kinds });
+  }
+  return rules;
+}
+
+function describeSendingRules(rules) {
+  return rules.map((r) => `#${r.index} "${r.name}" (${r.actions.join(", ")}${r.enabled ? "" : ", disabled"})`).join("; ");
+}
+
+// Throws when the guard forbids `operation` on this filter list.
+// operation: "create" | "update" | "reorder" | "apply" | "delete";
+// for "delete", `targetIndex` is the rule being deleted.
+function assertFilterListGuard(filterList, operation, targetIndex) {
+  const rules = listSendingRules(filterList);
+  if (rules.length === 0) return;
+  if (operation === "delete" && rules.some((r) => r.index === targetIndex)) return;
+  const verb = operation === "apply" ? "run" : "change";
+  throw new Error(`This account's filter list holds rules that send mail or run add-on actions: ${describeSendingRules(rules)}. `
+    + `MCP cannot ${verb} this filter list (${operation}) -- ${FILTER_SEND_GUARD_NOTE}`
+    + (operation === "delete" ? "; deleting one of those rules is allowed" : ""));
 }
 // END FILTER RULE HELPERS
 
@@ -2471,7 +2562,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
         name: "createFilter",
         group: "filters", crud: "create",
         title: "Create Filter",
-        description: "Create a new mail filter rule on an account",
+        description: "Create a new mail filter rule on an account. Rules that forward or reply (send mail) are refused while the \"Block filter forward/reply\" setting is on (default), and so is any change to a filter list that already holds such a rule.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2513,7 +2604,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
         name: "updateFilter",
         group: "filters", crud: "update",
         title: "Update Filter",
-        description: "Modify an existing filter's properties, conditions, or actions",
+        description: "Modify an existing filter's properties, conditions, or actions. Forward/reply actions are refused while the \"Block filter forward/reply\" setting is on (default), and so is any change to a filter list that already holds a rule sending mail.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2584,7 +2675,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
         name: "applyFilters",
         group: "filters", crud: "update",
         title: "Apply Filters",
-        description: "Manually run all enabled filters on a folder to organize existing messages",
+        description: "Manually run all enabled filters on a folder to organize existing messages. Refused while the \"Block filter forward/reply\" setting is on (default) if the account's filter list holds a rule that forwards, replies or runs an add-on action.",
         inputSchema: {
           type: "object",
           properties: {
@@ -3013,6 +3104,20 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
               } catch {
                 // Fail closed: if we can't read the pref, assume blocked so the
                 // user retains ability to review before send.
+                return true;
+              }
+            }
+
+            /**
+             * "Block filter forward/reply": true by
+             * default; see the guard in FILTER RULE HELPERS.
+             */
+            function isFilterForwardReplyBlocked() {
+              try {
+                return Services.prefs.getBoolPref(PREF_BLOCK_FILTER_FORWARD_REPLY, true);
+              } catch (e) {
+                // Fail closed: an unreadable pref keeps the guard on.
+                console.warn("thunderbird-mcp: blockFilterForwardReply unreadable, guard stays on:", e);
                 return true;
               }
             }
@@ -8301,7 +8406,15 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             }
 
             function buildActions(filter, actions) {
-              buildRuleActions(filter, actions, resolveFilterTargetFolder);
+              buildRuleActions(filter, actions, resolveFilterTargetFolder,
+                { allowSendActions: !isFilterForwardReplyBlocked() });
+            }
+
+            // Throws when the forward/reply guard forbids this operation.
+            function guardFilterList(filterList, operation, targetIndex) {
+              if (isFilterForwardReplyBlocked()) {
+                assertFilterListGuard(filterList, operation, targetIndex);
+              }
             }
 
             // ── Filter tool handlers ──
@@ -8388,6 +8501,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 const fl = getFilterListForAccount(accountId);
                 if (fl.error) return fl;
                 const { filterList } = fl;
+                guardFilterList(filterList, "create");
 
                 const filter = filterList.createFilter(name);
                 filter.enabled = enabled !== false;
@@ -8443,11 +8557,15 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                   return { error: "type must be a positive integer filter type bitmask" };
                 }
 
+                // Forward/reply guard: covers (re)enabling, retargeting or
+                // marking for outgoing mail (PostOutgoing) a sending rule.
+                guardFilterList(filterList, "update");
                 const filter = filterList.getFilterAt(filterIndex);
                 // Build (and fully validate) the replacement before touching
                 // the filter or the list: a failure leaves both unchanged.
                 const { changes, replacement } = planFilterUpdate(
-                  filterList, filter, { name, enabled, type, conditions, actions }, resolveFilterTargetFolder);
+                  filterList, filter, { name, enabled, type, conditions, actions }, resolveFilterTargetFolder,
+                  { allowSendActions: !isFilterForwardReplyBlocked() });
 
                 if (replacement) {
                   filterList.removeFilterAt(filterIndex);
@@ -8483,6 +8601,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                   return { error: `Invalid filter index: ${filterIndex}` };
                 }
 
+                guardFilterList(filterList, "delete", filterIndex);
                 const filter = filterList.getFilterAt(filterIndex);
                 const filterName = filter.filterName;
                 filterList.removeFilterAt(filterIndex);
@@ -8512,6 +8631,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                   return { error: `Invalid target index: ${toIndex}` };
                 }
 
+                guardFilterList(filterList, "reorder");
                 // moveFilterAt is unreliable — use remove + insert instead
                 // Adjust toIndex after removal: if moving down, indices shift
                 const filter = filterList.getFilterAt(fromIndex);
@@ -8531,6 +8651,10 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 const fl = getFilterListForAccount(accountId);
                 if (fl.error) return fl;
                 const { filterList } = fl;
+                // Never run a list holding a sending rule (the whole list is
+                // handed to applyFiltersToFolders). Checked before anything
+                // else, so the refusal does not depend on the folder.
+                guardFilterList(filterList, "apply");
 
                 const afResult = getAccessibleFolder(folderPath);
                 if (afResult.error) return afResult;
@@ -9396,6 +9520,24 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
           // choice survives independent of the default we ship.
           Services.prefs.setBoolPref(PREF_BLOCK_SKIPREVIEW, blockSkipReview);
           return { success: true, blockSkipReview };
+        },
+
+        getBlockFilterForwardReply: async function() {
+          let blocked = true;
+          try {
+            blocked = Services.prefs.getBoolPref(PREF_BLOCK_FILTER_FORWARD_REPLY, true);
+          } catch (e) {
+            console.warn("thunderbird-mcp: blockFilterForwardReply unreadable, reported as on:", e);
+          }
+          return { blockFilterForwardReply: blocked };
+        },
+
+        setBlockFilterForwardReply: async function(blockFilterForwardReply) {
+          if (typeof blockFilterForwardReply !== "boolean") {
+            return { error: "blockFilterForwardReply must be a boolean" };
+          }
+          Services.prefs.setBoolPref(PREF_BLOCK_FILTER_FORWARD_REPLY, blockFilterForwardReply);
+          return { success: true, blockFilterForwardReply };
         },
 
         getStableAuthToken: async function() {

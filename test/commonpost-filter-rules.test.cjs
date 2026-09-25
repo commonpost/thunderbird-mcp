@@ -47,7 +47,7 @@ function nonEnumerable(constants) {
   });
 }
 
-function loadHelpers() {
+function loadHelpers({ actions = ACTIONS } = {}) {
   const blocks = [
     ["// BEGIN FILTER SEARCH TERM HELPERS", "// END FILTER SEARCH TERM HELPERS"],
     ["// BEGIN FILTER RULE HELPERS", "// END FILTER RULE HELPERS"],
@@ -61,7 +61,8 @@ function loadHelpers() {
     Ci: {
       nsMsgSearchAttrib: nonEnumerable(ATTRIB),
       nsMsgSearchOp: nonEnumerable(OPS),
-      nsMsgFilterAction: nonEnumerable(ACTIONS),
+      nsMsgFilterAction: nonEnumerable(actions),
+      nsMsgFilterType: nonEnumerable({ InboxRule: 0x1, Manual: 0x10, PostPlugin: 0x20, PostOutgoing: 0x40, Archive: 0x80, Periodic: 0x100 }),
       nsMsgMessageFlags: { Attachment: 0x10000000 },
     },
     Services: { prefs: { getCharPref: (_n, fallback) => fallback } },
@@ -69,7 +70,8 @@ function loadHelpers() {
   vm.createContext(sandbox);
   vm.runInContext(`${blocks.join("\n")}
 this.api = { ACTION_MAP, buildTerms, buildRuleActions, copySearchValue, copySearchTerm,
-  copyRuleAction, serializeFilterRule, planFilterUpdate, FILTER_ACTION_CUSTOM, SEARCH_ATTRIB_CUSTOM };`, sandbox);
+  copyRuleAction, serializeFilterRule, planFilterUpdate, FILTER_ACTION_CUSTOM, SEARCH_ATTRIB_CUSTOM,
+  assertFilterListGuard, listSendingRules, FILTER_TYPE_POST_OUTGOING };`, sandbox);
   return sandbox.api;
 }
 
@@ -270,8 +272,11 @@ describe("planFilterUpdate copies what it does not replace, typed", () => {
     custom.strValue = "arg";
     original.appendAction(custom);
 
+    // The rule holds a Custom action: the forward/reply guard (tested below)
+    // refuses to touch it unless explicitly allowed.
     const { changes, replacement } = api.planFilterUpdate(list, original,
-      { conditions: [{ attrib: "from", op: "contains", value: "boss@example.com" }] }, resolveFolder);
+      { conditions: [{ attrib: "from", op: "contains", value: "boss@example.com" }] }, resolveFolder,
+      { allowSendActions: true });
     assert.deepEqual([...changes], ["conditions"]);
     assert.equal(replacement.actionCount, 5);
     assert.equal(replacement.getActionAt(0).targetFolderUri, "mailbox://nobody@Local%20Folders/Archive");
@@ -329,8 +334,13 @@ describe("planFilterUpdate copies what it does not replace, typed", () => {
     const list = makeFilterList();
     const original = ageRule();
     original.getActionAt = () => { throw new Error("NS_ERROR_FAILURE"); };
-    assert.throws(() => api.planFilterUpdate(list, original, { conditions: [{ attrib: "subject", op: "contains", value: "x" }] }, resolveFolder),
+    // With the forward/reply guard on, the unreadable action is refused even
+    // earlier (fail closed, tested below); here the copy path itself.
+    assert.throws(() => api.planFilterUpdate(list, original, { conditions: [{ attrib: "subject", op: "contains", value: "x" }] }, resolveFolder,
+      { allowSendActions: true }),
       /Failed to copy existing action #0: NS_ERROR_FAILURE/);
+    assert.throws(() => api.planFilterUpdate(list, original, { conditions: [{ attrib: "subject", op: "contains", value: "x" }] }, resolveFolder),
+      /unreadable \(NS_ERROR_FAILURE\)/);
   });
 
   it("refuses to rebuild an unparseable filter", () => {
@@ -397,7 +407,142 @@ describe("filter tool handlers (wiring)", () => {
   });
 
   it("buildActions stores the canonical folder URI via the module helper", () => {
-    assert.match(handlers, /buildRuleActions\(filter, actions, resolveFilterTargetFolder\)/);
+    assert.match(handlers, /buildRuleActions\(filter, actions, resolveFilterTargetFolder[,)]/);
     assert.match(apiSource, /action\.targetFolderUri = targetCheck\.folder\.URI;/);
   });
 });
+
+// ── "No sending rule without review" guard ──
+
+function listOf(...filters) {
+  const list = makeFilterList();
+  list.filters.push(...filters);
+  return list;
+}
+
+function forwardRule(name = "fwd", { enabled = true } = {}) {
+  const f = makeFilter(name);
+  f.enabled = enabled;
+  api.buildTerms(f, [{ attrib: "subject", op: "contains", value: "x" }]);
+  api.buildRuleActions(f, [{ type: "forward", value: "attacker@example.com" }], resolveFolder, { allowSendActions: true });
+  return f;
+}
+
+describe("forward/reply guard on created actions", () => {
+  it("refuses forward and reply by default, on the resolved type", () => {
+    for (const type of ["forward", "reply"]) {
+      assert.throws(() => api.buildRuleActions(makeFilter(), [{ type, value: "a@example.com" }], resolveFolder),
+        /sends mail automatically; blocked by the "Block filter forward\/reply" setting/);
+    }
+  });
+
+  it("fails closed: only allowSendActions === true lets them through", () => {
+    for (const opt of [{}, { allowSendActions: "yes" }, { allowSendActions: 1 }, undefined]) {
+      assert.throws(() => api.buildRuleActions(makeFilter(), [{ type: "forward", value: "a@example.com" }], resolveFolder, opt),
+        /sends mail automatically/);
+    }
+    const f = makeFilter();
+    api.buildRuleActions(f, [{ type: "forward", value: "a@example.com" }, { type: "reply", value: "uri" }], resolveFolder,
+      { allowSendActions: true });
+    assert.deepEqual([f.getActionAt(0).type, f.getActionAt(1).type], [ACTIONS.Forward, ACTIONS.Reply]);
+  });
+
+  it("follows the id Thunderbird reports, not a hardcoded number", () => {
+    const moved = loadHelpers({ actions: { ...ACTIONS, Forward: 42, Reply: 43 } });
+    assert.throws(() => moved.buildRuleActions(makeFilter(), [{ type: "forward", value: "a@example.com" }], resolveFolder),
+      /sends mail automatically/);
+    // markRead is not a sending action whatever its id.
+    const f = makeFilter();
+    moved.buildRuleActions(f, [{ type: "markRead" }], resolveFolder);
+    assert.equal(f.getActionAt(0).type, ACTIONS.MarkRead);
+  });
+
+  it("refuses adding reply to an existing rule through updateFilter", () => {
+    assert.throws(() => api.planFilterUpdate(makeFilterList(), ageRule(), { actions: [{ type: "reply", value: "x" }] }, resolveFolder),
+      /sends mail automatically/);
+  });
+});
+
+describe("forward/reply guard on existing sending rules", () => {
+  it("a sending rule cannot be renamed, enabled or retargeted", () => {
+    for (const update of [{ name: "n" }, { enabled: true }, { conditions: [{ attrib: "subject", op: "contains", value: "" }] }]) {
+      assert.throws(() => api.planFilterUpdate(makeFilterList(), forwardRule(), update, resolveFolder),
+        /sends mail or runs add-on actions \(forward\); it cannot be modified through MCP/);
+    }
+  });
+
+  it("nor marked for outgoing mail (PostOutgoing)", () => {
+    assert.equal(api.FILTER_TYPE_POST_OUTGOING, 0x40);
+    assert.throws(() => api.planFilterUpdate(makeFilterList(), forwardRule(), { type: 17 | 0x40 }, resolveFolder),
+      /cannot be modified or marked for outgoing mail through MCP/);
+  });
+
+  it("replacing its actions with non-sending ones is allowed", () => {
+    const { replacement } = api.planFilterUpdate(makeFilterList(), forwardRule(), { actions: [{ type: "markRead" }] }, resolveFolder);
+    assert.equal(replacement.actionCount, 1);
+    assert.equal(replacement.getActionAt(0).type, ACTIONS.MarkRead);
+  });
+
+  it("a list holding a sending rule cannot be changed or run, except deleting that rule", () => {
+    const list = listOf(ageRule(), forwardRule("fwd", { enabled: false }));
+    for (const op of ["create", "update", "reorder", "apply"]) {
+      assert.throws(() => api.assertFilterListGuard(list, op), /#1 "fwd" \(forward, disabled\)/);
+    }
+    assert.throws(() => api.assertFilterListGuard(list, "delete", 0), /deleting one of those rules is allowed/);
+    api.assertFilterListGuard(list, "delete", 1);
+  });
+
+  it("add-on (Custom) actions count as unknown, possibly sending", () => {
+    const f = ageRule();
+    const custom = f.createAction();
+    custom.type = ACTIONS.Custom; custom.customId = "addon#send";
+    f.appendAction(custom);
+    assert.throws(() => api.assertFilterListGuard(listOf(f), "apply"), /\(custom\)/);
+  });
+
+  it("fails closed on an unreadable action", () => {
+    const f = ageRule();
+    f.getActionAt = () => { throw new Error("E_READ"); };
+    assert.throws(() => api.assertFilterListGuard(listOf(f), "apply"), /unreadable \(E_READ\)/);
+  });
+
+  it("a list without sending rules is untouched by the guard", () => {
+    const list = listOf(ageRule(), ageRule());
+    for (const op of ["create", "update", "reorder", "apply", "delete"]) api.assertFilterListGuard(list, op, 0);
+    assert.equal(api.listSendingRules(list).length, 0);
+  });
+});
+
+describe("forward/reply guard wiring", () => {
+  const handlers = apiSource.slice(apiSource.indexOf("function getFilterListForAccount(accountId)"),
+    apiSource.indexOf("// BEGIN TOOL SCHEMA VALIDATOR"));
+  const body = (fn, next) => handlers.slice(handlers.indexOf(`function ${fn}(`), handlers.indexOf(`function ${next}(`));
+
+  it("every filter-writing tool and applyFilters consult the guard", () => {
+    assert.match(body("createFilter", "updateFilter"), /guardFilterList\(filterList, "create"\)/);
+    assert.match(body("updateFilter", "deleteFilter"), /guardFilterList\(filterList, "update"\)/);
+    assert.match(body("updateFilter", "deleteFilter"), /allowSendActions: !isFilterForwardReplyBlocked\(\)/);
+    assert.match(body("deleteFilter", "reorderFilters"), /guardFilterList\(filterList, "delete", filterIndex\)/);
+    assert.match(body("reorderFilters", "applyFilters"), /guardFilterList\(filterList, "reorder"\)/);
+    const apply = handlers.slice(handlers.indexOf("function applyFilters("));
+    assert.ok(apply.indexOf('guardFilterList(filterList, "apply")') < apply.indexOf("applyFiltersToFolders("));
+  });
+
+  it("the preference defaults to on and fails closed", () => {
+    assert.match(apiSource, /const PREF_BLOCK_FILTER_FORWARD_REPLY = "extensions\.thunderbird-mcp\.blockFilterForwardReply";/);
+    const fn = apiSource.slice(apiSource.indexOf("function isFilterForwardReplyBlocked()"));
+    assert.match(fn.slice(0, 400), /getBoolPref\(PREF_BLOCK_FILTER_FORWARD_REPLY, true\)/);
+    assert.match(fn.slice(0, 600), /return true;/);
+  });
+
+  it("is exposed in the experiment schema and the options page", () => {
+    const schema = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../extension/mcp_server/schema.json"), "utf8"));
+    const names = schema[0].functions.map((f) => f.name);
+    assert.ok(names.includes("getBlockFilterForwardReply") && names.includes("setBlockFilterForwardReply"));
+    const html = fs.readFileSync(path.resolve(__dirname, "../extension/options.html"), "utf8");
+    const js = fs.readFileSync(path.resolve(__dirname, "../extension/options.js"), "utf8");
+    assert.match(html, /id="blockFilterForwardReply"/);
+    assert.match(js, /browser\.mcpServer\.setBlockFilterForwardReply\(/);
+  });
+});
+

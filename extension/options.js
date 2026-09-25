@@ -535,7 +535,44 @@ saveSkipReviewBtn.addEventListener("click", async () => {
   saveSkipReviewBtn.disabled = false;
 });
 
+// --- Block filter forward/reply ---
+const blockFilterForwardReplyCheckbox = document.getElementById("blockFilterForwardReply");
+const saveFilterForwardReplyBtn = document.getElementById("saveFilterForwardReplyBtn");
+const saveFilterForwardReplyStatus = document.getElementById("saveFilterForwardReplyStatus");
+
+async function loadFilterForwardReplyPref() {
+  try {
+    const { blockFilterForwardReply } = await browser.mcpServer.getBlockFilterForwardReply();
+    blockFilterForwardReplyCheckbox.checked = blockFilterForwardReply !== false;
+    saveFilterForwardReplyBtn.disabled = false;
+    saveFilterForwardReplyStatus.textContent = "";
+  } catch (e) {
+    saveFilterForwardReplyStatus.textContent = "Error loading setting: " + e.message;
+    saveFilterForwardReplyStatus.className = "save-status error";
+  }
+}
+
+saveFilterForwardReplyBtn.addEventListener("click", async () => {
+  saveFilterForwardReplyBtn.disabled = true;
+  saveFilterForwardReplyStatus.textContent = "Saving...";
+  saveFilterForwardReplyStatus.className = "save-status";
+  try {
+    const result = await browser.mcpServer.setBlockFilterForwardReply(blockFilterForwardReplyCheckbox.checked);
+    if (result.error) {
+      saveFilterForwardReplyStatus.textContent = result.error;
+      saveFilterForwardReplyStatus.className = "save-status error";
+    } else {
+      saveFilterForwardReplyStatus.textContent = "Saved.";
+    }
+  } catch (e) {
+    saveFilterForwardReplyStatus.textContent = "Error: " + e.message;
+    saveFilterForwardReplyStatus.className = "save-status error";
+  }
+  saveFilterForwardReplyBtn.disabled = false;
+});
+
 loadServerInfo().catch(e => console.error("thunderbird-mcp options:", "loadServerInfo failed:", e));
+loadFilterForwardReplyPref().catch(e => console.error("thunderbird-mcp options:", "loadFilterForwardReplyPref failed:", e));
 loadAuthenticationConfig().catch(e => console.error("thunderbird-mcp options:", "loadAuthenticationConfig failed:", e));
 loadAccountAccess().catch(e => console.error("thunderbird-mcp options:", "loadAccountAccess failed:", e));
 loadToolAccess().catch(e => console.error("thunderbird-mcp options:", "loadToolAccess failed:", e));

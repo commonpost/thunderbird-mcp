@@ -316,6 +316,25 @@
     <button id="saveSkipReviewBtn" disabled>Save</button>
     <span id="saveSkipReviewStatus" class="save-status"></span>
   </div>
+  <p class="mode-note">
+    Filters that forward or reply send mail automatically, with no review window.
+    While this setting is enabled (default), MCP clients cannot create or add
+    Forward/Reply filter actions, and cannot change or run a filter list that
+    already holds a rule that sends mail or runs an add-on action (deleting such
+    a rule is still possible). Manage those rules in Thunderbird's filter editor.
+  </p>
+  <ul class="account-list">
+    <li>
+      <label>
+        <input type="checkbox" id="blockFilterForwardReply">
+        <span>Block filter forward/reply (default) -- no sending rule without review</span>
+      </label>
+    </li>
+  </ul>
+  <div class="save-row">
+    <button id="saveFilterForwardReplyBtn" disabled>Save</button>
+    <span id="saveFilterForwardReplyStatus" class="save-status"></span>
+  </div>
 </div>
 
 <script src="options.js"></script>
