@@ -18,33 +18,40 @@ jobs:
       matrix:
         node-version: ['18.x', '22.x', '24.x']
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: ${{ matrix.node-version }}
-      # The test suite has zero runtime dependencies, so no install step.
+      # No runtime dependencies; the dev dependencies (fast-check, eslint) come from the committed lockfile.
+      - name: Install dev dependencies
+        run: npm ci --ignore-scripts
       - name: Run tests
         run: npm test
 
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22.x'
-      # No package-lock.json is committed, so install (not ci) for the devDeps.
       - name: Install dev dependencies
-        run: npm install --no-package-lock
+        run: npm ci --ignore-scripts
       - name: Lint
         run: npm run lint
 
   version-sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22.x'
       - name: Assert package.json and manifest versions match
