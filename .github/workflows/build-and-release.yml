@@ -2,9 +2,11 @@ name: Build and Release
 
 # Fires when a version tag is pushed. Two jobs, so that no code but our own and GitHub's official
 # actions runs in the job that can write the release and the update channel:
-#   build   (contents: read)   tests, reproducible XPI build, hands the XPI over as an artifact;
-#   release (contents: write)  checks the hash, attests build provenance, publishes the release
-#                              (XPI + provenance bundle) and the update manifest on gh-pages.
+#   build   (contents: read)   builds the XPI FIRST with only Node's built-in modules and git (no npm install
+#                              has run yet), then installs the dev dependencies and runs the tests;
+#   release (contents: write)  rebuilds the XPI from the tag on its own, refuses any difference with the build
+#                              job's artifact, attests build provenance of the XPI and of mcp-bridge.cjs,
+#                              publishes the release and the update manifest on gh-pages.
 # The "release" environment is protected in the repository settings (required reviewer).
 on:
   push:
@@ -20,6 +22,7 @@ concurrency:
 
 jobs:
   build:
+    name: Build and test
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -37,7 +40,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: '20'
+          node-version: '22'
           package-manager-cache: false
 
       - name: Verify the tag is on main and matches package.json and the manifest
@@ -56,12 +59,7 @@ jobs:
             exit 1
           fi
 
-      - name: Install dev dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Run tests
-        run: node --test test/*.cjs
-
+      # Before any npm install: only Node's built-in modules and git run here.
       - name: Build the XPI (reproducible)
         id: build
         run: |
@@ -70,6 +68,12 @@ jobs:
           XPI="$(ls dist/commonpost-mcp-v*.xpi)"
           echo "xpi=$(basename "$XPI")" >> "$GITHUB_OUTPUT"
           echo "sha256=$(sha256sum "$XPI" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Install dev dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run tests
+        run: node --test test/*.cjs
 
       - name: Keep the XPI for the release job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -80,15 +84,24 @@ jobs:
           retention-days: 7
 
   release:
+    name: Release
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: release
     permissions:
       contents: write # create the release; update updates.json on gh-pages through the API
-      id-token: write # sign the provenance attestation
-      attestations: write
+      id-token: write # sign the provenance attestations
+      attestations: write # store the attestations
     steps:
+      - name: Check that gh-pages exists before releasing anything
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/branches/gh-pages" --silent || {
+            echo "::error::gh-pages does not exist; refusing to release without an update-manifest target."; exit 1; }
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,44 +110,71 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: '20'
+          node-version: '22'
           package-manager-cache: false
 
-      - name: Download the XPI
+      # Independent rebuild from the tag, with Node's built-in modules and git only (no npm install in this job).
+      - name: Rebuild the XPI from the tag
+        env:
+          COMMONPOST_OUT_DIR: ${{ runner.temp }}/rebuild
+        run: node scripts/build-xpi-reproducible.cjs
+
+      - name: Download the XPI of the build job
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: xpi
           path: dist
 
-      - name: Check the XPI is the one the build job hashed
+      - name: Refuse any difference between the rebuild, the artifact and the recorded hash
         env:
           XPI: ${{ needs.build.outputs.xpi }}
           EXPECTED: ${{ needs.build.outputs.sha256 }}
+          REBUILD_DIR: ${{ runner.temp }}/rebuild
         run: |
           set -euo pipefail
-          [ "$(ls dist | wc -l)" = "1" ]
-          printf '%s  dist/%s\n' "$EXPECTED" "$XPI" | sha256sum -c -
+          [ "$(find dist -maxdepth 1 -type f | wc -l)" = "1" ]
+          [ "$(find "$REBUILD_DIR" -maxdepth 1 -name '*.xpi' | wc -l)" = "1" ]
+          A="$(sha256sum "dist/${XPI}" | cut -d' ' -f1)"
+          B="$(sha256sum "${REBUILD_DIR}/${XPI}" | cut -d' ' -f1)"
+          if [ "$A" != "$EXPECTED" ] || [ "$B" != "$EXPECTED" ]; then
+            echo "::error::XPI differs: artifact ${A}, rebuild ${B}, recorded ${EXPECTED}."
+            exit 1
+          fi
+          cp mcp-bridge.cjs dist/mcp-bridge.cjs
 
-      - name: Attest build provenance
-        id: attest
+      - name: Attest build provenance of the XPI
+        id: attest-xpi
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/${{ needs.build.outputs.xpi }}
 
-      - name: Create the GitHub release (XPI + provenance bundle)
+      - name: Attest build provenance of the bridge
+        id: attest-bridge
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/mcp-bridge.cjs
+
+      - name: Create or complete the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           XPI: ${{ needs.build.outputs.xpi }}
-          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          BUNDLE_XPI: ${{ steps.attest-xpi.outputs.bundle-path }}
+          BUNDLE_BRIDGE: ${{ steps.attest-bridge.outputs.bundle-path }}
         run: |
           set -euo pipefail
-          cp "$BUNDLE" "dist/${XPI}.sigstore.json"
-          VER="${TAG#v}"
-          awk -v v="$VER" 'index($0, "## [" v "]") == 1 {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
-          test -s "$RUNNER_TEMP/notes.md" || { echo "::error::CHANGELOG.md has no section for ${VER}"; exit 1; }
-          gh release create "$TAG" "dist/${XPI}" "dist/${XPI}.sigstore.json" \
-            --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          cp "$BUNDLE_XPI" "dist/${XPI}.sigstore.json"
+          cp "$BUNDLE_BRIDGE" "dist/mcp-bridge.cjs.sigstore.json"
+          ASSETS=("dist/${XPI}" "dist/${XPI}.sigstore.json" "dist/mcp-bridge.cjs" "dist/mcp-bridge.cjs.sigstore.json")
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            VER="${TAG#v}"
+            awk -v v="$VER" 'index($0, "## [" v "]") == 1 {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+            test -s "$RUNNER_TEMP/notes.md" || { echo "::error::CHANGELOG.md has no section for ${VER}"; exit 1; }
+            gh release create "$TAG" "${ASSETS[@]}" \
+              --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
 
       - name: Publish the update manifest to gh-pages
         env:

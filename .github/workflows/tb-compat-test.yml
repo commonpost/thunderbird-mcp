@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: tb-compat-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   compat-test:
     name: TB compat (${{ matrix.channel }})

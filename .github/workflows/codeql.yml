@@ -25,7 +25,7 @@ jobs:
     permissions:
       contents: read
       security-events: write # findings as code scanning alerts
-      actions: read
+      actions: read # CodeQL reads the workflow run metadata
     strategy:
       fail-fast: false
       matrix:
