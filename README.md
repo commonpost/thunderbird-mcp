@@ -1,18 +1,20 @@
-# Thunderbird MCP
+# Commonpost MCP for Thunderbird
 
 [![CI](https://github.com/commonpost/thunderbird-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/commonpost/thunderbird-mcp/actions/workflows/ci.yml)
 [![Tools](https://img.shields.io/badge/40_Tools-email%2C_compose%2C_filters%2C_calendar%2C_contacts-blue.svg)](#what-you-can-do)
 [![Localhost Only](https://img.shields.io/badge/Privacy-localhost_only-green.svg)](#security)
-[![Thunderbird](https://img.shields.io/badge/Thunderbird-102%2B-0a84ff.svg)](https://www.thunderbird.net/)
+[![Thunderbird](https://img.shields.io/badge/Thunderbird-128%2B-0a84ff.svg)](https://www.thunderbird.net/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-grey.svg)](LICENSE)
 
 Give your AI assistant full access to Thunderbird -- search mail, compose messages, manage filters, and organize your inbox. All through the [Model Context Protocol](https://modelcontextprotocol.io/).
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Thunderbird MCP Demo" width="600">
+  <img src="docs/demo.gif" alt="Demo of the MCP server for Thunderbird" width="600">
 </p>
 
-> Inspired by [bb1/thunderbird-mcp](https://github.com/bb1/thunderbird-mcp). Rewritten from scratch with a bundled HTTP server, proper MIME decoding, and UTF-8 handling throughout.
+> **A continuation of [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk** (MIT), started from its 0.7.5 release with its full history kept. It is an independent project by the Commonpost community, not the original and not endorsed by it; it can be installed beside the original (see [Migrating](#migrating-from-thunderbird-mcp)). If the original author wants any of this work back, we hand it over: our changes are MIT-licensed and offered upstream too. Thunderbird is a trademark of the Mozilla Foundation; this project is not affiliated with Mozilla or MZLA.
+>
+> The original was inspired by [bb1/thunderbird-mcp](https://github.com/bb1/thunderbird-mcp). What is in this release is listed in the [changelog](CHANGELOG.md).
 
 ---
 
@@ -83,6 +85,8 @@ Compose tools validate the `from` identity strictly -- if the specified sender d
 
 Full control over Thunderbird's message filters. Changes persist immediately. Your AI can create sorting rules, adjust priorities, and run them on existing mail.
 
+Filter rules that **forward or reply** send mail without the review window that the compose tools keep. The **Block filter forward/reply** setting (Options > Send Safety) is on by default: while it is on, such rules cannot be created or changed through MCP, and a filter list that holds one cannot be run through `applyFilters`. Deleting the rule stays possible.
+
 ### Contacts
 
 | Tool | Description |
@@ -122,13 +126,13 @@ The same settings page has a "Send Safety" section. **Block `skipReview`** is en
 
 ### 1. Install the extension
 
-```bash
-git clone https://github.com/commonpost/thunderbird-mcp.git
-```
+Download `commonpost-mcp-v<version>.xpi` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest), then in Thunderbird: Tools > Add-ons and Themes > gear menu > Install Add-on From File, and restart. Each release also carries a provenance attestation (`*.sigstore.json`) that ties the XPI to the commit and the workflow that built it; you can check it with `gh attestation verify <file>.xpi --repo commonpost/thunderbird-mcp`. The XPI can be rebuilt byte for byte from the tagged source with `node scripts/build-xpi-reproducible.cjs`.
 
-Install `dist/commonpost-mcp.xpi` in Thunderbird (Tools > Add-ons > Install from File), then restart. A pre-built XPI is included in the repo -- no build step needed.
+The MCP bridge, `mcp-bridge.cjs`, is attached to each release next to the XPI (with its own provenance attestation). You can also `git clone --branch v<version> https://github.com/commonpost/thunderbird-mcp.git` and use the file from the clone; use the bridge of the same version as the extension.
 
-**Automatic updates:** From v0.7.3 on, the add-on auto-updates through Thunderbird's add-on update check. Thunderbird downloads updates in the background and applies them on the next restart; because this add-on uses an experiment API, updates are not live hot-swapped. v0.7.3 is the last build you need to install by hand because older builds have no `update_url` and cannot auto-discover it. Thunderbird ships with `xpinstall.signatures.required=false`, so unsigned auto-updates work out of the box; a profile hardened to require signatures blocks both manual and automatic installs. If updates do not arrive, check the Add-ons gear menu and make sure **Update Add-ons Automatically** is enabled.
+Requires Thunderbird 128 or later; developed and tested on Thunderbird 156.
+
+**Automatic updates:** the add-on checks `https://commonpost.github.io/thunderbird-mcp/updates.json` through Thunderbird's add-on update check; the file lists the hash of each release. Thunderbird downloads updates in the background and applies them on the next restart; because this add-on uses an Experiment API, updates are not hot-swapped. If updates do not arrive, check the Add-ons gear menu and make sure **Update Add-ons Automatically** is enabled. Thunderbird's default `xpinstall.signatures.required=false` lets unsigned add-ons install; a profile hardened to require signatures blocks both manual and automatic installs. Because the auto-update channel is a code-delivery channel, you can turn it off (per add-on, in its details page) and update by hand.
 
 ### 2. Configure your MCP client
 
@@ -137,7 +141,7 @@ Add to your MCP client config (e.g. `~/.claude.json` for Claude Code):
 ```json
 {
   "mcpServers": {
-    "thunderbird-mail": {
+    "commonpost-mail": {
       "command": "node",
       "args": ["/absolute/path/to/commonpost-mcp/mcp-bridge.cjs"]
     }
@@ -162,7 +166,7 @@ Example override:
 ```json
 {
   "mcpServers": {
-    "thunderbird-mail": {
+    "commonpost-mail": {
       "command": "node",
       "args": ["/absolute/path/to/commonpost-mcp/mcp-bridge.cjs"],
       "env": {
@@ -174,6 +178,14 @@ Example override:
 ```
 
 That's it. Your AI can now access Thunderbird.
+
+### Migrating from thunderbird-mcp
+
+Both add-ons can be installed at the same time: they use different ids, preferences, ports (8780-8789 here, 8765-8774 there) and temporary directories. Nothing is shared or migrated automatically:
+
+- settings (`extensions.thunderbird-mcp.*`) are **not** copied; set them again in this add-on's options page. Until you do, **every account and tool is visible to MCP clients**: your account and tool restrictions are not carried over;
+- your MCP client must point its bridge at this repository's `mcp-bridge.cjs` (or the `commonpost-mcp` binary) and, if you set it, use `COMMONPOST_MCP_CONNECTION_FILE` (the old `THUNDERBIRD_MCP_CONNECTION_FILE` is ignored on purpose, so that one bridge never reads the other add-on's file);
+- if you keep both, the options page shows a notice, and each MCP client must be configured for the one you want. To avoid two servers touching the same mailbox, disable the one you do not use.
 
 ---
 
@@ -223,7 +235,9 @@ curl -X POST http://127.0.0.1:$PORT \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-**Dev-only extension reload:** After changing extension source locally, remove the add-on from Thunderbird, restart, reinstall the XPI, and restart again. Thunderbird caches aggressively. Regular users should install v0.7.3 once and let auto-update handle later releases.
+**Dev-only extension reload:** After changing extension source locally, remove the add-on from Thunderbird, restart, reinstall the XPI, and restart again. Thunderbird caches aggressively.
+
+Run the tests with `npm ci --ignore-scripts && npm test`; see [CONTRIBUTING.md](CONTRIBUTING.md). Everything that needs Thunderbird's full privileges is listed in [docs/experiment-inventory.md](docs/experiment-inventory.md).
 
 ---
 
@@ -242,9 +256,11 @@ commonpost-mcp/
 │   └── mcp_server/
 │       ├── api.js              # All 40 MCP tools + auth + access control
 │       └── schema.json
-├── test/                       # Test suite (node:test, zero dependencies)
+├── test/                       # Test suite (node:test; fast-check for the property tests)
+├── docs/                       # Experiment inventory, filter API notes
 └── scripts/
-    ├── build.sh
+    ├── build-xpi-reproducible.cjs   # release build (byte-for-byte reproducible)
+    ├── build.sh                # quick development build
     └── install.sh
 ```
 
@@ -261,6 +277,6 @@ commonpost-mcp/
 
 ---
 
-## License
+## License and credits
 
-MIT. The bundled `httpd.sys.mjs` is from Mozilla and licensed under MPL-2.0.
+MIT (see [LICENSE](LICENSE)): copyright Tomasz Kasperczyk (original project) and the Commonpost contributors. `extension/httpd.sys.mjs` is Mozilla's embedded HTTP server under the MPL-2.0 (see [THIRD-PARTY.md](THIRD-PARTY.md)). Fixes and ideas taken from upstream pull requests keep their authors: Tony (TKasperczyk/thunderbird-mcp#209), safrano9999 (TKasperczyk/thunderbird-mcp#214), Daniel Glaser (TKasperczyk/thunderbird-mcp#195), Neel Radhakrishnan (TKasperczyk/thunderbird-mcp#175), JordanRO2 (TKasperczyk/thunderbird-mcp#126, and the idea and preference name of the filter send guard, TKasperczyk/thunderbird-mcp#127), KinJLy and coulof (forks).

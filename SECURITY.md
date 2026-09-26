@@ -36,7 +36,7 @@ This project bridges three trust boundaries; any of them is in scope:
 2. **HTTP transport** between the bridge and the Thunderbird
    extension (`http://localhost:<port>` with token auth). Token
    handling, timing-safe comparison, port-binding hygiene.
-3. **Tool dispatch inside the extension** (`extension/mcp_server/lib/`).
+3. **Tool dispatch inside the extension** (`extension/mcp_server/api.js`).
    The permission engine + per-tool argument validation are the
    primary boundary. Any path that lets a caller exceed their
    declared permission scope, or that accesses Thunderbird state

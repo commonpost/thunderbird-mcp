@@ -23,7 +23,8 @@
     "extension/",
     "scripts/",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "THIRD-PARTY.md"
   ],
   "engines": {
     "node": ">=18.0.0"
