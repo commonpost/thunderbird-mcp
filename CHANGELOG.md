@@ -15,7 +15,7 @@ First release of **Commonpost MCP for Thunderbird**, a continuation of thunderbi
   `commonpostMcp`, default port range 8780-8789 (the original uses 8765-8774), MCP server name `commonpost-mcp`.
   See "Migrating from thunderbird-mcp" in the README.
 - Automatic updates come from `https://commonpost.github.io/thunderbird-mcp/updates.json`.
-- Requires Thunderbird 128 or later (developed and tested on Thunderbird 156).
+- Requires Thunderbird 156 or later and Node.js 22 or later for the bridge and the tests: the tested versions.
 
 ### Added
 - The options page warns when the original thunderbird-mcp add-on is also active.

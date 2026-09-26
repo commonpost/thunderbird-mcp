@@ -77,6 +77,8 @@ describe("reproducible XPI build", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(root, "extension/manifest.json"), "utf8"));
     assert.equal(manifest.version, pkg.version);
     assert.equal(manifest.browser_specific_settings.gecko.id, "commonpost-mcp@commonpost.github.io");
+    assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, "156.0");
+    assert.equal(pkg.engines.node, ">=22");
     assert.equal(
       manifest.browser_specific_settings.gecko.update_url,
       "https://commonpost.github.io/thunderbird-mcp/updates.json"

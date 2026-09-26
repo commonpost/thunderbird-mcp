@@ -22,6 +22,7 @@ describe("gen-updates", () => {
     const entry = updates.addons["commonpost-mcp@commonpost.github.io"].updates[0];
     assert.equal(entry.version, "0.8.0");
     assert.equal(entry.update_hash, `sha256:${HASH}`);
+    assert.equal(entry.applications.gecko.strict_min_version, "156.0");
     assert.equal(
       entry.update_link,
       "https://github.com/commonpost/thunderbird-mcp/releases/download/v0.8.0/commonpost-mcp-v0.8.0.xpi"
