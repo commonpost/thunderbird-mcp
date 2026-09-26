@@ -92,7 +92,7 @@
   "delivery_unsigned_status": "Met",
   "delivery_unsigned_justification": "The update manifest is served over HTTPS and its update_hash is verified by Thunderbird; the hash is published nowhere over plain HTTP.",
   "static_analysis_status": "Met",
-  "static_analysis_justification": "CodeQL (JavaScript and GitHub Actions), zizmor (pedantic) and ESLint run on every pull request and push to main. https://github.com/commonpost/thunderbird-mcp/actions",
+  "static_analysis_justification": "CodeQL (GitHub code scanning default setup, JavaScript), zizmor (pedantic, GitHub Actions workflows) and ESLint run on every pull request and push to main. https://github.com/commonpost/thunderbird-mcp/actions",
   "static_analysis_common_vulnerabilities_status": "Met",
   "static_analysis_common_vulnerabilities_justification": "CodeQL security queries and zizmor look for common vulnerabilities (injection, unpinned actions, excessive permissions).",
   "static_analysis_often_status": "Met",
