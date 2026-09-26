@@ -39,7 +39,11 @@ function main() {
   const tag = requireEnv('TAG');
   const ver = requireEnv('VER');
   const hash = requireEnv('HASH');
+  const repo = requireEnv('GITHUB_REPOSITORY');
 
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
+    fail('GITHUB_REPOSITORY must look like owner/repository');
+  }
   if (ver.startsWith('v')) {
     fail('VER must not start with "v"');
   }
@@ -54,7 +58,7 @@ function main() {
   }
 
   const gecko = readGeckoSettings();
-  const updateLink = `https://github.com/commonpost/thunderbird-mcp/releases/download/${tag}/commonpost-mcp-${tag}.xpi`;
+  const updateLink = `https://github.com/${repo}/releases/download/${tag}/commonpost-mcp-${tag}.xpi`;
   const updateHash = `sha256:${hash}`;
 
   if (!/^sha256:[0-9a-f]{64}$/.test(updateHash)) {

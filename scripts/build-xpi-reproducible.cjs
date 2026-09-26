@@ -20,7 +20,7 @@
  *     no extra fields, no comments, fixed attributes;
  *   - entries are STORED (no compression): the bytes then do not depend on
  *     the zlib version, so any Node version gives the same XPI;
- *   - the manifest is checked (version equals package.json, id, update_url,
+ *   - the manifest is checked (version equals package.json, both read from the same commit, id, update_url,
  *     strict_min_version);
  *   - LICENSE and THIRD-PARTY.md (repository root) are added to the XPI.
  */
@@ -141,7 +141,7 @@ function readFromGit() {
     files.push({ name: p.slice('extension/'.length), data: git(['cat-file', 'blob', sha]) });
   }
   const rootFiles = ROOT_FILES.map((name) => ({ name, data: git(['show', `HEAD:${name}`]) }));
-  return { commit, epoch, files, rootFiles };
+  return { commit, epoch, files, rootFiles, pkg: git(['show', 'HEAD:package.json']) };
 }
 
 function readFromTree() {
@@ -163,12 +163,12 @@ function readFromTree() {
     }
   })(base, '');
   const rootFiles = ROOT_FILES.map((name) => ({ name, data: fs.readFileSync(path.join(ROOT, name)) }));
-  return { commit, epoch, files, rootFiles };
+  return { commit, epoch, files, rootFiles, pkg: fs.readFileSync(path.join(ROOT, 'package.json')) };
 }
 
 // ---- main ----------------------------------------------------------------
 const fromTree = process.argv.includes('--from-tree');
-const { commit, epoch, files, rootFiles } = fromTree ? readFromTree() : readFromGit();
+const { commit, epoch, files, rootFiles, pkg } = fromTree ? readFromTree() : readFromGit();
 
 const byName = new Map();
 for (const f of files) {
@@ -185,7 +185,7 @@ for (const f of rootFiles) {
 
 const manifest = JSON.parse(byName.get('manifest.json').toString('utf8'));
 const gecko = (manifest.browser_specific_settings || {}).gecko || {};
-const pkgVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+const pkgVersion = JSON.parse(pkg.toString('utf8')).version;
 if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) die(`manifest version ${manifest.version} is not X.Y.Z`);
 if (manifest.version !== pkgVersion) die(`manifest version ${manifest.version}, package.json ${pkgVersion}`);
 if (gecko.id !== EXPECTED.id) die(`manifest id ${gecko.id}, expected ${EXPECTED.id}`);
