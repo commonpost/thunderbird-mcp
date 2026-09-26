@@ -1,6 +1,6 @@
 [
   {
-    "namespace": "mcpServer",
+    "namespace": "commonpostMcp",
     "description": "MCP HTTP server for AI integration",
     "functions": [
       {

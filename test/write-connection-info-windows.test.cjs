@@ -27,7 +27,7 @@ this.writeConnectionInfo = writeConnectionInfo;`,
 }
 
 /**
- * Minimal nsIFile stand-in for <TmpD>/thunderbird-mcp. `permissions` mimics
+ * Minimal nsIFile stand-in for <TmpD>/commonpost-mcp. `permissions` mimics
  * platform behaviour: on Windows nsIFile reports a synthesised mode (0o777
  * for directories) and assignments are ignored (NTFS ACLs); on POSIX the
  * assignment takes effect unless `chmodFails` is set.
@@ -92,11 +92,11 @@ describe("writeConnectionInfo directory hardening", () => {
     const { sandbox, written } = makeSandbox({ os: "WINNT", tmpDir });
     const writeConnectionInfo = loadWriteConnectionInfo(sandbox);
 
-    const result = writeConnectionInfo(8765, "token");
+    const result = writeConnectionInfo(8780, "token");
 
-    assert.equal(result, "thunderbird-mcp/connection.json");
+    assert.equal(result, "commonpost-mcp/connection.json");
     assert.deepEqual(tmpDir.chmodCalls, []);
-    assert.deepEqual(JSON.parse(written[0]), { port: 8765, token: "token", pid: 4242 });
+    assert.deepEqual(JSON.parse(written[0]), { port: 8780, token: "token", pid: 4242 });
   });
 
   it("still refuses a group/world-accessible directory on POSIX when chmod fails", () => {
@@ -105,7 +105,7 @@ describe("writeConnectionInfo directory hardening", () => {
     const writeConnectionInfo = loadWriteConnectionInfo(sandbox);
 
     assert.throws(
-      () => writeConnectionInfo(8765, "token"),
+      () => writeConnectionInfo(8780, "token"),
       /group\/world permissions/
     );
     assert.deepEqual(tmpDir.chmodCalls, [0o700]);
@@ -118,7 +118,7 @@ describe("writeConnectionInfo directory hardening", () => {
 
     const result = writeConnectionInfo(8770, "token");
 
-    assert.equal(result, "thunderbird-mcp/connection.json");
+    assert.equal(result, "commonpost-mcp/connection.json");
     assert.equal(tmpDir.permissions, 0o700);
     assert.equal(written.length, 1);
   });

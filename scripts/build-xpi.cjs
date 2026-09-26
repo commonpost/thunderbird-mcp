@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Build the Thunderbird MCP extension XPI (cross-platform, no external deps).
+ * Build the Commonpost MCP extension XPI (cross-platform, no external deps).
  */
 const fs = require('fs');
 const path = require('path');
@@ -9,7 +9,7 @@ const zlib = require('zlib');
 const PROJECT_DIR = path.resolve(__dirname, '..');
 const EXT_DIR = path.join(PROJECT_DIR, 'extension');
 const DIST_DIR = path.join(PROJECT_DIR, 'dist');
-const OUT_FILE = path.join(DIST_DIR, 'thunderbird-mcp.xpi');
+const OUT_FILE = path.join(DIST_DIR, 'commonpost-mcp.xpi');
 const PACKAGE_FILE = path.join(PROJECT_DIR, 'package.json');
 
 function crc32(buf) {

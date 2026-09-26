@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-We support the latest released version of `thunderbird-mcp`. Older
+We support the latest released version of `commonpost-mcp`. Older
 versions receive no fixes; the recommended path for any security
 finding is to upgrade to the current release.
 
@@ -15,7 +15,7 @@ finding is to upgrade to the current release.
 
 **Please do not file a public GitHub issue for security findings.**
 
-Use GitHub's [private vulnerability reporting](https://github.com/TKasperczyk/thunderbird-mcp/security/advisories/new)
+Use GitHub's [private vulnerability reporting](https://github.com/commonpost/thunderbird-mcp/security/advisories/new)
 on this repository. That route:
 
 - keeps the report private until a fix is available,

@@ -529,7 +529,7 @@ describe("forward/reply guard wiring", () => {
   });
 
   it("the preference defaults to on and fails closed", () => {
-    assert.match(apiSource, /const PREF_BLOCK_FILTER_FORWARD_REPLY = "extensions\.thunderbird-mcp\.blockFilterForwardReply";/);
+    assert.match(apiSource, /const PREF_BLOCK_FILTER_FORWARD_REPLY = "extensions\.commonpost-mcp\.blockFilterForwardReply";/);
     const fn = apiSource.slice(apiSource.indexOf("function isFilterForwardReplyBlocked()"));
     assert.match(fn.slice(0, 400), /getBoolPref\(PREF_BLOCK_FILTER_FORWARD_REPLY, true\)/);
     assert.match(fn.slice(0, 600), /return true;/);
@@ -542,7 +542,7 @@ describe("forward/reply guard wiring", () => {
     const html = fs.readFileSync(path.resolve(__dirname, "../extension/options.html"), "utf8");
     const js = fs.readFileSync(path.resolve(__dirname, "../extension/options.js"), "utf8");
     assert.match(html, /id="blockFilterForwardReply"/);
-    assert.match(js, /browser\.mcpServer\.setBlockFilterForwardReply\(/);
+    assert.match(js, /browser\.commonpostMcp\.setBlockFilterForwardReply\(/);
   });
 });
 

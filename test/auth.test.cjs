@@ -22,9 +22,9 @@ const net = require('net');
 const { spawn } = require('child_process');
 
 const BRIDGE_PATH = path.resolve(__dirname, '..', 'mcp-bridge.cjs');
-const CONN_DIR = path.join(os.tmpdir(), 'thunderbird-mcp');
+const CONN_DIR = path.join(os.tmpdir(), 'commonpost-mcp');
 const CONN_FILE = path.join(CONN_DIR, 'connection.json');
-const DEFAULT_PORT = 8765;
+const DEFAULT_PORT = 8780;
 
 /**
  * Check if a port is already in use (e.g. real Thunderbird running).
@@ -599,7 +599,7 @@ describe('Auth: bridge handles MCP lifecycle locally', () => {
 
     assert.equal(response.id, 40);
     assert.ok(response.result);
-    assert.equal(response.result.serverInfo.name, 'thunderbird-mcp');
+    assert.equal(response.result.serverInfo.name, 'commonpost-mcp');
   });
 
   it('ping succeeds without connection file', async (t) => {

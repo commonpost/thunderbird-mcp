@@ -35,18 +35,18 @@ const { runGuardedStart, computeServerRunState, describeStartError } = loadStart
 
 // Mimics the production start body: fully synchronous, and its catch block
 // used to clear the cached promise itself (the #179 bug).
-function failingBody(state, calls, message = "Error: thunderbird-mcp tmp directory has group/world permissions") {
+function failingBody(state, calls, message = "Error: commonpost-mcp tmp directory has group/world permissions") {
   return async () => {
     calls.push("fail");
-    state.__tbMcpStartPromise = null; // legacy reset, runs before the promise is stored
+    state.__cpMcpStartPromise = null; // legacy reset, runs before the promise is stored
     return { success: false, error: message };
   };
 }
 
-function succeedingBody(state, calls, port = 8765) {
+function succeedingBody(state, calls, port = 8780) {
   return async () => {
     calls.push("ok");
-    state.__tbMcpServer = { port };
+    state.__cpMcpServer = { port };
     return { success: true, port };
   };
 }
@@ -57,13 +57,13 @@ describe("server start state (#179)", () => {
     const calls = [];
     const result = await runGuardedStart(state, failingBody(state, calls));
     assert.equal(result.success, false);
-    assert.equal(state.__tbMcpStartPromise, null, "failed start must not stay cached");
-    assert.match(state.__tbMcpStartError.message, /group\/world permissions/);
-    assert.match(state.__tbMcpStartError.at, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(state.__cpMcpStartPromise, null, "failed start must not stay cached");
+    assert.match(state.__cpMcpStartError.message, /group\/world permissions/);
+    assert.match(state.__cpMcpStartError.at, /^\d{4}-\d{2}-\d{2}T/);
     const info = computeServerRunState(state);
     assert.equal(info.running, false, "a failed start must not be reported as running");
     assert.match(info.startError, /group\/world permissions/);
-    assert.equal(info.startErrorAt, state.__tbMcpStartError.at);
+    assert.equal(info.startErrorAt, state.__cpMcpStartError.at);
   });
 
   it("a retry after a failure runs the start body again and clears the error", async () => {
@@ -73,7 +73,7 @@ describe("server start state (#179)", () => {
     const result = await runGuardedStart(state, succeedingBody(state, calls));
     assert.deepEqual(calls, ["fail", "ok"]);
     assert.equal(result.success, true);
-    assert.equal(state.__tbMcpStartError, null);
+    assert.equal(state.__cpMcpStartError, null);
     const info = computeServerRunState(state);
     assert.equal(info.running, true);
     assert.equal(info.startError, null);
@@ -85,7 +85,7 @@ describe("server start state (#179)", () => {
     await runGuardedStart(state, succeedingBody(state, calls));
     const again = await runGuardedStart(state, succeedingBody(state, calls, 9999));
     assert.deepEqual(calls, ["ok"]);
-    assert.equal(again.port, 8765);
+    assert.equal(again.port, 8780);
   });
 
   it("concurrent starts share one attempt", async () => {
@@ -96,7 +96,7 @@ describe("server start state (#179)", () => {
     const body = async () => {
       calls.push("start");
       await gate;
-      state.__tbMcpServer = {};
+      state.__cpMcpServer = {};
       return { success: true, port: 8766 };
     };
     const a = runGuardedStart(state, body);
@@ -113,17 +113,17 @@ describe("server start state (#179)", () => {
     const result = await runGuardedStart(state, () => { throw new Error("boom"); });
     assert.equal(result.success, false);
     assert.equal(result.error, "Error: boom");
-    assert.equal(state.__tbMcpStartPromise, null);
+    assert.equal(state.__cpMcpStartPromise, null);
     assert.equal(computeServerRunState(state).startError, "Error: boom");
   });
 
   it("running follows the bound server, and hides a stale error once bound", () => {
     assert.deepEqual(
-      JSON.parse(JSON.stringify(computeServerRunState({ __tbMcpStartPromise: Promise.resolve({ success: false }) }))),
+      JSON.parse(JSON.stringify(computeServerRunState({ __cpMcpStartPromise: Promise.resolve({ success: false }) }))),
       { running: false, startError: null, startErrorAt: null },
       "a truthy promise alone is not 'running'"
     );
-    const info = computeServerRunState({ __tbMcpServer: {}, __tbMcpStartError: { message: "old", at: "x" } });
+    const info = computeServerRunState({ __cpMcpServer: {}, __cpMcpStartError: { message: "old", at: "x" } });
     assert.equal(info.running, true);
     assert.equal(info.startError, null);
   });
@@ -142,7 +142,7 @@ describe("server start wiring (#179)", () => {
     assert.ok(startIdx > 0 && retryIdx > startIdx, "start/retryStart not found");
     const startSource = apiSource.slice(startIdx, retryIdx);
     assert.match(startSource, /return await runGuardedStart\(globalThis, async \(\) => \{/);
-    assert.doesNotMatch(startSource, /__tbMcpStartPromise\s*=/);
+    assert.doesNotMatch(startSource, /__cpMcpStartPromise\s*=/);
   });
 
   it("getServerInfo derives running from computeServerRunState and returns the error", () => {
@@ -150,7 +150,7 @@ describe("server start wiring (#179)", () => {
     const body = apiSource.slice(idx, apiSource.indexOf("getCurrentAuthToken: async function()", idx));
     assert.match(body, /computeServerRunState\(globalThis\)/);
     assert.match(body, /startError: runState\.startError/);
-    assert.doesNotMatch(body, /running: !!globalThis\.__tbMcpStartPromise/);
+    assert.doesNotMatch(body, /running: !!globalThis\.__cpMcpStartPromise/);
   });
 
   it("retryStart is declared in the experiment schema and wired in the options page", () => {
@@ -161,7 +161,7 @@ describe("server start wiring (#179)", () => {
     const js = fs.readFileSync(path.resolve(__dirname, "../extension/options.js"), "utf8");
     assert.match(html, /id="retryStartBtn"/);
     assert.match(html, /id="startErrorText"/);
-    assert.match(js, /browser\.mcpServer\.retryStart\(\)/);
+    assert.match(js, /browser\.commonpostMcp\.retryStart\(\)/);
     assert.match(js, /info\.startError/);
   });
 });

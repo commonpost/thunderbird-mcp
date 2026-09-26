@@ -33,7 +33,7 @@ const { ensureFreshConnectionInfo } = loadConnectionInfoRefreshHelpers();
 
 function makeOptions(overrides) {
   return {
-    port: 8765,
+    port: 8780,
     token: "token",
     expectedPid: 1234,
     onCheckError() {},
@@ -45,32 +45,32 @@ describe("connection info refresh decision", () => {
   it("does not rewrite when connection.json already matches the running server", () => {
     const result = ensureFreshConnectionInfo(makeOptions({
       readConnectionInfo: () => ({
-        path: "/tmp/thunderbird-mcp/connection.json",
-        data: { port: 8765, token: "token", pid: 1234 },
+        path: "/tmp/commonpost-mcp/connection.json",
+        data: { port: 8780, token: "token", pid: 1234 },
       }),
       writeConnectionInfo() {
         throw new Error("writeConnectionInfo should not be called");
       },
     }));
 
-    assert.equal(result, "/tmp/thunderbird-mcp/connection.json");
+    assert.equal(result, "/tmp/commonpost-mcp/connection.json");
   });
 
   it("rewrites when connection.json is missing", () => {
     const writes = [];
     const result = ensureFreshConnectionInfo(makeOptions({
       readConnectionInfo: () => ({
-        path: "/tmp/thunderbird-mcp/connection.json",
+        path: "/tmp/commonpost-mcp/connection.json",
         data: null,
       }),
       writeConnectionInfo(port, token) {
         writes.push({ port, token });
-        return "/tmp/thunderbird-mcp/connection.json";
+        return "/tmp/commonpost-mcp/connection.json";
       },
     }));
 
-    assert.equal(result, "/tmp/thunderbird-mcp/connection.json");
-    assert.deepEqual(writes, [{ port: 8765, token: "token" }]);
+    assert.equal(result, "/tmp/commonpost-mcp/connection.json");
+    assert.deepEqual(writes, [{ port: 8780, token: "token" }]);
   });
 
   for (const staleCase of [
@@ -80,29 +80,29 @@ describe("connection info refresh decision", () => {
     },
     {
       name: "token changed",
-      data: { port: 8765, token: "old-token", pid: 1234 },
+      data: { port: 8780, token: "old-token", pid: 1234 },
     },
     {
       name: "pid changed",
-      data: { port: 8765, token: "token", pid: 4321 },
+      data: { port: 8780, token: "token", pid: 4321 },
     },
   ]) {
     it(`rewrites when connection.json is stale: ${staleCase.name}`, () => {
       let writeCount = 0;
       const result = ensureFreshConnectionInfo(makeOptions({
         readConnectionInfo: () => ({
-          path: "/tmp/thunderbird-mcp/connection.json",
+          path: "/tmp/commonpost-mcp/connection.json",
           data: staleCase.data,
         }),
         writeConnectionInfo(port, token) {
           writeCount++;
-          assert.equal(port, 8765);
+          assert.equal(port, 8780);
           assert.equal(token, "token");
-          return "/tmp/thunderbird-mcp/connection.json";
+          return "/tmp/commonpost-mcp/connection.json";
         },
       }));
 
-      assert.equal(result, "/tmp/thunderbird-mcp/connection.json");
+      assert.equal(result, "/tmp/commonpost-mcp/connection.json");
       assert.equal(writeCount, 1);
     });
   }
@@ -118,14 +118,14 @@ describe("connection info refresh decision", () => {
       },
       writeConnectionInfo() {
         writeCount++;
-        return "/tmp/thunderbird-mcp/connection.json";
+        return "/tmp/commonpost-mcp/connection.json";
       },
       onCheckError(error) {
         errors.push(error);
       },
     }));
 
-    assert.equal(result, "/tmp/thunderbird-mcp/connection.json");
+    assert.equal(result, "/tmp/commonpost-mcp/connection.json");
     assert.deepEqual(errors, [parseError]);
     assert.equal(writeCount, 1);
   });
@@ -136,7 +136,7 @@ describe("connection info refresh decision", () => {
     assert.throws(
       () => ensureFreshConnectionInfo(makeOptions({
         readConnectionInfo: () => ({
-          path: "/tmp/thunderbird-mcp/connection.json",
+          path: "/tmp/commonpost-mcp/connection.json",
           data: null,
         }),
         writeConnectionInfo() {

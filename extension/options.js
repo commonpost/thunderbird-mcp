@@ -61,7 +61,7 @@ function validateGetMessagesLimitInput() {
 
 async function loadServerInfo() {
   try {
-    const info = await browser.mcpServer.getServerInfo();
+    const info = await browser.commonpostMcp.getServerInfo();
     if (info.running) {
       statusDot.className = "status-dot running";
       statusText.textContent = "Running";
@@ -134,7 +134,7 @@ function setStableAuthTokenStatus(message, error = false) {
 }
 
 async function requestGeneratedAuthToken() {
-  const result = await browser.mcpServer.generateAuthToken();
+  const result = await browser.commonpostMcp.generateAuthToken();
   if (result.error) {
     throw new Error(result.error);
   }
@@ -147,7 +147,7 @@ async function requestGeneratedAuthToken() {
 async function saveStableAuthTokenValue(value, successMessage = "Saved.") {
   const stableAuthToken = value.trim();
   setStableAuthTokenStatus("Saving...");
-  const result = await browser.mcpServer.setStableAuthToken(stableAuthToken);
+  const result = await browser.commonpostMcp.setStableAuthToken(stableAuthToken);
   if (result.error) {
     setStableAuthTokenStatus(result.error, true);
     return false;
@@ -184,8 +184,8 @@ async function generateAndStoreStableAuthToken(successMessage) {
 async function loadAuthenticationConfig() {
   try {
     const [current, stable] = await Promise.all([
-      browser.mcpServer.getCurrentAuthToken(),
-      browser.mcpServer.getStableAuthToken(),
+      browser.commonpostMcp.getCurrentAuthToken(),
+      browser.commonpostMcp.getStableAuthToken(),
     ]);
     currentAuthTokenInput.value = current.authToken || "";
     copyAuthTokenBtn.disabled = !currentAuthTokenInput.value;
@@ -252,7 +252,7 @@ regenerateStableAuthTokenBtn.addEventListener("click", async () => {
 
 async function loadAccountAccess() {
   try {
-    const data = await browser.mcpServer.getAccountAccessConfig();
+    const data = await browser.commonpostMcp.getAccountAccessConfig();
     currentAccounts = data.accounts || [];
 
     if (currentAccounts.length === 0) {
@@ -318,7 +318,7 @@ saveBtn.addEventListener("click", async () => {
   const allowedIds = allChecked ? [] : checked;
 
   try {
-    const result = await browser.mcpServer.setAccountAccess(allowedIds);
+    const result = await browser.commonpostMcp.setAccountAccess(allowedIds);
     if (result.error) {
       saveStatus.textContent = result.error;
       saveStatus.className = "save-status error";
@@ -336,7 +336,7 @@ saveBtn.addEventListener("click", async () => {
 
 async function loadToolAccess() {
   try {
-    const data = await browser.mcpServer.getToolAccessConfig();
+    const data = await browser.commonpostMcp.getToolAccessConfig();
     currentTools = data.tools || [];
     const groupLabels = data.groups || {};
 
@@ -485,7 +485,7 @@ saveToolsBtn.addEventListener("click", async () => {
   }
 
   try {
-    const result = await browser.mcpServer.setToolAccess(disabled, getMessagesLimit);
+    const result = await browser.commonpostMcp.setToolAccess(disabled, getMessagesLimit);
     if (result.error) {
       saveToolsStatus.textContent = result.error;
       saveToolsStatus.className = "save-status error";
@@ -506,7 +506,7 @@ const saveSkipReviewStatus = document.getElementById("saveSkipReviewStatus");
 
 async function loadSkipReviewPref() {
   try {
-    const { blockSkipReview } = await browser.mcpServer.getBlockSkipReview();
+    const { blockSkipReview } = await browser.commonpostMcp.getBlockSkipReview();
     blockSkipReviewCheckbox.checked = !!blockSkipReview;
     saveSkipReviewBtn.disabled = false;
     saveSkipReviewStatus.textContent = "";
@@ -521,7 +521,7 @@ saveSkipReviewBtn.addEventListener("click", async () => {
   saveSkipReviewStatus.textContent = "Saving...";
   saveSkipReviewStatus.className = "save-status";
   try {
-    const result = await browser.mcpServer.setBlockSkipReview(blockSkipReviewCheckbox.checked);
+    const result = await browser.commonpostMcp.setBlockSkipReview(blockSkipReviewCheckbox.checked);
     if (result.error) {
       saveSkipReviewStatus.textContent = result.error;
       saveSkipReviewStatus.className = "save-status error";
@@ -542,7 +542,7 @@ const saveFilterForwardReplyStatus = document.getElementById("saveFilterForwardR
 
 async function loadFilterForwardReplyPref() {
   try {
-    const { blockFilterForwardReply } = await browser.mcpServer.getBlockFilterForwardReply();
+    const { blockFilterForwardReply } = await browser.commonpostMcp.getBlockFilterForwardReply();
     blockFilterForwardReplyCheckbox.checked = blockFilterForwardReply !== false;
     saveFilterForwardReplyBtn.disabled = false;
     saveFilterForwardReplyStatus.textContent = "";
@@ -557,7 +557,7 @@ saveFilterForwardReplyBtn.addEventListener("click", async () => {
   saveFilterForwardReplyStatus.textContent = "Saving...";
   saveFilterForwardReplyStatus.className = "save-status";
   try {
-    const result = await browser.mcpServer.setBlockFilterForwardReply(blockFilterForwardReplyCheckbox.checked);
+    const result = await browser.commonpostMcp.setBlockFilterForwardReply(blockFilterForwardReplyCheckbox.checked);
     if (result.error) {
       saveFilterForwardReplyStatus.textContent = result.error;
       saveFilterForwardReplyStatus.className = "save-status error";
@@ -571,12 +571,12 @@ saveFilterForwardReplyBtn.addEventListener("click", async () => {
   saveFilterForwardReplyBtn.disabled = false;
 });
 
-loadServerInfo().catch(e => console.error("thunderbird-mcp options:", "loadServerInfo failed:", e));
-loadFilterForwardReplyPref().catch(e => console.error("thunderbird-mcp options:", "loadFilterForwardReplyPref failed:", e));
-loadAuthenticationConfig().catch(e => console.error("thunderbird-mcp options:", "loadAuthenticationConfig failed:", e));
-loadAccountAccess().catch(e => console.error("thunderbird-mcp options:", "loadAccountAccess failed:", e));
-loadToolAccess().catch(e => console.error("thunderbird-mcp options:", "loadToolAccess failed:", e));
-loadSkipReviewPref().catch(e => console.error("thunderbird-mcp options:", "loadSkipReviewPref failed:", e));
+loadServerInfo().catch(e => console.error("commonpost-mcp options:", "loadServerInfo failed:", e));
+loadFilterForwardReplyPref().catch(e => console.error("commonpost-mcp options:", "loadFilterForwardReplyPref failed:", e));
+loadAuthenticationConfig().catch(e => console.error("commonpost-mcp options:", "loadAuthenticationConfig failed:", e));
+loadAccountAccess().catch(e => console.error("commonpost-mcp options:", "loadAccountAccess failed:", e));
+loadToolAccess().catch(e => console.error("commonpost-mcp options:", "loadToolAccess failed:", e));
+loadSkipReviewPref().catch(e => console.error("commonpost-mcp options:", "loadSkipReviewPref failed:", e));
 
 const listenAllCheckbox = document.getElementById("listenAll");
 const listenAllWarning = document.getElementById("listenAllWarning");
@@ -585,7 +585,7 @@ const saveListenAllStatus = document.getElementById("saveListenAllStatus");
 
 async function loadListenAllPref() {
   try {
-    const { listenAll } = await browser.mcpServer.getListenAll();
+    const { listenAll } = await browser.commonpostMcp.getListenAll();
     listenAllCheckbox.checked = !!listenAll;
     listenAllWarning.style.display = listenAllCheckbox.checked ? "block" : "none";
     saveListenAllBtn.disabled = false;
@@ -605,7 +605,7 @@ saveListenAllBtn.addEventListener("click", async () => {
   saveListenAllStatus.textContent = "Saving...";
   saveListenAllStatus.className = "save-status";
   try {
-    const result = await browser.mcpServer.setListenAll(listenAllCheckbox.checked);
+    const result = await browser.commonpostMcp.setListenAll(listenAllCheckbox.checked);
     if (result.error) {
       saveListenAllStatus.textContent = result.error;
       saveListenAllStatus.className = "save-status error";
@@ -628,7 +628,7 @@ retryStartBtn.addEventListener("click", async () => {
   retryStartStatus.textContent = "Starting...";
   retryStartStatus.className = "save-status";
   try {
-    const result = await browser.mcpServer.retryStart();
+    const result = await browser.commonpostMcp.retryStart();
     if (result && result.success) {
       retryStartStatus.textContent = result.alreadyRunning ? "Already running." : "Started.";
     } else {
@@ -642,5 +642,5 @@ retryStartBtn.addEventListener("click", async () => {
   retryStartBtn.disabled = false;
   await loadServerInfo();
   // The session token and connection file change on a successful start.
-  loadAuthenticationConfig().catch(e => console.error("thunderbird-mcp options:", "loadAuthenticationConfig failed:", e));
+  loadAuthenticationConfig().catch(e => console.error("commonpost-mcp options:", "loadAuthenticationConfig failed:", e));
 });

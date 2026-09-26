@@ -1,6 +1,6 @@
 # Thunderbird MCP
 
-[![CI](https://github.com/TKasperczyk/thunderbird-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/TKasperczyk/thunderbird-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/commonpost/thunderbird-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/commonpost/thunderbird-mcp/actions/workflows/ci.yml)
 [![Tools](https://img.shields.io/badge/40_Tools-email%2C_compose%2C_filters%2C_calendar%2C_contacts-blue.svg)](#what-you-can-do)
 [![Localhost Only](https://img.shields.io/badge/Privacy-localhost_only-green.svg)](#security)
 [![Thunderbird](https://img.shields.io/badge/Thunderbird-102%2B-0a84ff.svg)](https://www.thunderbird.net/)
@@ -27,7 +27,7 @@ Mail sends and event/task creation require review by default because **Block `sk
 ## How it works
 
 ```
-                    stdio              HTTP (localhost:8765-8774)
+                    stdio              HTTP (localhost:8780-8789)
   MCP Client  <----------->  Bridge  <--------------------->  Thunderbird
   (Claude, etc.)           mcp-bridge.cjs                    Extension + HTTP Server
 ```
@@ -112,7 +112,7 @@ Full control over Thunderbird's message filters. Changes persist immediately. Yo
 |------|-------------|
 | `getAccountAccess` | View which accounts the MCP server can access |
 
-Account and tool access are configured via the extension settings page (Tools > Add-ons > Thunderbird MCP > Options). Access control is not MCP-exposed -- only the user can change it.
+Account and tool access are configured via the extension settings page (Tools > Add-ons > Commonpost MCP for Thunderbird > Options). Access control is not MCP-exposed -- only the user can change it.
 
 The same settings page has a "Send Safety" section. **Block `skipReview`** is enabled by default and rejects `skipReview: true` for `sendMail`, `replyToMessage`, `forwardMessage`, `createEvent`, and `createTask`; their review window or dialog still opens normally. `skipReview` is honored only after you explicitly disable this preference.
 
@@ -123,10 +123,10 @@ The same settings page has a "Send Safety" section. **Block `skipReview`** is en
 ### 1. Install the extension
 
 ```bash
-git clone https://github.com/TKasperczyk/thunderbird-mcp.git
+git clone https://github.com/commonpost/thunderbird-mcp.git
 ```
 
-Install `dist/thunderbird-mcp.xpi` in Thunderbird (Tools > Add-ons > Install from File), then restart. A pre-built XPI is included in the repo -- no build step needed.
+Install `dist/commonpost-mcp.xpi` in Thunderbird (Tools > Add-ons > Install from File), then restart. A pre-built XPI is included in the repo -- no build step needed.
 
 **Automatic updates:** From v0.7.3 on, the add-on auto-updates through Thunderbird's add-on update check. Thunderbird downloads updates in the background and applies them on the next restart; because this add-on uses an experiment API, updates are not live hot-swapped. v0.7.3 is the last build you need to install by hand because older builds have no `update_url` and cannot auto-discover it. Thunderbird ships with `xpinstall.signatures.required=false`, so unsigned auto-updates work out of the box; a profile hardened to require signatures blocks both manual and automatic installs. If updates do not arrive, check the Add-ons gear menu and make sure **Update Add-ons Automatically** is enabled.
 
@@ -139,7 +139,7 @@ Add to your MCP client config (e.g. `~/.claude.json` for Claude Code):
   "mcpServers": {
     "thunderbird-mail": {
       "command": "node",
-      "args": ["/absolute/path/to/thunderbird-mcp/mcp-bridge.cjs"]
+      "args": ["/absolute/path/to/commonpost-mcp/mcp-bridge.cjs"]
     }
   }
 }
@@ -149,13 +149,13 @@ Add to your MCP client config (e.g. `~/.claude.json` for Claude Code):
 
 The bridge re-discovers `connection.json` on every cache miss. It tries these locations in order:
 
-1. `THUNDERBIRD_MCP_CONNECTION_FILE`, if set
-2. Native temp dir: `<os.tmpdir()>/thunderbird-mcp/connection.json`
-3. macOS fallback: `/var/folders/*/*/T/thunderbird-mcp/connection.json` owned by the current user
+1. `COMMONPOST_MCP_CONNECTION_FILE`, if set
+2. Native temp dir: `<os.tmpdir()>/commonpost-mcp/connection.json`
+3. macOS fallback: `/var/folders/*/*/T/commonpost-mcp/connection.json` owned by the current user
 4. Linux Snap: Thunderbird's live `TMPDIR` from `/proc/<pid>/environ`, plus the official snap fallback under `~/Downloads/thunderbird.tmp`
-5. Linux Flatpak / Betterbird Flatpak: `$XDG_RUNTIME_DIR/app/*/thunderbird-mcp/connection.json`
+5. Linux Flatpak / Betterbird Flatpak: `$XDG_RUNTIME_DIR/app/*/commonpost-mcp/connection.json`
 
-This covers native installs, the official Thunderbird snap, Thunderbird Flatpak, Thunderbird Beta Flatpak, and Betterbird Flatpak without changing the extension side. If multiple sandbox candidates exist at once, the bridge tries the newest file first. Set `THUNDERBIRD_MCP_CONNECTION_FILE` to force a single explicit path.
+This covers native installs, the official Thunderbird snap, Thunderbird Flatpak, Thunderbird Beta Flatpak, and Betterbird Flatpak without changing the extension side. If multiple sandbox candidates exist at once, the bridge tries the newest file first. Set `COMMONPOST_MCP_CONNECTION_FILE` to force a single explicit path.
 
 Example override:
 
@@ -164,9 +164,9 @@ Example override:
   "mcpServers": {
     "thunderbird-mail": {
       "command": "node",
-      "args": ["/absolute/path/to/thunderbird-mcp/mcp-bridge.cjs"],
+      "args": ["/absolute/path/to/commonpost-mcp/mcp-bridge.cjs"],
       "env": {
-        "THUNDERBIRD_MCP_CONNECTION_FILE": "/absolute/path/to/connection.json"
+        "COMMONPOST_MCP_CONNECTION_FILE": "/absolute/path/to/connection.json"
       }
     }
   }
@@ -179,12 +179,12 @@ That's it. Your AI can now access Thunderbird.
 
 ## Security
 
-- **Auth tokens**: The HTTP server requires a session-scoped bearer token. Generated on startup, written to `<TmpD>/thunderbird-mcp/connection.json` with 0600 permissions. The bridge re-discovers that file automatically across native installs, Snap, Flatpak, Betterbird Flatpak, and macOS temp directories.
-- **Dynamic port**: Tries ports 8765-8774, records the actual port in the connection file. No hardcoded port dependency.
+- **Auth tokens**: The HTTP server requires a session-scoped bearer token. Generated on startup, written to `<TmpD>/commonpost-mcp/connection.json` with 0600 permissions. The bridge re-discovers that file automatically across native installs, Snap, Flatpak, Betterbird Flatpak, and macOS temp directories.
+- **Dynamic port**: Tries ports 8780-8789, records the actual port in the connection file. No hardcoded port dependency.
 - **Account access control**: Restrict which email accounts are visible to MCP clients via the settings page. Changes take effect immediately.
 - **Tool access control**: Disable specific tools via the settings page. Disabled tools are hidden from `tools/list` and blocked at dispatch.
 - **Localhost only**: By default, the server binds to localhost only. The "Listen on all interfaces" option in settings binds to all IPv4 interfaces for WSL, Docker, or remote access. **This exposes the MCP server to every device on your local network.** Only enable on trusted networks. Auth token is always required.
-- **Auto-update integrity**: Auto-update is a code-delivery channel whose integrity depends on continued control of the GitHub repository, the GitHub Actions token, and the `tomaszkasperczyk.name` registration.
+- **Auto-update integrity**: Auto-update is a code-delivery channel whose integrity depends on continued control of the GitHub repository, the GitHub Actions token, and the `commonpost` GitHub organization.
 
 ---
 
@@ -194,7 +194,7 @@ That's it. Your AI can now access Thunderbird.
 |---------|-----|
 | Extension not loading | Check Tools > Add-ons and Themes. Errors: Tools > Developer Tools > Error Console |
 | Connection refused | Make sure Thunderbird is running and the extension is enabled |
-| Bridge can't find `connection.json` | Set `THUNDERBIRD_MCP_CONNECTION_FILE` explicitly if your environment uses a non-standard temp/runtime path |
+| Bridge can't find `connection.json` | Set `COMMONPOST_MCP_CONNECTION_FILE` explicitly if your environment uses a non-standard temp/runtime path |
 | Missing recent emails | IMAP folders can be stale. Click the folder in Thunderbird to sync, or right-click > Properties > Repair Folder |
 | Tool not found after update | Reconnect MCP (`/mcp` in Claude Code) to pick up new tools |
 | `searchBody` returns no results | IMAP accounts need offline sync enabled for Gloda to index message bodies |
@@ -213,8 +213,8 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | node mcp-bridge.cjs
 
 # Test the HTTP API directly.
 # On Snap / Flatpak / Betterbird Flatpak / macOS, point CONN_FILE at the
-# real file or export THUNDERBIRD_MCP_CONNECTION_FILE first.
-CONN_FILE="${THUNDERBIRD_MCP_CONNECTION_FILE:-/tmp/thunderbird-mcp/connection.json}"
+# real file or export COMMONPOST_MCP_CONNECTION_FILE first.
+CONN_FILE="${COMMONPOST_MCP_CONNECTION_FILE:-/tmp/commonpost-mcp/connection.json}"
 TOKEN=$(jq -r .token "$CONN_FILE")
 PORT=$(jq -r .port "$CONN_FILE")
 curl -X POST http://127.0.0.1:$PORT \
@@ -230,7 +230,7 @@ curl -X POST http://127.0.0.1:$PORT \
 ## Project structure
 
 ```
-thunderbird-mcp/
+commonpost-mcp/
 ├── mcp-bridge.cjs              # stdio <-> HTTP bridge (auth, port discovery)
 ├── extension/
 │   ├── manifest.json

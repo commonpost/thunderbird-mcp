@@ -2,8 +2,8 @@
 /**
  * MCP Bridge for Thunderbird
  *
- * Converts stdio MCP protocol to HTTP requests for the Thunderbird MCP extension.
- * The extension exposes an HTTP endpoint on localhost:8765.
+ * Converts stdio MCP protocol to HTTP requests for the Commonpost MCP extension.
+ * The extension exposes an HTTP endpoint on localhost:8780.
  */
 
 const http = require('http');
@@ -19,7 +19,7 @@ const CONNECTION_CACHE_TTL_MS = 5000; // 5 seconds
 
 const DEFAULT_PROC_ROOT = '/proc';
 const DEFAULT_DARWIN_FOLDERS_ROOT = '/var/folders';
-const THUNDERBIRD_MCP_SUBDIR = 'thunderbird-mcp';
+const COMMONPOST_MCP_SUBDIR = 'commonpost-mcp';
 const CONNECTION_FILE_BASENAME = 'connection.json';
 const AUTH_TOKEN_PATTERN = /^[0-9a-f]{64}$/;
 
@@ -44,15 +44,15 @@ const BRIDGE_VERSION = (() => {
   }
 })();
 const SERVER_INFO = Object.freeze({
-  name: 'thunderbird-mcp',
+  name: 'commonpost-mcp',
   version: BRIDGE_VERSION,
 });
 
-const DEBUG = !!process.env.THUNDERBIRD_MCP_DEBUG;
+const DEBUG = !!process.env.COMMONPOST_MCP_DEBUG;
 
 function debugLog(message) {
   if (DEBUG) {
-    process.stderr.write('[thunderbird-mcp] ' + message + '\n');
+    process.stderr.write('[commonpost-mcp] ' + message + '\n');
   }
 }
 
@@ -129,7 +129,7 @@ function getRuntimeDir({ env, pathImpl, uid }) {
 function getDefaultConnectionFile(context) {
   return context.pathImpl.join(
     context.osImpl.tmpdir(),
-    THUNDERBIRD_MCP_SUBDIR,
+    COMMONPOST_MCP_SUBDIR,
     CONNECTION_FILE_BASENAME
   );
 }
@@ -180,7 +180,7 @@ function findMacOsConnectionCandidates(context) {
     '*',
     '*',
     'T',
-    THUNDERBIRD_MCP_SUBDIR,
+    COMMONPOST_MCP_SUBDIR,
     CONNECTION_FILE_BASENAME
   );
 
@@ -219,7 +219,7 @@ function findMacOsConnectionCandidates(context) {
         firstPath,
         secondDir.name,
         'T',
-        THUNDERBIRD_MCP_SUBDIR,
+        COMMONPOST_MCP_SUBDIR,
         CONNECTION_FILE_BASENAME
       );
 
@@ -292,7 +292,7 @@ function findSnapConnectionCandidates(context) {
         }
 
         const tmpDir = tmpEntry.slice('TMPDIR='.length);
-        const candidatePath = pathImpl.join(tmpDir, THUNDERBIRD_MCP_SUBDIR, CONNECTION_FILE_BASENAME);
+        const candidatePath = pathImpl.join(tmpDir, COMMONPOST_MCP_SUBDIR, CONNECTION_FILE_BASENAME);
         let mtimeMs = Number.NEGATIVE_INFINITY;
         try {
           mtimeMs = fsImpl.statSync(candidatePath).mtimeMs;
@@ -321,7 +321,7 @@ function findSnapConnectionCandidates(context) {
     homeDir,
     'Downloads',
     'thunderbird.tmp',
-    THUNDERBIRD_MCP_SUBDIR,
+    COMMONPOST_MCP_SUBDIR,
     CONNECTION_FILE_BASENAME
   );
   let fallbackMtime = Number.NEGATIVE_INFINITY;
@@ -346,7 +346,7 @@ function findFlatpakConnectionCandidates(context) {
     patternBase,
     'app',
     '*',
-    THUNDERBIRD_MCP_SUBDIR,
+    COMMONPOST_MCP_SUBDIR,
     CONNECTION_FILE_BASENAME
   );
 
@@ -379,7 +379,7 @@ function findFlatpakConnectionCandidates(context) {
     const candidatePath = pathImpl.join(
       appRoot,
       appEntry.name,
-      THUNDERBIRD_MCP_SUBDIR,
+      COMMONPOST_MCP_SUBDIR,
       CONNECTION_FILE_BASENAME
     );
 
@@ -403,13 +403,13 @@ function buildCandidateGroups(options = {}) {
   const context = createDiscoveryContext(options);
   const groups = [];
 
-  if (context.env.THUNDERBIRD_MCP_CONNECTION_FILE) {
+  if (context.env.COMMONPOST_MCP_CONNECTION_FILE) {
     groups.push({
       notes: [],
       candidates: [
         makeCandidate(
-          'THUNDERBIRD_MCP_CONNECTION_FILE',
-          context.env.THUNDERBIRD_MCP_CONNECTION_FILE
+          'COMMONPOST_MCP_CONNECTION_FILE',
+          context.env.COMMONPOST_MCP_CONNECTION_FILE
         )
       ],
       stopOnFailure: true,
@@ -484,7 +484,7 @@ function discoverConnectionInfo(options = {}) {
       if (result.ok) {
         candidates.push({ data: result.data, path: candidate.path });
         if (group.stopOnFailure) {
-          // Hard pin (e.g. THUNDERBIRD_MCP_CONNECTION_FILE): user explicitly named
+          // Hard pin (e.g. COMMONPOST_MCP_CONNECTION_FILE): user explicitly named
           // this candidate; honor it and don't fall through to autodiscovery.
           return { candidates, attempts };
         }

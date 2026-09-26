@@ -3,7 +3,7 @@
 // would trigger no-redeclare.
 async function init() {
   try {
-    const result = await browser.mcpServer.start();
+    const result = await browser.commonpostMcp.start();
     if (result.success) {
       console.log("MCP server started on port", result.port);
     } else {

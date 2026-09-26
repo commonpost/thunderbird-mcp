@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the Thunderbird MCP extension
+# Build the Commonpost MCP extension
 
 set -e
 
@@ -9,7 +9,7 @@ EXTENSION_DIR="$PROJECT_DIR/extension"
 DIST_DIR="$PROJECT_DIR/dist"
 PACKAGE_JSON="$PROJECT_DIR/package.json"
 
-echo "Building Thunderbird MCP extension..."
+echo "Building Commonpost MCP extension..."
 
 if command -v node > /dev/null 2>&1; then
   PACKAGE_VERSION=$(node -e "
@@ -38,7 +38,7 @@ fi
 mkdir -p "$DIST_DIR"
 
 # Remove old XPI to ensure a clean build
-rm -f "$DIST_DIR/thunderbird-mcp.xpi"
+rm -f "$DIST_DIR/commonpost-mcp.xpi"
 
 # Stamp build version info (git-describe + timestamp) into buildinfo.json
 VERSION="unknown"
@@ -72,6 +72,6 @@ echo "Manifest version: $PACKAGE_VERSION"
 
 # Package extension
 cd "$EXTENSION_DIR"
-zip -r "$DIST_DIR/thunderbird-mcp.xpi" . -x "*.DS_Store" -x "*.git*"
+zip -r "$DIST_DIR/commonpost-mcp.xpi" . -x "*.DS_Store" -x "*.git*"
 
-echo "Built: $DIST_DIR/thunderbird-mcp.xpi"
+echo "Built: $DIST_DIR/commonpost-mcp.xpi"

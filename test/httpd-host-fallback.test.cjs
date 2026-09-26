@@ -37,8 +37,8 @@ function makeIdentity({
   boundHost = "localhost",
   primaryScheme = "http",
   primaryHost = "localhost",
-  primaryPort = 8765,
-  locations = [{ scheme: "http", host: "localhost", port: 8765 }],
+  primaryPort = 8780,
+  locations = [{ scheme: "http", host: "localhost", port: 8780 }],
 } = {}) {
   const schemes = new Map();
   for (const location of locations) {
@@ -72,15 +72,15 @@ describe("httpd Host header identity resolution", () => {
   it("keeps a recognized Host identity unchanged", () => {
     const identity = makeIdentity({
       locations: [
-        { scheme: "http", host: "localhost", port: 8765 },
-        { scheme: "http", host: "127.0.0.1", port: 8765 },
+        { scheme: "http", host: "localhost", port: 8780 },
+        { scheme: "http", host: "127.0.0.1", port: 8780 },
       ],
     });
 
-    assertResolved(resolveIdentityFromHostHeader(identity, "127.0.0.1:8765"), {
+    assertResolved(resolveIdentityFromHostHeader(identity, "127.0.0.1:8780"), {
       scheme: "http",
       host: "127.0.0.1",
-      port: 8765,
+      port: 8780,
     });
   });
 
@@ -97,17 +97,17 @@ describe("httpd Host header identity resolution", () => {
     const identity = makeIdentity({
       boundHost: "0.0.0.0",
       primaryHost: "localhost",
-      primaryPort: 8765,
+      primaryPort: 8780,
       locations: [
-        { scheme: "http", host: "localhost", port: 8765 },
-        { scheme: "http", host: "127.0.0.1", port: 8765 },
+        { scheme: "http", host: "localhost", port: 8780 },
+        { scheme: "http", host: "127.0.0.1", port: 8780 },
       ],
     });
 
     assertResolved(resolveIdentityFromHostHeader(identity, "reverse-proxy.example:443"), {
       scheme: "http",
       host: "localhost",
-      port: 8765,
+      port: 8780,
     });
   });
 
@@ -115,13 +115,13 @@ describe("httpd Host header identity resolution", () => {
     const identity = makeIdentity({
       boundHost: "0.0.0.0",
       primaryHost: "localhost",
-      primaryPort: 8765,
+      primaryPort: 8780,
     });
 
     assertResolved(resolveIdentityFromHostHeader(identity, "127.0.0.1:49152"), {
       scheme: "http",
       host: "localhost",
-      port: 8765,
+      port: 8780,
     });
   });
 
@@ -129,7 +129,7 @@ describe("httpd Host header identity resolution", () => {
     const identity = makeIdentity({ boundHost: "0.0.0.0" });
 
     assertBadRequest(
-      resolveIdentityFromHostHeader(identity, "bad host:8765"),
+      resolveIdentityFromHostHeader(identity, "bad host:8780"),
       "malformed"
     );
     assertBadRequest(
@@ -142,15 +142,15 @@ describe("httpd Host header identity resolution", () => {
     const identity = makeIdentity({
       primaryHost: "[::1]",
       locations: [
-        { scheme: "http", host: "[::1]", port: 8765 },
+        { scheme: "http", host: "[::1]", port: 8780 },
         { scheme: "http", host: "example.com", port: 80 },
       ],
     });
 
-    assertResolved(resolveIdentityFromHostHeader(identity, "[::1]:8765"), {
+    assertResolved(resolveIdentityFromHostHeader(identity, "[::1]:8780"), {
       scheme: "http",
       host: "[::1]",
-      port: 8765,
+      port: 8780,
     });
     assertResolved(resolveIdentityFromHostHeader(identity, "example.com"), {
       scheme: "http",

@@ -296,14 +296,14 @@ describe('Bridge discovery', () => {
 
   it('env var override takes priority', () => {
     const options = makeTestOptions(root, {
-      env: { THUNDERBIRD_MCP_CONNECTION_FILE: path.join(root, 'env', 'connection.json') },
+      env: { COMMONPOST_MCP_CONNECTION_FILE: path.join(root, 'env', 'connection.json') },
     });
 
-    writeConnectionFile(path.join(root, 'tmp', 'thunderbird-mcp', 'connection.json'), {
+    writeConnectionFile(path.join(root, 'tmp', 'commonpost-mcp', 'connection.json'), {
       port: 20001,
       token: 'native-token',
     });
-    writeConnectionFile(options.env.THUNDERBIRD_MCP_CONNECTION_FILE, {
+    writeConnectionFile(options.env.COMMONPOST_MCP_CONNECTION_FILE, {
       port: 20002,
       token: 'env-token',
     });
@@ -337,7 +337,7 @@ describe('Bridge discovery', () => {
       'utf8'
     );
 
-    writeConnectionFile(path.join(snapTmpDir, 'thunderbird-mcp', 'connection.json'), {
+    writeConnectionFile(path.join(snapTmpDir, 'commonpost-mcp', 'connection.json'), {
       port: 20003,
       token: 'snap-token',
     });
@@ -371,7 +371,7 @@ describe('Bridge discovery', () => {
       'utf8'
     );
     // If the decoy was picked up, the bridge would read this file and succeed.
-    writeConnectionFile(path.join(decoyTmpDir, 'thunderbird-mcp', 'connection.json'), {
+    writeConnectionFile(path.join(decoyTmpDir, 'commonpost-mcp', 'connection.json'), {
       port: 29999,
       token: 'attacker-token',
     });
@@ -392,7 +392,7 @@ describe('Bridge discovery', () => {
       options.runtimeDir,
       'app',
       'eu.betterbird.Betterbird',
-      'thunderbird-mcp',
+      'commonpost-mcp',
       'connection.json'
     );
     writeConnectionFile(flatpakConnFile, {
@@ -418,8 +418,8 @@ describe('Bridge discovery', () => {
       uid: currentUid,
     });
 
-    const ownedConnFile = path.join(darwinRoot, 'aa', 'bb', 'T', 'thunderbird-mcp', 'connection.json');
-    const foreignConnFile = path.join(darwinRoot, 'cc', 'dd', 'T', 'thunderbird-mcp', 'connection.json');
+    const ownedConnFile = path.join(darwinRoot, 'aa', 'bb', 'T', 'commonpost-mcp', 'connection.json');
+    const foreignConnFile = path.join(darwinRoot, 'cc', 'dd', 'T', 'commonpost-mcp', 'connection.json');
 
     writeConnectionFile(ownedConnFile, {
       port: 20005,
@@ -458,7 +458,7 @@ describe('Bridge discovery', () => {
       options.runtimeDir,
       'app',
       'org.mozilla.thunderbird',
-      'thunderbird-mcp',
+      'commonpost-mcp',
       'connection.json'
     );
     writeConnectionFile(delayedConnFile, {
@@ -473,12 +473,12 @@ describe('Bridge discovery', () => {
 
   it('reports useful discovery failures', () => {
     const options = makeTestOptions(root, {
-      env: { THUNDERBIRD_MCP_CONNECTION_FILE: path.join(root, 'missing', 'connection.json') },
+      env: { COMMONPOST_MCP_CONNECTION_FILE: path.join(root, 'missing', 'connection.json') },
       platform: 'linux',
     });
 
     assert.equal(readConnectionInfo(options), null);
-    assert.match(buildConnectionDiscoveryErrorMessage(), /THUNDERBIRD_MCP_CONNECTION_FILE/);
+    assert.match(buildConnectionDiscoveryErrorMessage(), /COMMONPOST_MCP_CONNECTION_FILE/);
     assert.match(buildConnectionDiscoveryErrorMessage(), /file not found/);
   });
 
@@ -489,14 +489,14 @@ describe('Bridge discovery', () => {
     });
 
     // Native /tmp file (first group, winner)
-    writeConnectionFile(path.join(root, 'tmp', 'thunderbird-mcp', 'connection.json'), {
+    writeConnectionFile(path.join(root, 'tmp', 'commonpost-mcp', 'connection.json'), {
       port: 20100,
       token: 'native',
     });
 
     // Flatpak runtime file (later group, also valid)
     writeConnectionFile(
-      path.join(options.runtimeDir, 'app', 'org.mozilla.thunderbird', 'thunderbird-mcp', 'connection.json'),
+      path.join(options.runtimeDir, 'app', 'org.mozilla.thunderbird', 'commonpost-mcp', 'connection.json'),
       { port: 20101, token: 'flatpak' }
     );
 
@@ -512,12 +512,12 @@ describe('Bridge discovery', () => {
       runtimeDir: path.join(root, 'runtime'),
     });
 
-    writeConnectionFile(path.join(root, 'tmp', 'thunderbird-mcp', 'connection.json'), {
+    writeConnectionFile(path.join(root, 'tmp', 'commonpost-mcp', 'connection.json'), {
       port: 20200,
       token: 'first',
     });
     writeConnectionFile(
-      path.join(options.runtimeDir, 'app', 'org.mozilla.thunderbird', 'thunderbird-mcp', 'connection.json'),
+      path.join(options.runtimeDir, 'app', 'org.mozilla.thunderbird', 'commonpost-mcp', 'connection.json'),
       { port: 20201, token: 'second' }
     );
 
@@ -541,14 +541,14 @@ describe('Bridge discovery', () => {
     const options = makeTestOptions(root, {
       platform: 'linux',
       runtimeDir: path.join(root, 'runtime'),
-      env: { THUNDERBIRD_MCP_CONNECTION_FILE: path.join(root, 'pinned', 'connection.json') },
+      env: { COMMONPOST_MCP_CONNECTION_FILE: path.join(root, 'pinned', 'connection.json') },
     });
 
-    writeConnectionFile(options.env.THUNDERBIRD_MCP_CONNECTION_FILE, {
+    writeConnectionFile(options.env.COMMONPOST_MCP_CONNECTION_FILE, {
       port: 20300,
       token: 'pinned',
     });
-    writeConnectionFile(path.join(root, 'tmp', 'thunderbird-mcp', 'connection.json'), {
+    writeConnectionFile(path.join(root, 'tmp', 'commonpost-mcp', 'connection.json'), {
       port: 20301,
       token: 'should-not-appear',
     });

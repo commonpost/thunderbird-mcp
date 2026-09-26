@@ -4,10 +4,10 @@
 "use strict";
 
 /**
- * Thunderbird MCP Server Extension
+ * Commonpost MCP for Thunderbird (server extension)
  * Exposes email, calendar, and contacts via MCP protocol over HTTP.
  *
- * Architecture: MCP Client <-> mcp-bridge.cjs (stdio<->HTTP) <-> This extension (port 8765)
+ * Architecture: MCP Client <-> mcp-bridge.cjs (stdio<->HTTP) <-> This extension (port 8780)
  *
  * Key quirks documented inline:
  * - MIME header decoding (mime2Decoded* properties)
@@ -20,7 +20,7 @@ const resProto = Cc[
   "@mozilla.org/network/protocol;1?name=resource"
 ].getService(Ci.nsISubstitutingProtocolHandler);
 
-const MCP_DEFAULT_PORT = 8765;
+const MCP_DEFAULT_PORT = 8780;
 const MCP_MAX_PORT_ATTEMPTS = 10;
 const CONNECTION_FILE_REFRESH_MS = 30 * 1000;
 
@@ -45,13 +45,13 @@ function isListenAllEnabled() {
 }
 
 function stopConnectionInfoRefreshTimer() {
-  if (globalThis.__tbMcpConnectionInfoRefreshTimer) {
+  if (globalThis.__cpMcpConnectionInfoRefreshTimer) {
     try {
-      globalThis.__tbMcpConnectionInfoRefreshTimer.cancel();
+      globalThis.__cpMcpConnectionInfoRefreshTimer.cancel();
     } catch (e) {
-      console.warn("thunderbird-mcp: failed to stop connection info refresh timer:", e);
+      console.warn("commonpost-mcp: failed to stop connection info refresh timer:", e);
     }
-    globalThis.__tbMcpConnectionInfoRefreshTimer = null;
+    globalThis.__cpMcpConnectionInfoRefreshTimer = null;
   }
 }
 
@@ -86,12 +86,12 @@ function ensureFreshConnectionInfo({
 
 // BEGIN SERVER START STATE HELPERS
 // Start bookkeeping (#179). The start body is fully synchronous, so a reset of
-// __tbMcpStartPromise inside its catch block ran BEFORE start() stored the
+// __cpMcpStartPromise inside its catch block ran BEFORE start() stored the
 // promise: a failed start then left a truthy promise behind, getServerInfo
 // reported "running", and every later start() returned the cached failure until
 // Thunderbird was restarted. These helpers own the sentinel instead:
 //   - a failed start drops the cached promise so a retry can bind again;
-//   - the failure is remembered in __tbMcpStartError ({ message, at }) and
+//   - the failure is remembered in __cpMcpStartError ({ message, at }) and
 //     cleared by the next successful start;
 //   - "running" is derived from the real server object, not the promise.
 function describeStartError(e) {
@@ -102,8 +102,8 @@ function describeStartError(e) {
 
 async function runGuardedStart(state, startBody) {
   // Concurrent callers share one attempt (extension reload, onStartup + init()).
-  if (state.__tbMcpStartPromise) {
-    return await state.__tbMcpStartPromise;
+  if (state.__cpMcpStartPromise) {
+    return await state.__cpMcpStartPromise;
   }
   const attempt = (async () => {
     try {
@@ -113,25 +113,25 @@ async function runGuardedStart(state, startBody) {
     }
   })();
   // Stored before the body's result is examined; the body cannot clear it.
-  state.__tbMcpStartPromise = attempt;
+  state.__cpMcpStartPromise = attempt;
   const result = await attempt;
   if (result && result.success) {
-    state.__tbMcpStartError = null;
+    state.__cpMcpStartError = null;
   } else {
-    state.__tbMcpStartError = {
+    state.__cpMcpStartError = {
       message: describeStartError(result && result.error),
       at: new Date().toISOString(),
     };
-    if (state.__tbMcpStartPromise === attempt) {
-      state.__tbMcpStartPromise = null;
+    if (state.__cpMcpStartPromise === attempt) {
+      state.__cpMcpStartPromise = null;
     }
   }
   return result;
 }
 
 function computeServerRunState(state) {
-  const running = !!state.__tbMcpServer;
-  const err = running ? null : (state.__tbMcpStartError || null);
+  const running = !!state.__cpMcpServer;
+  const err = running ? null : (state.__cpMcpStartError || null);
   return {
     running,
     startError: err ? err.message : null,
@@ -753,7 +753,7 @@ function shouldSynthesizePhoneDisplayName(fields) {
 function getExtVersion() {
   if (_cachedExtVersion) return _cachedExtVersion;
   try {
-    const uri = Services.io.newURI("resource://thunderbird-mcp/manifest.json");
+    const uri = Services.io.newURI("resource://commonpost-mcp/manifest.json");
     const channel = Services.io.newChannelFromURI(uri, null,
       Services.scriptSecurityManager.getSystemPrincipal(), null,
       Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
@@ -765,7 +765,7 @@ function getExtVersion() {
     sis.close();
     _cachedExtVersion = JSON.parse(text).version || "0.0.0";
   } catch (e) {
-    console.warn("thunderbird-mcp: could not read extension manifest version:", e);
+    console.warn("commonpost-mcp: could not read extension manifest version:", e);
     _cachedExtVersion = "0.0.0";
   }
   return _cachedExtVersion;
@@ -812,7 +812,7 @@ const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
   "image/gif",
   "image/webp",
 ]);
-const MCP_EXTRA_CONTENT_BLOCKS = Symbol("thunderbird-mcp.extra-content-blocks");
+const MCP_EXTRA_CONTENT_BLOCKS = Symbol("commonpost-mcp.extra-content-blocks");
 
 function normalizeInlineImageMimeType(contentType) {
   return ((String(contentType || "").split(";")[0] || "").trim().toLowerCase());
@@ -1044,13 +1044,13 @@ function isSensitiveFilePath(attachmentPath) {
 // END SENSITIVE ATTACHMENT PATH HELPERS
 let _tempFileCounter = 0;
 const DEFAULT_MAX_RESULTS = 50;
-const PREF_ALLOWED_ACCOUNTS = "extensions.thunderbird-mcp.allowedAccounts";
-const PREF_DISABLED_TOOLS = "extensions.thunderbird-mcp.disabledTools";
-const PREF_BLOCK_SKIPREVIEW = "extensions.thunderbird-mcp.blockSkipReview";
-const PREF_STABLE_AUTH_TOKEN = "extensions.thunderbird-mcp.stableAuthToken";
-const PREF_GET_MESSAGES_LIMIT = "extensions.thunderbird-mcp.getMessagesLimit";
-const PREF_LISTEN_ALL = "extensions.thunderbird-mcp.listenAll";
-const PREF_BLOCK_FILTER_FORWARD_REPLY = "extensions.thunderbird-mcp.blockFilterForwardReply";
+const PREF_ALLOWED_ACCOUNTS = "extensions.commonpost-mcp.allowedAccounts";
+const PREF_DISABLED_TOOLS = "extensions.commonpost-mcp.disabledTools";
+const PREF_BLOCK_SKIPREVIEW = "extensions.commonpost-mcp.blockSkipReview";
+const PREF_STABLE_AUTH_TOKEN = "extensions.commonpost-mcp.stableAuthToken";
+const PREF_GET_MESSAGES_LIMIT = "extensions.commonpost-mcp.getMessagesLimit";
+const PREF_LISTEN_ALL = "extensions.commonpost-mcp.listenAll";
+const PREF_BLOCK_FILTER_FORWARD_REPLY = "extensions.commonpost-mcp.blockFilterForwardReply";
 const AUTH_TOKEN_PATTERN = /^[0-9a-f]{64}$/;
 // Valid group and CRUD values for tool metadata validation
 const VALID_GROUPS = ["messages", "folders", "contacts", "calendar", "filters", "system"];
@@ -1756,7 +1756,7 @@ function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSend
 
 // ── "No sending rule without review" guard ──
 //
-// Preference extensions.thunderbird-mcp.blockFilterForwardReply (default
+// Preference extensions.commonpost-mcp.blockFilterForwardReply (default
 // true). A filter that forwards or replies sends mail automatically, without
 // the review window the compose tools keep: a prompt-injected client could use
 // one to exfiltrate every incoming message. While the guard is on:
@@ -1773,7 +1773,7 @@ const FILTER_SEND_ACTION_TYPES = ["Forward", "Reply"]
   .filter((v) => v !== undefined);
 const FILTER_TYPE_POST_OUTGOING = resolveXpcomConstant("nsMsgFilterType", "PostOutgoing") ?? 0x40;
 const FILTER_SEND_GUARD_NOTE =
-  'blocked by the "Block filter forward/reply" setting (extensions.thunderbird-mcp.blockFilterForwardReply, on by default); '
+  'blocked by the "Block filter forward/reply" setting (extensions.commonpost-mcp.blockFilterForwardReply, on by default); '
   + "review and change such rules in Thunderbird's filter editor";
 
 function isSendingActionType(type) {
@@ -1828,10 +1828,10 @@ function assertFilterListGuard(filterList, operation, targetIndex) {
 }
 // END FILTER RULE HELPERS
 
-var mcpServer = class extends ExtensionCommon.ExtensionAPI {
+var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
   getAPI(context) {
     const extensionRoot = context.extension.rootURI;
-    const resourceName = "thunderbird-mcp";
+    const resourceName = "commonpost-mcp";
 
     resProto.setSubstitutionWithFlags(
       resourceName,
@@ -1961,7 +1961,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
           properties: {
             messageId: { type: "string", description: "The message ID (from searchMessages results)" },
             folderPath: { type: "string", description: "The folder URI path (from searchMessages results)" },
-            saveAttachments: { type: "boolean", description: "If true, save attachments to <OS temp dir>/thunderbird-mcp/<messageId>/ and include filePath in response (default: false)" },
+            saveAttachments: { type: "boolean", description: "If true, save attachments to <OS temp dir>/commonpost-mcp/<messageId>/ and include filePath in response (default: false)" },
             includeInlineImages: { type: "boolean", description: "If true, append supported inline email images as MCP image content blocks after the text result (default: false; max 1 MiB base64 per image and 4 MiB total). Images referenced by the rendered body are attempted first in document order, followed by remaining inline images in MIME order. Ignored when rawSource is true." },
             bodyFormat: { type: "string", enum: ["markdown", "text", "html"], description: "Body output format: 'markdown' (default, preserves structure), 'text' (plain text), 'html' (raw HTML)" },
             rawSource: { type: "boolean", description: "If true, return the full raw RFC 2822 message source (all headers + MIME parts). Useful for extracting calendar invites, S/MIME data, or debugging. Other fields (body, attachments) are omitted when this is set. Note: requires local/offline message copy; IMAP messages not cached offline may fail." },
@@ -2689,7 +2689,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
         name: "getAccountAccess",
         group: "system", crud: "read",
         title: "Get Account Access",
-        description: "Get the current account access control list. Shows which accounts the MCP server can access. Account access is configured by the user in the extension settings page (Tools > Add-ons > Thunderbird MCP > Options) and cannot be changed via MCP tools.",
+        description: "Get the current account access control list. Shows which accounts the MCP server can access. Account access is configured by the user in the extension settings page (Tools > Add-ons > Commonpost MCP for Thunderbird > Options) and cannot be changed via MCP tools.",
         inputSchema: { type: "object", properties: {}, required: [] },
       },
       ];
@@ -2710,7 +2710,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
       }
     }
     if (toolErrors.length > 0) {
-      console.error("thunderbird-mcp: Tool metadata validation failed:\n  " + toolErrors.join("\n  "));
+      console.error("commonpost-mcp: Tool metadata validation failed:\n  " + toolErrors.join("\n  "));
     }
 
     // Derive ALL_TOOL_NAMES from the tools array (single source of truth)
@@ -2742,12 +2742,12 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
         const token = pref.trim();
         if (!token) {
           if (pref) {
-            console.warn("thunderbird-mcp: stableAuthToken preference is malformed; expected 64 lowercase hex characters, ignoring stored value");
+            console.warn("commonpost-mcp: stableAuthToken preference is malformed; expected 64 lowercase hex characters, ignoring stored value");
           }
           return "";
         }
         if (!AUTH_TOKEN_PATTERN.test(token)) {
-          console.warn("thunderbird-mcp: stableAuthToken preference is malformed; expected 64 lowercase hex characters, ignoring stored value");
+          console.warn("commonpost-mcp: stableAuthToken preference is malformed; expected 64 lowercase hex characters, ignoring stored value");
           return "";
         }
         return token;
@@ -2758,7 +2758,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
 
     function readConnectionInfo() {
       const tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
-      tmpDir.append("thunderbird-mcp");
+      tmpDir.append("commonpost-mcp");
       const connFile = tmpDir.clone();
       connFile.append("connection.json");
       if (!connFile.exists()) {
@@ -2781,7 +2781,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
     function removeConnectionInfo() {
       try {
         const tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
-        tmpDir.append("thunderbird-mcp");
+        tmpDir.append("commonpost-mcp");
         const connFile = tmpDir.clone();
         connFile.append("connection.json");
         if (connFile.exists()) {
@@ -2793,20 +2793,20 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
     }
 
     return {
-      mcpServer: {
+      commonpostMcp: {
         start: async function() {
           // runGuardedStart owns the double-start guard (extension reload,
           // port conflict), the cached promise and the remembered error (#179).
           return await runGuardedStart(globalThis, async () => {
           try {
             // Stop any previously running server (e.g. extension reload)
-            if (globalThis.__tbMcpServer) {
-              try { globalThis.__tbMcpServer.stop(() => {}); } catch { /* ignore */ }
-              globalThis.__tbMcpServer = null;
+            if (globalThis.__cpMcpServer) {
+              try { globalThis.__cpMcpServer.stop(() => {}); } catch { /* ignore */ }
+              globalThis.__cpMcpServer = null;
               stopConnectionInfoRefreshTimer();
             }
             const { HttpServer } = ChromeUtils.importESModule(
-              "resource://thunderbird-mcp/httpd.sys.mjs?" + Date.now()
+              "resource://commonpost-mcp/httpd.sys.mjs?" + Date.now()
             );
             const { NetUtil } = ChromeUtils.importESModule(
               "resource://gre/modules/NetUtil.sys.mjs"
@@ -2959,15 +2959,15 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             /**
              * Write connection info (port + auth token) to a well-known file
              * so the bridge can discover how to connect.
-             * File: <TmpD>/thunderbird-mcp/connection.json
+             * File: <TmpD>/commonpost-mcp/connection.json
              */
             function writeConnectionInfo(port, token) {
               const tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
-              tmpDir.append("thunderbird-mcp");
+              tmpDir.append("commonpost-mcp");
               if (!tmpDir.exists()) {
                 tmpDir.create(Ci.nsIFile.DIRECTORY_TYPE, 0o700);
               } else if (tmpDir.isSymlink()) {
-                throw new Error("thunderbird-mcp tmp directory is a symlink — refusing to write connection info");
+                throw new Error("commonpost-mcp tmp directory is a symlink — refusing to write connection info");
               } else if (Services.appinfo.OS !== "WINNT") {
                 // POSIX hardening: on a shared /tmp another local user could
                 // pre-create the directory with group/world bits set, then race
@@ -2985,11 +2985,11 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                   if (mode && (mode & 0o077) !== 0) {
                     try { tmpDir.permissions = 0o700; } catch { /* best-effort */ }
                     if ((tmpDir.permissions & 0o077) !== 0) {
-                      throw new Error("thunderbird-mcp tmp directory has group/world permissions — refusing to write connection info");
+                      throw new Error("commonpost-mcp tmp directory has group/world permissions — refusing to write connection info");
                     }
                   }
                 } catch (e) {
-                  if (e && e.message && e.message.startsWith("thunderbird-mcp tmp directory")) throw e;
+                  if (e && e.message && e.message.startsWith("commonpost-mcp tmp directory")) throw e;
                   // ignore: permissions accessor unsupported on this platform
                 }
               }
@@ -3023,7 +3023,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 readConnectionInfo,
                 writeConnectionInfo,
                 onCheckError: (e) => {
-                  console.warn("thunderbird-mcp: connection info check failed; rewriting:", e);
+                  console.warn("commonpost-mcp: connection info check failed; rewriting:", e);
                 },
               });
             }
@@ -3035,10 +3035,10 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 try {
                   ensureConnectionInfo(port, token);
                 } catch (e) {
-                  console.warn("thunderbird-mcp: failed to refresh connection info:", e);
+                  console.warn("commonpost-mcp: failed to refresh connection info:", e);
                 }
               }, CONNECTION_FILE_REFRESH_MS, Ci.nsITimer.TYPE_REPEATING_SLACK);
-              globalThis.__tbMcpConnectionInfoRefreshTimer = timer;
+              globalThis.__cpMcpConnectionInfoRefreshTimer = timer;
             }
 
             const authToken = getStableAuthTokenPref() || generateAuthToken();
@@ -3067,13 +3067,13 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 if (!pref) return [];
                 const parsed = JSON.parse(pref);
                 if (!Array.isArray(parsed)) {
-                  console.error("thunderbird-mcp: allowed accounts pref is not an array, blocking all accounts");
+                  console.error("commonpost-mcp: allowed accounts pref is not an array, blocking all accounts");
                   return ["__invalid__"];
                 }
                 return parsed;
               } catch (e) {
                 // Fail closed: corrupt pref means block all accounts, not allow all
-                console.error("thunderbird-mcp: failed to parse allowed accounts pref, blocking all accounts:", e);
+                console.error("commonpost-mcp: failed to parse allowed accounts pref, blocking all accounts:", e);
                 return ["__invalid__"];
               }
             }
@@ -3117,7 +3117,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 return Services.prefs.getBoolPref(PREF_BLOCK_FILTER_FORWARD_REPLY, true);
               } catch (e) {
                 // Fail closed: an unreadable pref keeps the guard on.
-                console.warn("thunderbird-mcp: blockFilterForwardReply unreadable, guard stays on:", e);
+                console.warn("commonpost-mcp: blockFilterForwardReply unreadable, guard stays on:", e);
                 return true;
               }
             }
@@ -3133,12 +3133,12 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 if (!pref) return [];
                 const parsed = JSON.parse(pref);
                 if (!Array.isArray(parsed) || !parsed.every(v => typeof v === "string")) {
-                  console.error("thunderbird-mcp: disabled tools pref is invalid, disabling all tools");
+                  console.error("commonpost-mcp: disabled tools pref is invalid, disabling all tools");
                   return ["__all__"];
                 }
                 return parsed;
               } catch (e) {
-                console.error("thunderbird-mcp: failed to parse disabled tools pref, disabling all tools:", e);
+                console.error("commonpost-mcp: failed to parse disabled tools pref, disabling all tools:", e);
                 return ["__all__"];
               }
             }
@@ -3300,7 +3300,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                     depth
                   });
                 } catch (e) {
-                  console.warn("thunderbird-mcp: listFolders skipped inaccessible folder", folder?.URI || folder?.name, e);
+                  console.warn("commonpost-mcp: listFolders skipped inaccessible folder", folder?.URI || folder?.name, e);
                 }
 
                 try {
@@ -3310,7 +3310,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                     }
                   }
                 } catch (e) {
-                  console.warn("thunderbird-mcp: listFolders subfolder traversal failed for folder", folder?.URI || folder?.name, e);
+                  console.warn("commonpost-mcp: listFolders subfolder traversal failed for folder", folder?.URI || folder?.name, e);
                 }
               }
 
@@ -3348,7 +3348,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                     }
                   }
                 } catch (e) {
-                  console.warn("thunderbird-mcp: listFolders failed to enumerate account root", target.key || accountId, e);
+                  console.warn("commonpost-mcp: listFolders failed to enumerate account root", target.key || accountId, e);
                 }
                 return formatFolderResults();
               }
@@ -3363,7 +3363,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                     }
                   }
                 } catch (e) {
-                  console.warn("thunderbird-mcp: listFolders failed to enumerate account", account?.key, e);
+                  console.warn("commonpost-mcp: listFolders failed to enumerate account", account?.key, e);
                 }
               }
 
@@ -3413,7 +3413,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
              * Each entry can be:
              *   - A string (file path) — resolved from disk
              *   - An object { name, contentType, base64 } — decoded and written
-             *     to a temp file under <TmpD>/thunderbird-mcp/attachments/
+             *     to a temp file under <TmpD>/commonpost-mcp/attachments/
              * Returns { descs: [{url, name, size, contentType?}], failed: string[] }
              */
             // BEGIN OUTBOUND ATTACHMENT CONVERSION
@@ -3564,7 +3564,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                       continue;
                     }
                     const tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
-                    tmpDir.append("thunderbird-mcp");
+                    tmpDir.append("commonpost-mcp");
                     tmpDir.append("attachments");
                     if (!tmpDir.exists()) {
                       tmpDir.create(Ci.nsIFile.DIRECTORY_TYPE, 0o700);
@@ -3617,7 +3617,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                   if (desc.contentType) att.contentType = desc.contentType;
                   result.push(att);
                 } catch (e) {
-                  console.warn("thunderbird-mcp: failed to convert attachment descriptor:", desc?.name || desc?.url || desc, e);
+                  console.warn("commonpost-mcp: failed to convert attachment descriptor:", desc?.name || desc?.url || desc, e);
                 }
               }
               return result;
@@ -3625,11 +3625,11 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
 
             function addAttachmentsToComposeWindow(composeWin, attachDescs) {
               if (!composeWin) {
-                console.warn("thunderbird-mcp: skipping attachment add — no compose window");
+                console.warn("commonpost-mcp: skipping attachment add — no compose window");
                 return;
               }
               if (typeof composeWin.AddAttachments !== "function") {
-                console.warn("thunderbird-mcp: skipping attachment add — composeWin.AddAttachments not a function");
+                console.warn("commonpost-mcp: skipping attachment add — composeWin.AddAttachments not a function");
                 return;
               }
               const attachList = descsToMsgAttachments(attachDescs);
@@ -3807,7 +3807,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
               }
 
               if (shouldMove) {
-                console.warn("thunderbird-mcp: could not anchor compose body insertion; insertHTML may replace selected quote", moveError);
+                console.warn("commonpost-mcp: could not anchor compose body insertion; insertHTML may replace selected quote", moveError);
               }
               return !shouldMove;
             }
@@ -5526,7 +5526,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                       // Don't push the master on failure -- its event_start is the original
                       // first-occurrence date and is almost certainly outside the queried
                       // range, which would pollute results with stale events.
-                      console.warn("thunderbird-mcp: recurrence expansion failed for", item.id || item.title, e);
+                      console.warn("commonpost-mcp: recurrence expansion failed for", item.id || item.title, e);
                     }
                   }
                 }
@@ -6454,7 +6454,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
 	                        rawSource: raw,
 	                      });
 	                    } catch (e) {
-	                      console.error("thunderbird-mcp: raw source read failed:", e);
+	                      console.error("commonpost-mcp: raw source read failed:", e);
 	                      resolve({ error: "Failed to read raw source" });
 	                    } finally {
 	                      if (stream) try { stream.close(); } catch { /* ignore */ }
@@ -6489,7 +6489,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                     // If structured MIME extraction failed, try the raw stream for
                     // local mbox folders where MsgHdrToMimeMessage returns empty parts.
                     if (!body) {
-                      const fallbackContext = `thunderbird-mcp: raw MIME body fallback (${msgHdr.messageId})`;
+                      const fallbackContext = `commonpost-mcp: raw MIME body fallback (${msgHdr.messageId})`;
                       let rawStream = null;
                       try {
                         const rawFolder = msgHdr.folder;
@@ -6820,21 +6820,21 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                                     error: `Image exceeds per-image base64 limit (${MAX_INLINE_IMAGE_BASE64_BYTES} bytes)`,
                                   });
                                 } else {
-                                  console.error("thunderbird-mcp: inline image stream read failed:", e);
+                                  console.error("commonpost-mcp: inline image stream read failed:", e);
                                   resolve({ error: "Inline image read failed" });
                                 }
                                 return;
                               }
                               resolve({ data: encodeByteStringToBase64(byteString) });
                             } catch (e) {
-                              console.error("thunderbird-mcp: inline image fetch callback failed:", e);
+                              console.error("commonpost-mcp: inline image fetch callback failed:", e);
                               resolve({ error: "Inline image fetch failed" });
                             } finally {
                               try { inputStream?.close(); } catch {}
                             }
                           });
                         } catch (e) {
-                          console.error("thunderbird-mcp: inline image fetch setup failed:", e);
+                          console.error("commonpost-mcp: inline image fetch setup failed:", e);
                           resolve({ error: "Inline image fetch failed" });
                         }
                       });
@@ -6915,7 +6915,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                       appendInlineImageContent()
                         .then(() => resolve(baseResponse))
                         .catch((e) => {
-                          console.error("thunderbird-mcp: inline image content assembly failed:", e);
+                          console.error("commonpost-mcp: inline image content assembly failed:", e);
                           baseResponse.inlineImageContent = {
                             included: 0,
                             skipped: inlineImageSources.length,
@@ -6949,7 +6949,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
 
                     function ensureAttachmentDir(sanitizedId) {
                       const root = Services.dirsvc.get("TmpD", Ci.nsIFile);
-                      root.append("thunderbird-mcp");
+                      root.append("commonpost-mcp");
                       try {
                         root.create(Ci.nsIFile.DIRECTORY_TYPE, 0o700);
                       } catch (e) {
@@ -7214,7 +7214,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                   }, true, { examineEncryptedParts: true });
 
 	                } catch (e) {
-	                  console.error("thunderbird-mcp: getMessage failed:", e);
+	                  console.error("commonpost-mcp: getMessage failed:", e);
 	                  resolve({ error: "Failed to get message" });
 	                }
 	              });
@@ -8255,7 +8255,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 }
               } catch (e) {
                 // Continue traversal; log per-folder failures so partial empties are visible.
-                console.error("thunderbird-mcp: deleteMessages failed for folder", folder?.URI || folder?.name, ":", e);
+                console.error("commonpost-mcp: deleteMessages failed for folder", folder?.URI || folder?.name, ":", e);
               }
               if (folder.hasSubFolders) {
                 for (const sub of folder.subFolders) {
@@ -8916,7 +8916,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                     if (Array.isArray(parsed)) args[key] = parsed;
                   } catch (e) {
                     // Leave value as-is so validator surfaces a typed error to the client.
-                    console.warn(`thunderbird-mcp: coerceToolArgs JSON.parse failed for key=${key}:`, e.message);
+                    console.warn(`commonpost-mcp: coerceToolArgs JSON.parse failed for key=${key}:`, e.message);
                   }
                 }
               }
@@ -9132,7 +9132,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                       result = {
                         protocolVersion: negotiated,
                         capabilities: { tools: {} },
-                        serverInfo: { name: "thunderbird-mcp", version: getExtVersion() }
+                        serverInfo: { name: "commonpost-mcp", version: getExtVersion() }
                       };
                       break;
                     }
@@ -9190,7 +9190,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
                 }
                 res.finish();
               })().catch((e) => {
-                console.error("thunderbird-mcp: unhandled dispatch error:", e);
+                console.error("commonpost-mcp: unhandled dispatch error:", e);
                 try { res.finish(); } catch {}
               });
             });
@@ -9216,7 +9216,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
-            globalThis.__tbMcpServer = server;
+            globalThis.__cpMcpServer = server;
             let connFilePath;
             try {
               // Write the connection file fresh on initial start so the secure
@@ -9227,23 +9227,23 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
               startConnectionInfoRefresh(boundPort, authToken);
             } catch (writeErr) {
               // Connection file write failed -- stop the orphaned server
-              try { server.stop(() => {}); } catch (e) { console.error("thunderbird-mcp: server.stop failed:", e); }
-              globalThis.__tbMcpServer = null;
+              try { server.stop(() => {}); } catch (e) { console.error("commonpost-mcp: server.stop failed:", e); }
+              globalThis.__cpMcpServer = null;
               stopConnectionInfoRefreshTimer();
               throw writeErr;
             }
-            console.log(`Thunderbird MCP server listening on port ${boundPort}`);
+            console.log(`Commonpost MCP server listening on port ${boundPort}`);
             console.log(`Connection info written to ${connFilePath}`);
             if (listenAll) {
-              console.error(`thunderbird-mcp: WARNING - server is listening on all interfaces (0.0.0.0/[::]). This exposes the MCP server to your local network. Only enable on trusted networks.`);
+              console.error(`commonpost-mcp: WARNING - server is listening on all interfaces (0.0.0.0/[::]). This exposes the MCP server to your local network. Only enable on trusted networks.`);
             }
             return { success: true, port: boundPort };
           } catch (e) {
             console.error("Failed to start MCP server:", e);
             // Stop server if it was started but something else failed
-            if (globalThis.__tbMcpServer) {
-              try { globalThis.__tbMcpServer.stop(() => {}); } catch (e) { console.error("thunderbird-mcp: server.stop failed:", e); }
-              globalThis.__tbMcpServer = null;
+            if (globalThis.__cpMcpServer) {
+              try { globalThis.__cpMcpServer.stop(() => {}); } catch (e) { console.error("commonpost-mcp: server.stop failed:", e); }
+              globalThis.__cpMcpServer = null;
             }
             stopConnectionInfoRefreshTimer();
             // The cached promise is dropped by runGuardedStart (clearing it
@@ -9257,16 +9257,16 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
         retryStart: async function() {
           // Options-page "Retry" (#179): start again after a failed start
           // without restarting Thunderbird. No-op while the server runs.
-          if (globalThis.__tbMcpStartPromise) {
-            const pending = await globalThis.__tbMcpStartPromise;
-            if (pending && pending.success && globalThis.__tbMcpServer) {
+          if (globalThis.__cpMcpStartPromise) {
+            const pending = await globalThis.__cpMcpStartPromise;
+            if (pending && pending.success && globalThis.__cpMcpServer) {
               return pending;
             }
           }
-          if (globalThis.__tbMcpServer) {
+          if (globalThis.__cpMcpServer) {
             return { success: true, alreadyRunning: true };
           }
-          globalThis.__tbMcpStartPromise = null;
+          globalThis.__cpMcpStartPromise = null;
           stopConnectionInfoRefreshTimer();
           return await this.start();
         },
@@ -9279,7 +9279,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
 
           // Read build info from bundled file via resource: protocol
           try {
-            const uri = Services.io.newURI("resource://thunderbird-mcp/buildinfo.json");
+            const uri = Services.io.newURI("resource://commonpost-mcp/buildinfo.json");
             const channel = Services.io.newChannelFromURI(uri, null,
               Services.scriptSecurityManager.getSystemPrincipal(), null,
               Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
@@ -9295,7 +9295,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
           } catch (e) {
             // buildinfo.json may legitimately be absent in dev builds; surface anything else.
             if (e?.name !== "NS_ERROR_FILE_NOT_FOUND") {
-              console.warn("thunderbird-mcp: read buildinfo failed:", e);
+              console.warn("commonpost-mcp: read buildinfo failed:", e);
             }
           }
 
@@ -9309,7 +9309,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
           } catch (e) {
             // Connection file is absent before the server first binds; log other faults.
             if (e?.name !== "NS_ERROR_FILE_NOT_FOUND") {
-              console.warn("thunderbird-mcp: read connection info failed:", e);
+              console.warn("commonpost-mcp: read connection info failed:", e);
             }
           }
 
@@ -9336,7 +9336,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             }
           } catch (e) {
             if (e?.name !== "NS_ERROR_FILE_NOT_FOUND") {
-              console.warn("thunderbird-mcp: read auth token failed:", e);
+              console.warn("commonpost-mcp: read auth token failed:", e);
             }
           }
           return { authToken };
@@ -9352,7 +9352,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             if (pref) allowed = JSON.parse(pref);
           } catch (e) {
             // Falls back to "all accounts allowed"; surface the corruption.
-            console.warn("thunderbird-mcp: account-access pref is not valid JSON:", e.message);
+            console.warn("commonpost-mcp: account-access pref is not valid JSON:", e.message);
           }
 
           const accounts = [];
@@ -9527,7 +9527,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
           try {
             blocked = Services.prefs.getBoolPref(PREF_BLOCK_FILTER_FORWARD_REPLY, true);
           } catch (e) {
-            console.warn("thunderbird-mcp: blockFilterForwardReply unreadable, reported as on:", e);
+            console.warn("commonpost-mcp: blockFilterForwardReply unreadable, reported as on:", e);
           }
           return { blockFilterForwardReply: blocked };
         },
@@ -9584,9 +9584,9 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
           }
 
           // Stop existing server
-          if (globalThis.__tbMcpServer) {
-            const stopServer = globalThis.__tbMcpServer;
-            globalThis.__tbMcpServer = null;
+          if (globalThis.__cpMcpServer) {
+            const stopServer = globalThis.__cpMcpServer;
+            globalThis.__cpMcpServer = null;
             stopConnectionInfoRefreshTimer();
             // Wait for the socket close callback before rebinding the port.
             try {
@@ -9596,12 +9596,12 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
             } catch { /* ignore */ }
           }
           // Clear sentinels so start() can reinitialize
-          globalThis.__tbMcpStartPromise = null;
+          globalThis.__cpMcpStartPromise = null;
 
           // Remove stale connection file
           try {
             const tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
-            tmpDir.append("thunderbird-mcp");
+            tmpDir.append("commonpost-mcp");
             const connFile = tmpDir.clone();
             connFile.append("connection.json");
             if (connFile.exists()) connFile.remove(false);
@@ -9617,20 +9617,20 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
 
   onShutdown(isAppShutdown) {
     // Stop the HTTP server so the port is released
-    if (globalThis.__tbMcpServer) {
-      try { globalThis.__tbMcpServer.stop(() => {}); } catch { /* ignore */ }
-      globalThis.__tbMcpServer = null;
+    if (globalThis.__cpMcpServer) {
+      try { globalThis.__cpMcpServer.stop(() => {}); } catch { /* ignore */ }
+      globalThis.__cpMcpServer = null;
     }
     stopConnectionInfoRefreshTimer();
     // Clear the start promise so a fresh start can occur on reload
-    globalThis.__tbMcpStartPromise = null;
-    globalThis.__tbMcpStartError = null;
+    globalThis.__cpMcpStartPromise = null;
+    globalThis.__cpMcpStartError = null;
 
     // Always clean up the connection info file so stale tokens don't linger
     // (Inlined because getAPI() helpers are not in scope in onShutdown().)
     try {
       const tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
-      tmpDir.append("thunderbird-mcp");
+      tmpDir.append("commonpost-mcp");
       const connFile = tmpDir.clone();
       connFile.append("connection.json");
       if (connFile.exists()) {
@@ -9651,7 +9651,7 @@ var mcpServer = class extends ExtensionCommon.ExtensionAPI {
     }
     _tempAttachFiles.clear();
     if (isAppShutdown) return;
-    resProto.setSubstitution("thunderbird-mcp", null);
+    resProto.setSubstitution("commonpost-mcp", null);
     Services.obs.notifyObservers(null, "startupcache-invalidate");
   }
 };

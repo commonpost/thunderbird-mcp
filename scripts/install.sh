@@ -1,12 +1,12 @@
 #!/bin/bash
-# Install the Thunderbird MCP extension
+# Install the Commonpost MCP extension
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 DIST_DIR="$PROJECT_DIR/dist"
-XPI_FILE="$DIST_DIR/thunderbird-mcp.xpi"
+XPI_FILE="$DIST_DIR/commonpost-mcp.xpi"
 DEFAULT_PROFILE_FILE="$SCRIPT_DIR/default-profile"
 
 format_mtime() {
@@ -339,7 +339,7 @@ mkdir -p "$EXTENSIONS_DIR"
 
 # Copy extension
 echo "Warning: Re-running install.sh overwrites the AddonManager-managed file and can downgrade an auto-updated build; to bootstrap once, use Tools > Add-ons > Install from File, then let auto-update handle the rest."
-cp "$XPI_FILE" "$EXTENSIONS_DIR/thunderbird-mcp@tkasperczyk.dev.xpi"
+cp "$XPI_FILE" "$EXTENSIONS_DIR/commonpost-mcp@commonpost.github.io.xpi"
 
 echo "Installed! Restart Thunderbird to activate."
 echo ""
