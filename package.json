@@ -1,7 +1,7 @@
 {
   "name": "commonpost-mcp",
-  "version": "0.7.5",
-  "description": "MCP server for Thunderbird - enables AI assistants to access email, contacts, and calendars",
+  "version": "0.8.0",
+  "description": "Commonpost MCP for Thunderbird - MCP server that gives AI assistants access to Thunderbird email, contacts, and calendars (continuation of thunderbird-mcp)",
   "author": "Commonpost contributors (continuation of thunderbird-mcp by Tomasz Kasperczyk)",
   "license": "MIT",
   "repository": {
@@ -39,5 +39,6 @@
     "eslint-plugin-n": "^18.1.0",
     "eslint-plugin-promise": "^7.2.1",
     "globals": "^17.5.0"
-  }
+  },
+  "homepage": "https://github.com/commonpost/thunderbird-mcp"
 }
