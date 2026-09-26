@@ -1,6 +1,6 @@
 "use strict";
 
-// failed MCP server start must be visible and
+// Failed MCP server start must be visible and
 // retryable without restarting Thunderbird (upstream issue #179).
 
 const { describe, it } = require("node:test");

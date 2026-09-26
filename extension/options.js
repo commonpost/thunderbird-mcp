@@ -8,6 +8,7 @@ const statusText = document.getElementById("statusText");
 const serverPort = document.getElementById("serverPort");
 const connFile = document.getElementById("connFile");
 const buildInfo = document.getElementById("buildInfo");
+const originalExtensionRow = document.getElementById("originalExtensionRow");
 const startErrorRow = document.getElementById("startErrorRow");
 const startErrorText = document.getElementById("startErrorText");
 const retryStartBtn = document.getElementById("retryStartBtn");
@@ -79,6 +80,7 @@ async function loadServerInfo() {
       serverPort.textContent = "--";
       connFile.textContent = "--";
     }
+    originalExtensionRow.hidden = !info.originalExtensionActive;
     if (!info.running) {
       // Offered whenever the server is not bound (failed or never started).
       startErrorText.textContent = info.startError

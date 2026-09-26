@@ -21,7 +21,7 @@
         "name": "getServerInfo",
         "type": "function",
         "async": true,
-        "description": "Get current server status (running is true only when the HTTP server is bound), port, connection file path and the last start error, if any",
+        "description": "Get current server status (running is true only when the HTTP server is bound), port, connection file path, the last start error, if any, and whether the original thunderbird-mcp add-on is also active",
         "parameters": []
       },
       {

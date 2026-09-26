@@ -140,6 +140,24 @@ function computeServerRunState(state) {
 }
 // END SERVER START STATE HELPERS
 
+// BEGIN ORIGINAL EXTENSION NOTICE
+// This add-on can be installed beside the original thunderbird-mcp: names,
+// preferences, ports and update channel are separate. The options page still
+// warns when both are active, because an MCP client configured for one may
+// then talk to the other.
+const ORIGINAL_EXTENSION_ID = "thunderbird-mcp@tkasperczyk.dev";
+
+async function detectOriginalExtensionActive(getAddonByID) {
+  try {
+    const addon = await getAddonByID(ORIGINAL_EXTENSION_ID);
+    return !!(addon && addon.isActive);
+  } catch (e) {
+    console.warn("commonpost-mcp: original extension check failed:", e);
+    return false;
+  }
+}
+// END ORIGINAL EXTENSION NOTICE
+
 // BEGIN CONTACT FIELD HELPERS
 // BEGIN CONTACT FIELD CONSTANTS
 const CONTACT_PHONE_TYPES = ["work", "home", "mobile", "fax", "pager"];
@@ -9316,6 +9334,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           // "running" reflects the bound HTTP server, not the (possibly failed)
           // start promise; a failed start is reported with its error (#179).
           const runState = computeServerRunState(globalThis);
+          const originalExtensionActive = await detectOriginalExtensionActive(async (id) => {
+            const { AddonManager } = ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");
+            return AddonManager.getAddonByID(id);
+          });
           return {
             running: runState.running,
             port,
@@ -9324,6 +9346,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             buildDate,
             startError: runState.startError,
             startErrorAt: runState.startErrorAt,
+            originalExtensionActive,
           };
         },
 
