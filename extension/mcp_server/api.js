@@ -1746,7 +1746,7 @@ function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSend
         copied++;
       }
     } catch (e) {
-      throw new Error(`Failed to copy existing condition #${copied}: ${describeError(e)}`);
+      throw new Error(`Failed to copy existing condition #${copied}: ${describeError(e)}`, { cause: e });
     }
     if (copied === 0) {
       throw new Error("Cannot update: failed to read existing filter conditions");
@@ -1762,7 +1762,7 @@ function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSend
       try {
         copyRuleAction(replacement, filter.getActionAt(a));
       } catch (e) {
-        throw new Error(`Failed to copy existing action #${a}: ${describeError(e)}`);
+        throw new Error(`Failed to copy existing action #${a}: ${describeError(e)}`, { cause: e });
       }
     }
     if (replacement.actionCount !== count) {
