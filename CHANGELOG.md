@@ -4,7 +4,14 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## [0.8.0] - Unreleased
+## Planned for 0.8.1
+
+- Take the third commit of TKasperczyk/thunderbird-mcp#222: strict validation, dates as local days (a breaking
+  change: bare numbers and epoch milliseconds are refused), read-back checks in `listFilters`, and `updateFilter`
+  giving up when the copy of an existing rule fails. Our "first readable member" fallback for attributes outside the
+  table stays.
+
+## [0.8.0] - 2026-09-26
 
 First release of **Commonpost MCP for Thunderbird**, a continuation of thunderbird-mcp 0.7.5.
 
@@ -34,7 +41,8 @@ First release of **Commonpost MCP for Thunderbird**, a continuation of thunderbi
   first (TKasperczyk/thunderbird-mcp#214 by safrano9999).
 - Filters: search attributes, operators and actions are resolved by name instead of hand-numbered tables,
   values are typed, and updating a filter copies what it does not change faithfully (TKasperczyk/thunderbird-mcp#195 by Daniel
-  Glaser and ideas from TKasperczyk/thunderbird-mcp#175 by Neel Radhakrishnan).
+  Glaser (the78mole), since superseded by TKasperczyk/thunderbird-mcp#222, and ideas from
+  TKasperczyk/thunderbird-mcp#175 by Neel Radhakrishnan).
 - Removed a source of ESLint errors in the filter code (rethrown errors keep their `cause`).
 
 ### Removed
