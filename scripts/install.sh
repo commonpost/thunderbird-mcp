@@ -41,6 +41,7 @@ platform_profile_roots() {
     Linux)
         printf '%s\n' \
             "$HOME/.thunderbird" \
+            "$HOME/snap/thunderbird/common/.thunderbird" \
             "$HOME/.var/app/org.mozilla.Thunderbird/.thunderbird" \
             "$HOME/.var/app/org.mozilla.thunderbird/.thunderbird" \
             "$HOME/.var/app/eu.betterbird.Betterbird/.thunderbird"
@@ -62,6 +63,7 @@ platform_profile_config_dirs() {
     Linux)
         printf '%s\n' \
             "$HOME/.thunderbird" \
+            "$HOME/snap/thunderbird/common/.thunderbird" \
             "$HOME/.var/app/org.mozilla.Thunderbird/.thunderbird" \
             "$HOME/.var/app/org.mozilla.thunderbird/.thunderbird" \
             "$HOME/.var/app/eu.betterbird.Betterbird/.thunderbird"
@@ -274,15 +276,35 @@ select_profile() {
     if [[ ! -t 0 ]]; then
         echo "Error: Found multiple Thunderbird profiles and cannot prompt" \
             "in non-interactive mode." >&2
-        echo "Run scripts/install.sh interactively once to choose and save a default profile." >&2
+        echo "Run scripts/install.sh interactively once to choose one; it is then saved to" \
+            "$DEFAULT_PROFILE_FILE and reused automatically." >&2
         exit 1
     fi
 
+    # Two profile roots (e.g. a Snap install alongside a leftover .thunderbird
+    # from a prior deb package) commonly share the same leaf directory name,
+    # such as after Ubuntu's Thunderbird deb-to-snap migration: show the full
+    # path instead of the ambiguous bare name whenever a name repeats. No
+    # associative array (bash 3.2, macOS's /bin/bash, has none): an O(n^2)
+    # pairwise comparison instead, fine for the handful of profiles anyone
+    # actually has.
+    local names=() label other
+    for index in "${!profiles[@]}"; do
+        names[index]="$(profile_name "${profiles[$index]}")"
+    done
+
     echo "Found ${#profiles[@]} Thunderbird profiles:" >&2
     for index in "${!profiles[@]}"; do
+        label="${names[$index]}"
+        for other in "${!names[@]}"; do
+            if [[ "$other" != "$index" && "${names[$other]}" == "${names[$index]}" ]]; then
+                label="${profiles[$index]}"
+                break
+            fi
+        done
         printf '  %d) %s  size=%s  modified=%s\n' \
             "$((index + 1))" \
-            "$(profile_name "${profiles[$index]}")" \
+            "$label" \
             "$(profile_size "${profiles[$index]}")" \
             "$(format_mtime "${profiles[$index]}")" >&2
     done
