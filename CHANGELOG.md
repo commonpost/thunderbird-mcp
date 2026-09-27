@@ -4,6 +4,50 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [0.8.2] - 2026-09-27
+
+### Added
+- `listFolders` accepts `favoritesOnly` and reports `isFavorite` on every folder, so a client can find the folders
+  the user has marked as favorites in Thunderbird without listing hundreds of others (upstream
+  TKasperczyk/thunderbird-mcp#201 by Peter D Bethke). In `format: "table"`, `isFavorite` is appended as the last
+  column; the pre-existing columns keep their order.
+
+### Changed
+- With `bodyFormat: "markdown"` (the default) or `"html"`, a `multipart/alternative` body now comes from its HTML
+  part when it has one, including its links and image URLs, converted to Markdown -- not the plain-text
+  alternative, as before. This does not apply outside an alternative: a container that mixes a plain-text part
+  with a separate HTML part (not offered as an alternative of each other) still returns whichever comes first, as
+  it already did. Remote image URLs now show up in the Markdown output; a client that renders it may load them --
+  only inline tracking pixels (3px or smaller) are filtered.
+
+### Fixed
+- `getMessage`/`getMessages` honor `bodyFormat` when a message's body is a structured `multipart/alternative`
+  container instead of always preferring the plain-text part, and concatenate every inline part of the requested
+  type found in a container that is not itself an alternative -- instead of returning only the first one -- so a
+  message such as Apple Mail's `alternative[plain, mixed[html, inline PDF, html]]` no longer loses everything past
+  the inline attachment (upstream TKasperczyk/thunderbird-mcp#186 by Przemysław Pietrzak). With `bodyFormat:
+  "markdown"` or `"html"`, a text/plain or text/html leaf that is a real attachment (e.g. an attached `.txt`
+  file) is excluded from the body, matched against `allUserAttachments` the same way an inline image already
+  was elsewhere in this file. This does not extend to `bodyFormat: "text"` (or the plain-text quoting used by
+  `replyToMessage`/`forwardMessage`), which goes through Thunderbird's own `coerceBodyToPlaintext()` instead and
+  is not attachment-aware there either -- not a regression from main, which never excluded attachments on any path.
+- `getRecentMessages` result rows now carry `ccList`, like `searchMessages` already does (upstream
+  TKasperczyk/thunderbird-mcp#174 by Gunther Schulz).
+- `scripts/install.sh` discovers a Thunderbird profile installed through Snap on Linux (upstream
+  TKasperczyk/thunderbird-mcp#201 by Peter D Bethke), and shows the full path instead of the ambiguous bare
+  directory name in its profile-picker menu when two profiles share one -- for example after Ubuntu's Thunderbird
+  deb-to-snap migration, which commonly leaves a Snap profile alongside a leftover one with the same name.
+
+### Also fixed upstream
+These upstream pull requests fix problems already fixed here:
+- TKasperczyk/thunderbird-mcp#223 by Daniel Glaser (the78mole): unhandled rejection in the reply/forward promise
+  chains -- the same fix is in 0.8.1 (PR #5).
+- Windows: TKasperczyk/thunderbird-mcp#170, TKasperczyk/thunderbird-mcp#183, TKasperczyk/thunderbird-mcp#189,
+  TKasperczyk/thunderbird-mcp#191, TKasperczyk/thunderbird-mcp#199, TKasperczyk/thunderbird-mcp#204,
+  TKasperczyk/thunderbird-mcp#206.
+- Attachments: TKasperczyk/thunderbird-mcp#188 (large Base64 attachments).
+- Filters: TKasperczyk/thunderbird-mcp#200.
+
 ## [0.8.1] - 2026-09-27
 
 Filter validation is adapted from the third commit of TKasperczyk/thunderbird-mcp#222 (Daniel Glaser, the78mole),
