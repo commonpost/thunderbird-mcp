@@ -4,21 +4,54 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## Unreleased
+## [0.8.1] - 2026-09-27
+
+Filter validation is adapted from the third commit of TKasperczyk/thunderbird-mcp#222 (Daniel Glaser, the78mole),
+which addressed our own review of #195 (#222's predecessor). Not everything below comes from #222: `stripHtml` and
+the code-scanning cleanups are separate fixes, listed under Fixed.
+
+### Breaking
+- `listFilters` now reports a `date` condition's value as `YYYY-MM-DD` (a local calendar day) instead of an
+  ISO-8601 instant in UTC.
+- Only `YYYY-MM-DD` is accepted for a `date` condition's value: every other form `Date.parse` would read (a
+  date-time, with or without a time zone) and a bare number are now refused. A date-time was never reliable here --
+  see the note for 0.8.0 users below -- so rather than keep guessing which local day it meant, it is refused
+  outright, with a hint pointing at `YYYY-MM-DD`.
+- `hasAttachment` now refuses any supplied value; only an empty one is accepted (the operator, `is`/`isnt`, carries
+  has/hasn't).
+- **Note for 0.8.0 users:** a `date` condition saved with a `YYYY-MM-DD` value under 0.8.0 may have been stored one
+  day earlier than intended, anywhere west of UTC (see Fixed below); and a `hasAttachment` condition given the
+  value `"false"` meant "has an attachment", not "has none" (0.8.0 silently ignored the value it was given, and
+  Thunderbird's own filter engine reads only the operator). Neither is fixed by installing 0.8.1: check existing
+  filters with `listFilters` and recreate any that are wrong.
+
+### Changed
+- Integer condition and action values are validated strictly (`/^-?\d+$/`, no `parseInt` rounding) and bounded
+  where Thunderbird itself bounds them: `size`/`status` up to 4294967295 (`unsigned long`), `ageInDays` up to
+  2147483647 (`long`), `junkPercent`/`junkScore` 0-100, `priority`/`changePriority` within
+  `nsMsgPriority.lowest..highest`. Schema hints spell the values out (units, bounds, `2=lowest`..`6=highest`,
+  `1=read`, `2=replied`, ...).
+- Error messages say "Action value" or "Condition value" depending on where they come from, not always the latter.
+- Internal assertion: `buildRuleActions`/`planFilterUpdate` now check up front that they were given the
+  folder-access helper (`resolveFolder`); no change in behaviour.
 
 ### Fixed
+- A `date` condition's value used to be stored one day earlier than intended anywhere west of UTC: Thunderbird
+  stores and displays filter dates as a local calendar day (fix from TKasperczyk/thunderbird-mcp#175 by
+  @ncrosty58).
+- `listFilters` reads back the `hdrProperty` of a term on a header-property attribute, which used to be dropped on
+  read-back.
+- An error raised while replying to or forwarding a message now ends the tool call with an error instead of
+  leaving it pending.
 - Plain-text conversion of HTML mail (`stripHtml`) now ends a `<script>` or `<style>` block on an end tag with
   whitespace or other characters before `>` (e.g. `</script >`), as HTML parsers do, so the block's contents no
   longer show up in the text.
 - Code scanning cleanups: tags are removed until none are left in link text of task descriptions (the text was
   already HTML-escaped, so no markup could get through), and two tests escape every regular-expression character.
 
-## Planned for 0.8.1
-
-- Take the third commit of TKasperczyk/thunderbird-mcp#222: strict validation, dates as local days (a breaking
-  change: bare numbers and epoch milliseconds are refused), read-back checks in `listFilters`, and `updateFilter`
-  giving up when the copy of an existing rule fails. Our "first readable member" fallback for attributes outside the
-  table stays.
+Our "first readable member" fallback (`copySearchValue`) for attributes outside the typed table is unchanged, as is
+`updateFilter` giving up (no rule saved) when copying an existing condition or action fails -- both already worked
+this way before this release.
 
 ## [0.8.0] - 2026-09-26
 
