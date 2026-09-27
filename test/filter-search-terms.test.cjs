@@ -1,5 +1,10 @@
 "use strict";
 
+// Fixed so the date tests below are independent of the timezone the suite runs
+// in: they hard-code an expected value for this specific zone (EST, UTC-5 in
+// January), so a regression to reading dates as UTC (Date.parse) fails them.
+process.env.TZ = "America/Toronto";
+
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -20,6 +25,16 @@ const ATTRIB = {
 };
 
 const ATTACHMENT_FLAG = 0x10000000; // nsMsgMessageFlags.Attachment
+
+// nsMsgMessageFlags (nsMsgMessageFlags.idl) -- the bits the filter UI offers
+// as "status", plus the attachment flag hasAttachment stores.
+const MESSAGE_FLAGS = {
+  Read: 0x1, Replied: 0x2, Marked: 0x4, Forwarded: 0x1000, New: 0x10000,
+  Attachment: ATTACHMENT_FLAG,
+};
+
+// nsMsgPriority (MailNewsTypes2.idl).
+const PRIORITY = { notSet: 0, none: 1, lowest: 2, low: 3, normal: 4, high: 5, highest: 6, Default: 4 };
 
 // The real nsMsgSearchOp enum (nsMsgSearchCore.idl), including the
 // kNumMsgSearchOperators sentinel that must NOT become an operator.
@@ -76,7 +91,8 @@ function makeCi(overrides = {}) {
     nsMsgSearchAttrib: nonEnumerable(attribs),
     nsMsgSearchOp: nonEnumerable({ ...OPS }),
     nsMsgFilterAction: nonEnumerable({ ...ACTIONS, ...(overrides.actions || {}) }),
-    nsMsgMessageFlags: { Attachment: ATTACHMENT_FLAG },
+    nsMsgMessageFlags: nonEnumerable({ ...MESSAGE_FLAGS }),
+    nsMsgPriority: nonEnumerable({ ...PRIORITY }),
   };
 }
 
@@ -271,18 +287,101 @@ describe("buildTerms writes the value member the attribute actually requires", (
     assert.equal(term.value.age, 3);
   });
 
-  it("stores date via .date as PRTime microseconds", () => {
-    const term = buildOne(helpers, { attrib: "date", op: "isBefore", value: "2026-01-02T03:04:05.000Z" });
-    assert.equal(term.value.date, Date.parse("2026-01-02T03:04:05.000Z") * 1000);
+  it("stores a date-only value as local midnight (America/Toronto, EST, UTC-5 in January), not UTC midnight", () => {
+    // Hard-coded expected value, independent of the runtime's own Date/timezone
+    // handling: TZ is fixed at the top of this file, so this fails if the
+    // implementation goes back to Date.parse (which would give Date.UTC(2026,0,1,0)).
+    const term = buildOne(helpers, { attrib: "date", op: "isBefore", value: "2026-01-01" });
+    assert.equal(term.value.date, Date.UTC(2026, 0, 1, 5) * 1000);
   });
 
-  it("accepts epoch milliseconds for date", () => {
-    const term = buildOne(helpers, { attrib: "date", op: "isAfter", value: "1767322800000" });
-    assert.equal(term.value.date, 1767322800000 * 1000);
+  it("refuses a date-time value, even one that looks precise", () => {
+    // A date-time -- even one that spells out UTC midnight -- would silently
+    // be reduced to whichever local day that instant falls on: refused outright,
+    // with a hint pointing at YYYY-MM-DD instead of guessing which day was meant.
+    for (const value of ["2026-01-01T00:00:00Z", "2026-01-01T00:00:00", "2026-01-01T05:00:00.000Z"]) {
+      assert.throws(
+        () => buildOne(helpers, { attrib: "date", op: "isBefore", value }),
+        /must be YYYY-MM-DD: Thunderbird stores a local day/
+      );
+    }
   });
 
-  it("stores size via .size", () => {
+  it("refuses an invalid calendar date", () => {
+    assert.throws(
+      () => buildOne(helpers, { attrib: "date", op: "isBefore", value: "2026-02-30" }),
+      /must be YYYY-MM-DD: Thunderbird stores a local day/
+    );
+    assert.throws(
+      () => buildOne(helpers, { attrib: "date", op: "isBefore", value: "2026-13-01" }),
+      /must be YYYY-MM-DD: Thunderbird stores a local day/
+    );
+  });
+
+  it("refuses a bare number for date (no more epoch-milliseconds reading)", () => {
+    assert.throws(
+      () => buildOne(helpers, { attrib: "date", op: "isAfter", value: "1767322800000" }),
+      /must be YYYY-MM-DD: Thunderbird stores a local day/
+    );
+    assert.throws(
+      () => buildOne(helpers, { attrib: "date", op: "isAfter", value: "2026" }),
+      /must be YYYY-MM-DD: Thunderbird stores a local day/
+    );
+  });
+
+  it("stores size via .size, refuses a negative value or one past unsigned-long", () => {
     assert.equal(buildOne(helpers, { attrib: "size", op: "isGreaterThan", value: "1024" }).value.size, 1024);
+    assert.throws(
+      () => buildOne(helpers, { attrib: "size", op: "isGreaterThan", value: "-5" }),
+      /must be a non-negative integer up to 4294967295 \(KB\)/
+    );
+    // The setter itself wraps a too-large value instead of refusing it, so the
+    // ceiling must be enforced here: "4294967296" used to silently become 0.
+    assert.throws(
+      () => buildOne(helpers, { attrib: "size", op: "isGreaterThan", value: "4294967296" }),
+      /must be a non-negative integer up to 4294967295 \(KB\)/
+    );
+    assert.equal(buildOne(helpers, { attrib: "size", op: "isGreaterThan", value: "4294967295" }).value.size, 4294967295);
+  });
+
+  it("refuses a negative ageInDays or one past a signed long", () => {
+    assert.throws(
+      () => buildOne(helpers, { attrib: "ageInDays", op: "isGreaterThan", value: "-1" }),
+      /must be a non-negative integer up to 2147483647 \(days\)/
+    );
+    assert.throws(
+      () => buildOne(helpers, { attrib: "ageInDays", op: "isGreaterThan", value: "2147483648" }),
+      /must be a non-negative integer up to 2147483647 \(days\)/
+    );
+  });
+
+  it("bounds priority to nsMsgPriority.lowest..highest", () => {
+    assert.throws(
+      () => buildOne(helpers, { attrib: "priority", op: "is", value: "1" }),
+      /must be an integer from 2 to 6/
+    );
+    assert.throws(
+      () => buildOne(helpers, { attrib: "priority", op: "is", value: "7" }),
+      /must be an integer from 2 to 6/
+    );
+  });
+
+  it("refuses a status value of 0 (no flag set) or past unsigned-long", () => {
+    assert.throws(
+      () => buildOne(helpers, { attrib: "status", op: "is", value: "0" }),
+      /must be a message-flag bitmask/
+    );
+    assert.throws(
+      () => buildOne(helpers, { attrib: "status", op: "is", value: "4294967296" }),
+      /must be a message-flag bitmask/
+    );
+  });
+
+  it("bounds junkPercent to 0-100", () => {
+    assert.throws(
+      () => buildOne(helpers, { attrib: "junkPercent", op: "isGreaterThan", value: "101" }),
+      /must be an integer from 0 to 100/
+    );
   });
 
   it("stores priority via .priority and status via .status", () => {
@@ -300,10 +399,24 @@ describe("buildTerms writes the value member the attribute actually requires", (
     assert.equal(buildOne(helpers, { attrib: "junkStatus", op: "is", value: "2" }).value.junkStatus, 2);
   });
 
+  it("bounds junkStatus to 0..2 when given a number", () => {
+    assert.throws(
+      () => buildOne(helpers, { attrib: "junkStatus", op: "is", value: "3" }),
+      /must be junk, good or unclassified/
+    );
+  });
+
   it("stores hasAttachment as the attachment flag in .status", () => {
     const term = buildOne(helpers, { attrib: "hasAttachment", op: "is", value: "" });
     assert.equal(term.attrib, ATTRIB.HasAttachmentStatus);
     assert.equal(term.value.status, ATTACHMENT_FLAG);
+  });
+
+  it("refuses a value for hasAttachment (the operator carries has/hasn't)", () => {
+    assert.throws(
+      () => buildOne(helpers, { attrib: "hasAttachment", op: "is", value: "true" }),
+      /must be empty: hasAttachment takes no value/
+    );
   });
 
   it("stores text attributes via .str", () => {
@@ -323,11 +436,28 @@ describe("buildTerms writes the value member the attribute actually requires", (
   it("rejects non-numeric values for numeric attributes", () => {
     assert.throws(
       () => buildOne(helpers, { attrib: "ageInDays", op: "isGreaterThan", value: "soon" }),
-      /must be an integer/
+      /must be a non-negative integer up to 2147483647 \(days\)/
     );
     assert.throws(
+      () => buildOne(helpers, { attrib: "ageInDays", op: "isGreaterThan", value: "1.5" }),
+      /must be a non-negative integer up to 2147483647 \(days\)/
+    );
+    assert.throws(
+      () => buildOne(helpers, { attrib: "ageInDays", op: "isGreaterThan", value: "1e3" }),
+      /must be a non-negative integer up to 2147483647 \(days\)/
+    );
+    // Whitespace around an otherwise valid integer is trimmed, not rejected.
+    assert.equal(buildOne(helpers, { attrib: "ageInDays", op: "isGreaterThan", value: "  30  " }).value.age, 30);
+    assert.throws(
       () => buildOne(helpers, { attrib: "date", op: "isBefore", value: "not-a-date" }),
-      /must be an ISO-8601 date or epoch ms/
+      /must be YYYY-MM-DD: Thunderbird stores a local day/
+    );
+  });
+
+  it("error messages say \"Condition value\", not the raw attribute name", () => {
+    assert.throws(
+      () => buildOne(helpers, { attrib: "priority", op: "is", value: "bogus" }),
+      /Condition value for "priority" must be/
     );
   });
 
@@ -410,12 +540,19 @@ describe("getSearchValue reads back what buildTerms wrote", () => {
     assert.equal(roundTrip({ attrib: "priority", op: "isHigherThan", value: "4" }), "4");
     assert.equal(roundTrip({ attrib: "junkPercent", op: "isGreaterThan", value: "90" }), "90");
     assert.equal(roundTrip({ attrib: "junkStatus", op: "is", value: "junk" }), "junk");
-    assert.equal(
-      roundTrip({ attrib: "date", op: "isBefore", value: "2026-01-02T03:04:05.000Z" }),
-      "2026-01-02T03:04:05.000Z"
-    );
+    assert.equal(roundTrip({ attrib: "date", op: "isBefore", value: "2026-01-01" }), "2026-01-01");
     assert.equal(roundTrip({ attrib: "subject", op: "contains", value: "invoice" }), "invoice");
     assert.equal(roundTrip({ attrib: "tag", op: "is", value: "$label1" }), "$label1");
+  });
+
+  it("formats a stored value that is not local midnight as an ISO instant", () => {
+    // Not producible through buildTerms any more (date-time input is refused), but
+    // getSearchValue must still degrade sensibly if it ever meets one -- for
+    // instance a filter written by another tool, or by a future Thunderbird.
+    const term = { attrib: ATTRIB.Date, value: makeSearchValue() };
+    term.value.attrib = ATTRIB.Date;
+    term.value.date = Date.UTC(2026, 0, 2, 3, 4, 5) * 1000;
+    assert.equal(helpers.getSearchValue(term.value, term.attrib), "2026-01-02T03:04:05.000Z");
   });
 
   it("reports no value for hasAttachment -- the operator carries the meaning", () => {
@@ -460,10 +597,15 @@ describe("the tool schema text is generated from the attribute table", () => {
     }
   });
 
-  it("groups attributes that share a value format", () => {
-    // ageInDays/size/priority/status/junkPercent are all plain integers and
-    // must therefore appear as one group, not five.
-    assert.match(helpers.FILTER_VALUE_DESCRIPTION, /priority\/status\/ageInDays\/size\/junkPercent: an integer/);
+  it("groups attributes that share a value format, but not those with their own bounds", () => {
+    // ageInDays and size are both non-negative integers with different units,
+    // so each keeps its own hint; priority, status and junkPercent each have
+    // their own range and are not lumped in with a generic "an integer".
+    assert.match(helpers.FILTER_VALUE_DESCRIPTION, /ageInDays: a non-negative integer up to 2147483647 \(days\)/);
+    assert.match(helpers.FILTER_VALUE_DESCRIPTION, /size: a non-negative integer up to 4294967295 \(KB\)/);
+    assert.match(helpers.FILTER_VALUE_DESCRIPTION, /priority: an integer from 2 to 6/);
+    assert.match(helpers.FILTER_VALUE_DESCRIPTION, /status: a message-flag bitmask/);
+    assert.match(helpers.FILTER_VALUE_DESCRIPTION, /junkPercent: an integer from 0 to 100/);
   });
 
   it("names otherHeader as the attribute that requires a header", () => {
@@ -580,7 +722,8 @@ describe("ACTION_MAP matches the real nsMsgFilterAction enum", () => {
   it("documents which actions take a value and which do not", () => {
     const d = helpers.FILTER_ACTION_VALUE_DESCRIPTION;
     assert.match(d, /moveToFolder\/copyToFolder: a folder URI/);
-    assert.match(d, /changePriority\/junkScore: an integer/);
+    assert.match(d, /changePriority: an integer from 2 to 6/);
+    assert.match(d, /junkScore: an integer from 0 \(not junk\) to 100 \(junk\)/);
     assert.match(d, /no value/);
     assert.ok(/markRead/.test(d.split("no value")[0].split(";").pop() + "no value"));
   });

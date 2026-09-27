@@ -63,7 +63,8 @@ function loadHelpers({ actions = ACTIONS } = {}) {
       nsMsgSearchOp: nonEnumerable(OPS),
       nsMsgFilterAction: nonEnumerable(actions),
       nsMsgFilterType: nonEnumerable({ InboxRule: 0x1, Manual: 0x10, PostPlugin: 0x20, PostOutgoing: 0x40, Archive: 0x80, Periodic: 0x100 }),
-      nsMsgMessageFlags: { Attachment: 0x10000000 },
+      nsMsgMessageFlags: nonEnumerable({ Read: 0x1, Replied: 0x2, Marked: 0x4, Forwarded: 0x1000, New: 0x10000, Attachment: 0x10000000 }),
+      nsMsgPriority: nonEnumerable({ lowest: 2, low: 3, normal: 4, high: 5, highest: 6 }),
     },
     Services: { prefs: { getCharPref: (_n, fallback) => fallback } },
   };
@@ -196,11 +197,30 @@ describe("buildRuleActions resolves every action by name", () => {
     assert.equal(filter.getActionAt(0).targetFolderUri, "mailbox://nobody@Local%20Folders/Archive");
   });
 
-  it("types the priority value as an integer", () => {
+  it("types the priority value as an integer, bounded to nsMsgPriority.lowest..highest", () => {
     const filter = makeFilter();
     api.buildRuleActions(filter, [{ type: "changePriority", value: "6" }], resolveFolder);
     assert.equal(filter.getActionAt(0).priority, 6);
     assert.throws(() => api.buildRuleActions(makeFilter(), [{ type: "changePriority", value: "high" }], resolveFolder), /must be an integer/);
+    assert.throws(() => api.buildRuleActions(makeFilter(), [{ type: "changePriority", value: "7" }], resolveFolder), /must be an integer from 2 to 6/);
+  });
+
+  it("bounds junkScore to 0..100", () => {
+    assert.throws(() => api.buildRuleActions(makeFilter(), [{ type: "junkScore", value: "101" }], resolveFolder),
+      /must be an integer from 0 \(not junk\) to 100 \(junk\)/);
+    const filter = makeFilter();
+    api.buildRuleActions(filter, [{ type: "junkScore", value: "0" }], resolveFolder);
+    assert.equal(filter.getActionAt(0).junkScore, 0);
+  });
+
+  it("error messages say \"Action value\", not \"Condition value\"", () => {
+    assert.throws(() => api.buildRuleActions(makeFilter(), [{ type: "changePriority", value: "x" }], resolveFolder),
+      /Action value for "changePriority" must be/);
+  });
+
+  it("requires a resolveFolder function", () => {
+    assert.throws(() => api.buildRuleActions(makeFilter(), [{ type: "markRead" }], undefined), /requires a resolveFolder/);
+    assert.throws(() => api.buildRuleActions(makeFilter(), [{ type: "markRead" }], null), /requires a resolveFolder/);
   });
 
   it("requires a value where the action needs one, and rejects one where it does not", () => {
@@ -236,6 +256,13 @@ function ageRule() {
 }
 
 describe("planFilterUpdate copies what it does not replace, typed", () => {
+  it("requires a resolveFolder function, even when only conditions/name/enabled change", () => {
+    const list = makeFilterList();
+    const original = ageRule();
+    assert.throws(() => api.planFilterUpdate(list, original, { name: "x" }, undefined), /requires a resolveFolder/);
+    assert.throws(() => api.planFilterUpdate(list, original, { actions: [{ type: "markRead" }] }, null), /requires a resolveFolder/);
+  });
+
   it("changing only the action keeps 'age in days > 30' (typed .age copy)", () => {
     const list = makeFilterList();
     const original = ageRule();
@@ -374,6 +401,16 @@ describe("serializeFilterRule reports what it cannot read", () => {
     assert.equal(out.actions[0].value, "mailbox://nobody@Local%20Folders/Archive");
     assert.equal(out.actions[1].type, "custom");
     assert.equal(out.actions[1].customId, "addon#act");
+  });
+
+  it("reads hdrProperty back on a HdrProperty/Uint32HdrProperty term", () => {
+    const f = makeFilter("hdr");
+    const prop = f.createTerm();
+    prop.attrib = ATTRIB.Uint32HdrProperty; prop.op = OPS.Is; prop.hdrProperty = "replyTo";
+    prop.value.attrib = ATTRIB.Uint32HdrProperty; prop.value.status = 7;
+    f.appendTerm(prop);
+    const out = api.serializeFilterRule(f, 0);
+    assert.equal(out.terms[0].hdrProperty, "replyTo");
   });
 
   it("marks an unreadable action and an unreadable value instead of skipping them", () => {
