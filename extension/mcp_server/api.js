@@ -1846,6 +1846,7 @@ function assertFilterListGuard(filterList, operation, targetIndex) {
 }
 // END FILTER RULE HELPERS
 
+// eslint-disable-next-line no-unused-vars -- read by Thunderbird: the Experiment API namespace "commonpostMcp" (schema.json)
 var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
   getAPI(context) {
     const extensionRoot = context.extension.rootURI;
@@ -2730,9 +2731,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
     if (toolErrors.length > 0) {
       console.error("commonpost-mcp: Tool metadata validation failed:\n  " + toolErrors.join("\n  "));
     }
-
-    // Derive ALL_TOOL_NAMES from the tools array (single source of truth)
-    const ALL_TOOL_NAMES = tools.map(t => t.name);
 
     // Group display order for settings UI
     const GROUP_ORDER = { system: 0, messages: 1, folders: 2, contacts: 3, calendar: 4, filters: 5 };
@@ -4100,7 +4098,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       }
                     },
                     onGetDraftFolderURI() {},
-                    onSendNotPerformed(msgID, status) {
+                    onSendNotPerformed(_msgID, _status) {
                       timer.cancel();
                       settle({ error: "Send was not performed" });
                     },
@@ -4168,16 +4166,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   // older TB without the copy listener, the Promise fulfillment
                   // can be the only completion signal we get.
                   if (sendResult && typeof sendResult.then === "function") {
-                    sendResult.then(
-                      () => {
-                        timer.cancel();
-                        settle({ success: true });
-                      },
-                      e => {
-                        timer.cancel();
-                        settle({ error: e.toString() });
-                      }
-                    );
+                    sendResult.then(() => {
+                      timer.cancel();
+                      settle({ success: true });
+                    }).catch(e => {
+                      timer.cancel();
+                      settle({ error: e.toString() });
+                    });
                   }
                 } catch (e) {
                   timer.cancel();
@@ -7118,18 +7113,18 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     }
 
                                         const saveOne = ({ info, url, size }, index) =>
-                                          new Promise((done) => {
+                                          new Promise((resolve) => {
                         try {
                           if (!url) {
                             info.error = "Missing attachment URL";
-                            done();
+                            resolve();
                             return;
                           }
 
                           const knownSize = typeof size === "number" ? size : null;
                           if (knownSize !== null && knownSize > MAX_ATTACHMENT_BYTES) {
                             info.error = `Attachment too large (${knownSize} bytes, limit ${MAX_ATTACHMENT_BYTES})`;
-                            done();
+                            resolve();
                             return;
                           }
 
@@ -7145,7 +7140,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                             file.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o600);
                           } catch (e) {
                             info.error = `Failed to create file: ${e}`;
-                            done();
+                            resolve();
                             return;
                           }
 
@@ -7160,13 +7155,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                                 try { inputStream?.close(); } catch {}
                                 info.error = `Fetch failed: ${status}`;
                                 try { file.remove(false); } catch {}
-                                done();
+                                resolve();
                                 return;
                               }
                               if (!inputStream) {
                                 info.error = "Fetch returned no data";
                                 try { file.remove(false); } catch {}
-                                done();
+                                resolve();
                                 return;
                               }
 
@@ -7181,7 +7176,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                                   if (copyStatus && copyStatus !== 0) {
                                     info.error = `Write failed: ${copyStatus}`;
                                     try { file.remove(false); } catch {}
-                                    done();
+                                    resolve();
                                     return;
                                   }
 
@@ -7191,7 +7186,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                                     if (actualSize > MAX_ATTACHMENT_BYTES) {
                                       info.error = `Attachment too large (${actualSize} bytes, limit ${MAX_ATTACHMENT_BYTES})`;
                                       try { file.remove(false); } catch {}
-                                      done();
+                                      resolve();
                                       return;
                                     }
                                   } catch {
@@ -7204,29 +7199,29 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                                       info.error = recovered.error;
                                       delete info.filePath;
                                       try { file.remove(false); } catch {}
-                                      done();
+                                      resolve();
                                       return;
                                     }
                                     actualSize = recovered.size;
                                   }
 
                                   info.filePath = file.path;
-                                  done();
+                                  resolve();
                                                                 } catch (e) {
                                   info.error = `Write failed: ${e}`;
                                   try { file.remove(false); } catch {}
-                                  done();
+                                  resolve();
                                 }
                               });
                             } catch (e) {
                               info.error = `Fetch failed: ${e}`;
                               try { file.remove(false); } catch {}
-                              done();
+                              resolve();
                             }
                           });
                         } catch (e) {
                           info.error = String(e);
-                          done();
+                          resolve();
                         }
                       });
 
@@ -7579,7 +7574,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                            result.message = msg;
 	                          }
 	                          resolve(result);
-	                        });
+	                        }).catch(e => resolve({ error: e.toString() }));
 	                      } catch (e) {
 	                        resolve({ error: e.toString() });
 	                      }
@@ -7605,7 +7600,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                      result.message = msg;
 	                    }
 	                    resolve(result);
-	                  });
+	                  }).catch(e => resolve({ error: e.toString() }));
 
 	                } catch (e) {
 	                  resolve({ error: e.toString() });
@@ -7751,7 +7746,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                             result.message = msg;
                           }
                           resolve(result);
-                        });
+                        }).catch(e => resolve({ error: e.toString() }));
                       } catch (e) {
                         resolve({ error: e.toString() });
                       }
@@ -7782,7 +7777,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       result.message = msg;
                     }
                     resolve(result);
-                  });
+                  }).catch(e => resolve({ error: e.toString() }));
                 } catch (e) {
                   resolve({ error: e.toString() });
                 }
