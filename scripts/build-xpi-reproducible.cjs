@@ -36,7 +36,7 @@ const OUT_DIR = path.join(ROOT, 'dist');
 const EXPECTED = {
   id: 'commonpost-mcp@commonpost.github.io',
   updateUrl: 'https://commonpost.github.io/thunderbird-mcp/updates.json',
-  strictMin: '156.0',
+  strictMin: '140.0',
 };
 const ROOT_FILES = ['LICENSE', 'THIRD-PARTY.md'];
 const PARASITE = /(^|\/)(\.[^/]*|Thumbs\.db|desktop\.ini|[^/]*~|[^/]*\.(orig|rej|swp|swo|bak|tmp|log))$/i;
