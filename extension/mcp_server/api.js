@@ -1133,6 +1133,32 @@ const FILTER_OP_IDL_NAMES = [
   "IsInAB", "IsntInAB", "IsntEmpty", "Matches", "DoesntMatch",
 ];
 
+// Values the hints and range checks refer to, resolved the same way as the
+// attribute and operator ids. nsMsgPriority bounds the priority condition and
+// the changePriority action; the nsMsgMessageFlags rows are the status bits
+// Thunderbird's own filter UI offers.
+const PRIORITY_LEVELS = ["lowest", "low", "normal", "high", "highest"]
+  .map((name) => ({ name, value: resolveXpcomConstant("nsMsgPriority", name) }))
+  .filter((level) => level.value !== undefined);
+const STATUS_FLAGS = [
+  ["read", "Read"], ["replied", "Replied"], ["flagged", "Marked"],
+  ["forwarded", "Forwarded"], ["new", "New"],
+]
+  .map(([name, idl]) => ({ name, value: resolveXpcomConstant("nsMsgMessageFlags", idl) }))
+  .filter((flag) => flag.value !== undefined);
+const ATTACHMENT_FLAG = resolveXpcomConstant("nsMsgMessageFlags", "Attachment");
+
+const describeLevels = (levels) => levels.map((level) => `${level.value}=${level.name}`).join(", ");
+const PRIORITY_HINT = PRIORITY_LEVELS.length
+  ? `an integer from ${PRIORITY_LEVELS[0].value} to ${PRIORITY_LEVELS[PRIORITY_LEVELS.length - 1].value} (${describeLevels(PRIORITY_LEVELS)})`
+  : "an integer";
+const PRIORITY_RANGE = PRIORITY_LEVELS.length
+  ? { min: PRIORITY_LEVELS[0].value, max: PRIORITY_LEVELS[PRIORITY_LEVELS.length - 1].value }
+  : {};
+const STATUS_HINT = STATUS_FLAGS.length
+  ? `a message-flag bitmask (${describeLevels(STATUS_FLAGS)})`
+  : "a message-flag bitmask";
+
 // Our API name, the IDL constant it resolves against, and where its value
 // lives. member/codec default to "str"/"text". No numbers: see above.
 const FILTER_ATTRIBUTE_DEFS = [
@@ -1140,20 +1166,25 @@ const FILTER_ATTRIBUTE_DEFS = [
   { attrib: "from", idl: "Sender" },
   { attrib: "body", idl: "Body" },
   { attrib: "date", idl: "Date", member: "date", codec: "date" },
-  { attrib: "priority", idl: "Priority", member: "priority", codec: "integer" },
-  { attrib: "status", idl: "MsgStatus", member: "status", codec: "integer" },
+  { attrib: "priority", idl: "Priority", member: "priority", codec: "priority" },
+  { attrib: "status", idl: "MsgStatus", member: "status", codec: "status" },
   { attrib: "to", idl: "To" },
   { attrib: "cc", idl: "CC" },
   { attrib: "toOrCc", idl: "ToOrCC" },
   { attrib: "allAddresses", idl: "AllAddresses" },
-  { attrib: "ageInDays", idl: "AgeInDays", member: "age", codec: "integer" },
-  { attrib: "size", idl: "Size", member: "size", codec: "integer" },
+  // nsMsgSearchValue.age is a long (32-bit signed): 2147483647 is its ceiling.
+  { attrib: "ageInDays", idl: "AgeInDays", member: "age", codec: "integer", min: 0, max: 2147483647, hint: "a non-negative integer up to 2147483647 (days)" },
+  // Thunderbird labels this attribute "Size (KB)" and compares against the
+  // message size in kilobytes.
+  // nsMsgSearchValue.size is an unsigned long: 4294967295 is its ceiling; past
+  // that (as with a negative value) Thunderbird wraps instead of refusing.
+  { attrib: "size", idl: "Size", member: "size", codec: "integer", min: 0, max: 4294967295, hint: "a non-negative integer up to 4294967295 (KB)" },
   // Thunderbird has no separate tag attribute -- tags are stored as keywords,
   // so a tag condition is Keywords with the tag key in .str.
   { attrib: "tag", idl: "Keywords", hint: 'a tag key such as "$label1"' },
   { attrib: "hasAttachment", idl: "HasAttachmentStatus", member: "status", codec: "attachmentFlag" },
   { attrib: "junkStatus", idl: "JunkStatus", member: "junkStatus", codec: "junkStatus" },
-  { attrib: "junkPercent", idl: "JunkPercent", member: "junkPercent", codec: "integer" },
+  { attrib: "junkPercent", idl: "JunkPercent", member: "junkPercent", codec: "integer", min: 0, max: 100, hint: "an integer from 0 to 100" },
   // OtherHeader matches a named header, which Thunderbird reads from
   // term.arbitraryHeader -- without it the term never matches.
   { attrib: "otherHeader", idl: "OtherHeader", needsHeader: true },
@@ -1175,6 +1206,30 @@ const OP_NAMES = Object.fromEntries(Object.entries(OP_MAP).map(([k, v]) => [v, k
 const JUNK_STATUS_MAP = { unclassified: 0, good: 1, notJunk: 1, junk: 2 };
 const JUNK_STATUS_NAMES = { 0: "unclassified", 1: "good", 2: "junk" };
 
+// Integers are matched with a regexp rather than parseInt (which took
+// "30abc" as 30 and "1.5" as 1); the range check catches values Thunderbird
+// itself would store as something else ("size" is unsigned long: -5 became
+// 4294967291).
+function parseStrictInteger(raw, label, hint, { min, max } = {}) {
+  const text = String(raw ?? "").trim();
+  const parsed = /^-?\d+$/.test(text) ? Number(text) : NaN;
+  const inRange = Number.isSafeInteger(parsed)
+    && (min === undefined || parsed >= min)
+    && (max === undefined || parsed <= max);
+  if (!inRange) {
+    throw new Error(`${label} must be ${hint}, got: ${JSON.stringify(raw)}`);
+  }
+  return parsed;
+}
+
+const LOCAL_DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const pad2 = (n) => String(n).padStart(2, "0");
+const formatLocalDay = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+// Each codec: the hint shown in the schema and in error messages, parse(raw,
+// label, spec) for writing, format(stored) for reading back. label is the
+// full phrase an error names ("Condition value for ..." or "Action value
+// for ...", built by the caller), so the same message reads right either way.
 const VALUE_CODECS = {
   text: {
     hint: "text",
@@ -1183,43 +1238,81 @@ const VALUE_CODECS = {
   },
   integer: {
     hint: "an integer",
-    parse: (raw, attribName) => {
-      const parsed = Number.parseInt(String(raw ?? "").trim(), 10);
-      if (!Number.isFinite(parsed)) {
-        throw new Error(`Condition value for "${attribName}" must be an integer, got: ${JSON.stringify(raw)}`);
-      }
-      return parsed;
-    },
+    parse: (raw, label, spec) => parseStrictInteger(raw, label, spec.hint, spec),
+    format: (stored) => String(stored),
+  },
+  priority: {
+    hint: PRIORITY_HINT,
+    parse: (raw, label) => parseStrictInteger(raw, label, PRIORITY_HINT, PRIORITY_RANGE),
+    format: (stored) => String(stored),
+  },
+  status: {
+    hint: STATUS_HINT,
+    // nsMsgSearchValue.status is an unsigned long bitmask.
+    parse: (raw, label) => parseStrictInteger(raw, label, STATUS_HINT, { min: 1, max: 4294967295 }),
     format: (stored) => String(stored),
   },
   date: {
-    hint: "an ISO-8601 date or epoch milliseconds",
-    parse: (raw, attribName) => {
+    // Only a local calendar day is accepted: Thunderbird only ever persists
+    // the day (nsMsgSearchTerm writes with PR_LocalTimeParameters and reads
+    // back at local midnight), so a date-time input -- even one that looks
+    // precise, such as "2026-01-01T00:00:00Z" -- would silently be reduced to
+    // whatever day that instant falls on locally, one day off from what it
+    // reads anywhere west of UTC, with nothing to show it happened. Bare
+    // numbers are refused for the same reason epoch milliseconds were:
+    // "2026" used to be read as such and saved as 01-Jan-1970.
+    hint: "YYYY-MM-DD: Thunderbird stores a local day, not a time",
+    parse: (raw, label) => {
       const text = String(raw ?? "").trim();
-      const ms = /^-?\d+$/.test(text) ? Number(text) : Date.parse(text);
+      let ms = NaN;
+      const day = LOCAL_DAY_RE.exec(text);
+      if (day) {
+        const [year, month, dayOfMonth] = [Number(day[1]), Number(day[2]), Number(day[3])];
+        const local = new Date(year, month - 1, dayOfMonth);
+        const valid = local.getFullYear() === year
+          && local.getMonth() === month - 1
+          && local.getDate() === dayOfMonth;
+        if (valid) ms = local.getTime();
+      }
       if (!Number.isFinite(ms)) {
-        throw new Error(`Condition value for "${attribName}" must be an ISO-8601 date or epoch ms, got: ${JSON.stringify(raw)}`);
+        throw new Error(`${label} must be ${VALUE_CODECS.date.hint}, got: ${JSON.stringify(raw)}`);
       }
       return ms * 1000; // nsIMsgSearchValue.date is PRTime (microseconds)
     },
-    format: (stored) => (stored ? new Date(stored / 1000).toISOString() : ""),
+    format: (stored) => {
+      if (!stored) return "";
+      const d = new Date(Math.floor(stored / 1000));
+      // A term reloaded from msgFilterRules.dat always sits at local
+      // midnight (Thunderbird only ever persists the day): report it the
+      // same way it is written. Anything else keeps its instant.
+      const localMidnight = d.getHours() === 0 && d.getMinutes() === 0
+        && d.getSeconds() === 0 && d.getMilliseconds() === 0;
+      return localMidnight ? formatLocalDay(d) : d.toISOString();
+    },
   },
   junkStatus: {
-    hint: "junk, good or unclassified",
-    parse: (raw, attribName) => {
+    hint: "junk, good or unclassified (or 2, 1, 0)",
+    parse: (raw, label) => {
       const text = String(raw ?? "").trim();
       if (Object.prototype.hasOwnProperty.call(JUNK_STATUS_MAP, text)) {
         return JUNK_STATUS_MAP[text];
       }
-      return VALUE_CODECS.integer.parse(text, attribName);
+      return parseStrictInteger(text, label, VALUE_CODECS.junkStatus.hint, { min: 0, max: 2 });
     },
     format: (stored) => JUNK_STATUS_NAMES[stored] ?? String(stored),
   },
   attachmentFlag: {
     // The stored value is always the attachment flag; has / hasn't is
-    // expressed by the operator, so the caller supplies and reads nothing.
-    hint: "no value -- the operator (is / isnt) carries has / hasn't",
-    parse: () => Ci.nsMsgMessageFlags.Attachment,
+    // expressed by the operator. A supplied value would be silently ignored
+    // by Thunderbird (is + "false" persists as is,true), so it is refused.
+    hint: 'no value -- op "is" means has an attachment, "isnt" means has none',
+    available: ATTACHMENT_FLAG !== undefined,
+    parse: (raw, label) => {
+      if (String(raw ?? "").trim() !== "") {
+        throw new Error(`${label} must be empty: hasAttachment takes no value, the operator carries has / hasn't, got: ${JSON.stringify(raw)}`);
+      }
+      return ATTACHMENT_FLAG;
+    },
     format: () => "",
   },
 };
@@ -1236,6 +1329,7 @@ const FILTER_ATTRIBUTES = FILTER_ATTRIBUTE_DEFS
     if (resolved === undefined) return null; // not in this Thunderbird
     const member = def.member || "str";
     const codec = def.codec || "text";
+    if (VALUE_CODECS[codec].available === false) return null; // e.g. attachment flag unresolved
     return {
       ...def,
       value: resolved,
@@ -1301,7 +1395,7 @@ function setSearchValue(value, attrib, raw) {
   if (!(spec.member in value)) {
     throw new Error(`This Thunderbird's nsIMsgSearchValue has no "${spec.member}" member (needed for attribute "${spec.attrib}")`);
   }
-  value[spec.member] = VALUE_CODECS[spec.codec].parse(raw, spec.attrib);
+  value[spec.member] = VALUE_CODECS[spec.codec].parse(raw, `Condition value for "${spec.attrib}"`, spec);
 }
 
 function attribSpec(attrib) {
@@ -1366,8 +1460,9 @@ const FILTER_HEADER_DESCRIPTION = (() => {
 const FILTER_ACTION_DEFS = [
   { action: "moveToFolder", idl: "MoveToFolder", member: "targetFolderUri", codec: "folder" },
   { action: "copyToFolder", idl: "CopyToFolder", member: "targetFolderUri", codec: "folder" },
-  { action: "changePriority", idl: "ChangePriority", member: "priority", codec: "integer" },
-  { action: "junkScore", idl: "JunkScore", member: "junkScore", codec: "integer" },
+  { action: "changePriority", idl: "ChangePriority", member: "priority", codec: "priority" },
+  // nsMsgRuleAction::SetJunkScore rejects anything outside 0..100.
+  { action: "junkScore", idl: "JunkScore", member: "junkScore", codec: "integer", min: 0, max: 100, hint: "an integer from 0 (not junk) to 100 (junk)" },
   { action: "addTag", idl: "AddTag", member: "strValue", codec: "text", hint: 'a tag key such as "$label1"' },
   { action: "reply", idl: "Reply", member: "strValue", codec: "text", hint: "a reply template message URI" },
   { action: "forward", idl: "Forward", member: "strValue", codec: "text", hint: "an email address" },
@@ -1390,7 +1485,7 @@ const FILTER_ACTIONS = FILTER_ACTION_DEFS
   .map((def) => {
     const resolved = resolveXpcomConstant("nsMsgFilterAction", def.idl);
     if (resolved === undefined) return null; // not in this Thunderbird
-    return { ...def, value: resolved };
+    return { ...def, value: resolved, hint: def.hint || (def.codec === "folder" ? "a folder URI" : (def.codec ? VALUE_CODECS[def.codec].hint : undefined)) };
   })
   .filter(Boolean);
 
@@ -1579,6 +1674,11 @@ function copyRuleAction(filter, action) {
 // Build the actions requested through MCP. `resolveFolder(uri)` returns
 // { folder } or { error } for an accessible folder.
 function buildRuleActions(filter, actions, resolveFolder, { allowSendActions = false } = {}) {
+  if (typeof resolveFolder !== "function") {
+    // checkTargetFolder is mandatory: every action that targets a folder
+    // (moveToFolder/copyToFolder) must have its target verified accessible.
+    throw new Error("buildRuleActions requires a resolveFolder(uri) function");
+  }
   if (!FILTER_ACTIONS_AVAILABLE) {
     throw new Error("Cannot build filter actions -- this Thunderbird did not expose nsMsgFilterAction");
   }
@@ -1606,7 +1706,9 @@ function buildRuleActions(filter, actions, resolveFolder, { allowSendActions = f
     if (!spec.member) {
       if (hasValue) throw new Error(`Action "${act.type}" does not take a value`);
     } else if (!hasValue) {
-      throw new Error(`Action "${act.type}" requires a value`);
+      // Thunderbird happily saves e.g. "Move to folder" with no folder, and
+      // the rule then does nothing when it runs.
+      throw new Error(`Action "${act.type}" requires a value: ${spec.hint}`);
     }
     const action = filter.createAction();
     action.type = spec.value;
@@ -1621,7 +1723,7 @@ function buildRuleActions(filter, actions, resolveFolder, { allowSendActions = f
         }
         action.targetFolderUri = targetCheck.folder.URI;
       } else {
-        action[spec.member] = VALUE_CODECS[spec.codec].parse(act.value, act.type);
+        action[spec.member] = VALUE_CODECS[spec.codec].parse(act.value, `Action value for "${act.type}"`, spec);
       }
     }
     filter.appendAction(action);
@@ -1653,6 +1755,7 @@ function serializeFilterRule(filter, index) {
       }
       if (term.arbitraryHeader) t.header = term.arbitraryHeader;
       if (SEARCH_ATTRIB_CUSTOM !== undefined && term.attrib === SEARCH_ATTRIB_CUSTOM) t.customId = term.customId;
+      if (SEARCH_ATTRIB_HDR_PROPERTY.includes(term.attrib)) t.hdrProperty = term.hdrProperty;
       terms.push(t);
     }
   } catch (e) {
@@ -1706,6 +1809,9 @@ function serializeFilterRule(filter, index) {
 // filter list is touched. Returns { changes, replacement } -- replacement is
 // null when only name/enabled/type change (applied in place by the caller).
 function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSendActions = false } = {}) {
+  if (typeof resolveFolder !== "function") {
+    throw new Error("planFilterUpdate requires a resolveFolder(uri) function");
+  }
   const changes = [];
   if (update.name !== undefined) changes.push("name");
   if (update.enabled !== undefined) changes.push("enabled");
