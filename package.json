@@ -30,7 +30,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test test/*.cjs",
+    "test": "node --test test/*.cjs test/*.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
   },

@@ -24,7 +24,7 @@ versions, and moving functionality from the Experiment API to standard MailExten
 
 ```sh
 npm ci --ignore-scripts        # dev dependencies from the lockfile (Node.js 22 or later)
-npm test                       # node --test test/*.cjs
+npm test                       # node --test test/*.cjs test/*.js
 npm run lint                   # ESLint
 node scripts/build-xpi-reproducible.cjs   # builds dist/commonpost-mcp-v<version>.xpi from the committed tree
 ```
