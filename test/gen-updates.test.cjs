@@ -7,8 +7,15 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
+const fs = require("node:fs");
+
 const script = path.resolve(__dirname, "../scripts/gen-updates.js");
 const HASH = "a".repeat(64);
+// gen-updates.js reads this straight from the manifest; not duplicated here
+// as a literal, so this test does not need updating when the minimum moves.
+const manifestStrictMin = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, "../extension/manifest.json"), "utf8")
+).browser_specific_settings.gecko.strict_min_version;
 
 function run(env) {
   return spawnSync(process.execPath, [script], { env: { PATH: process.env.PATH, ...env }, encoding: "utf8" });
@@ -22,7 +29,7 @@ describe("gen-updates", () => {
     const entry = updates.addons["commonpost-mcp@commonpost.github.io"].updates[0];
     assert.equal(entry.version, "0.8.0");
     assert.equal(entry.update_hash, `sha256:${HASH}`);
-    assert.equal(entry.applications.gecko.strict_min_version, "156.0");
+    assert.equal(entry.applications.gecko.strict_min_version, manifestStrictMin);
     assert.equal(
       entry.update_link,
       "https://github.com/commonpost/thunderbird-mcp/releases/download/v0.8.0/commonpost-mcp-v0.8.0.xpi"

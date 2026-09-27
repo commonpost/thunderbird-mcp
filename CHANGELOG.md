@@ -13,6 +13,7 @@ project is kept in this repository.
   column; the pre-existing columns keep their order.
 
 ### Changed
+- Supports Thunderbird ESR 140 and 153 again (minimum 140.0); tested on 140.16.0esr, 153.3.1esr and 156.0.1.
 - With `bodyFormat: "markdown"` (the default) or `"html"`, a `multipart/alternative` body now comes from its HTML
   part when it has one, including its links and image URLs, converted to Markdown -- not the plain-text
   alternative, as before. This does not apply outside an alternative: a container that mixes a plain-text part

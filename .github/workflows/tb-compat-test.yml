@@ -22,12 +22,15 @@ jobs:
     # Beta runs against the next TB major (one ahead of the cap), so it is an
     # early-warning signal, not a merge gate. Once Thunderbird disables
     # experiment APIs on a future beta this leg will fail; that must not block
-    # unrelated PRs. The weekly scheduled workflow keeps beta/esr as hard signals.
+    # unrelated PRs. The weekly scheduled workflow (tb-version-check.yml) keeps
+    # stable/beta/esr (THUNDERBIRD_ESR, the current one) as hard signals.
+    # esr153 here is THUNDERBIRD_ESR_NEXT: the coming ESR, most useful to
+    # catch regressions against ahead of the migration users will make to it.
     continue-on-error: ${{ matrix.channel == 'beta' }}
     strategy:
       fail-fast: false
       matrix:
-        channel: [stable, beta]
+        channel: [stable, beta, esr153]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -129,7 +132,7 @@ jobs:
           }
 
           sudo apt-get update -qq || fail_infra "apt-get update failed"
-          sudo apt-get install -y -qq bzip2 curl jq libdbus-glib-1-2 libgtk-3-0 libx11-xcb1 libxt6 xvfb xz-utils zip \
+          sudo apt-get install -y -qq bzip2 curl gnupg jq libdbus-glib-1-2 libgtk-3-0 libx11-xcb1 libxt6 xvfb xz-utils zip \
             || fail_infra "failed to install Thunderbird runtime dependencies"
           if ! ldconfig -p | grep -q 'libasound.so.2'; then
             sudo apt-get install -y -qq libasound2t64 \
@@ -143,6 +146,7 @@ jobs:
           case "$TB_CHANNEL" in
             stable) version_key="LATEST_THUNDERBIRD_VERSION" ;;
             beta) version_key="LATEST_THUNDERBIRD_DEVEL_VERSION" ;;
+            esr153) version_key="THUNDERBIRD_ESR_NEXT" ;;
             *) fail_infra "unsupported Thunderbird channel: ${TB_CHANNEL}" ;;
           esac
 
@@ -150,6 +154,22 @@ jobs:
             || fail_infra "failed to fetch Thunderbird product details"
           tb_version="$(printf '%s' "$tb_json" | jq -er --arg key "$version_key" '.[$key] // empty')" \
             || fail_infra "Thunderbird version key ${version_key} was missing"
+
+          if [ "$TB_CHANNEL" = "esr153" ] && [ -z "$tb_version" ]; then
+            # THUNDERBIRD_ESR_NEXT is only populated while a newer ESR is staged;
+            # once 140 reaches end of life and 153 becomes THE esr, this key goes
+            # back to empty (seen in product-details' own history). Fall back to
+            # THUNDERBIRD_ESR, but only ever accept it if it is still 153.x: once a
+            # further ESR is staged, THUNDERBIRD_ESR could again be 140.x or become
+            # some other line entirely, and this job must not silently start
+            # testing the wrong version -- fail closed instead.
+            tb_version="$(printf '%s' "$tb_json" | jq -er '.THUNDERBIRD_ESR // empty')" \
+              || fail_infra "Thunderbird version key THUNDERBIRD_ESR was missing"
+            if [[ ! "$tb_version" =~ ^153(\.|$) ]]; then
+              fail_infra "THUNDERBIRD_ESR_NEXT is empty and THUNDERBIRD_ESR (${tb_version}) is not 153.x; the esr153 leg needs updating"
+            fi
+          fi
+
           if [[ ! "$tb_version" =~ ^[0-9]+(\.[0-9]+)*([ab][0-9]+|esr)?$ ]]; then
             fail_infra "unexpected Thunderbird version format: ${tb_version}"
           fi
@@ -159,11 +179,42 @@ jobs:
           download_url="https://download.mozilla.org/?product=thunderbird-${tb_version}-SSL&os=linux64&lang=en-US"
           archive_url="https://archive.mozilla.org/pub/thunderbird/releases/${tb_version}/linux-x86_64/en-US/thunderbird-${tb_version}.tar.xz"
 
-          echo "Downloading Thunderbird ${TB_CHANNEL} ${tb_version}"
-          if ! curl -fL "$download_url" -o "$archive"; then
-            echo "::warning::download.mozilla.org failed; trying archive.mozilla.org"
-            curl -fL "$archive_url" -o "$archive" \
+          if [ "$TB_CHANNEL" = "esr153" ]; then
+            # Signature-verified download (same method as the public offline lab's Dockerfile,
+            # https://github.com/commonpost/thunderbird-mcp-lab): fetch SHA512SUMS + its OpenPGP
+            # signature + Mozilla's own KEY file, check the signature chains to Mozilla's
+            # published release-signing fingerprint, then check
+            # the archive's SHA512 against the (now-trusted) sums file.
+            moz_key_fpr="14F26682D0916CDD81E37B6D61B7B526D98F0353"
+            rel_dir="https://archive.mozilla.org/pub/thunderbird/releases/${tb_version}"
+            work="$(mktemp -d)" || fail_infra "failed to create verification workdir"
+            ( cd "$work" \
+              && curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o SHA512SUMS "${rel_dir}/SHA512SUMS" \
+              && curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o SHA512SUMS.asc "${rel_dir}/SHA512SUMS.asc" \
+              && curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o KEY "${rel_dir}/KEY" \
+              && gpg --batch --dearmor < KEY > moz.gpg \
+              && gpgv --status-fd 3 --keyring ./moz.gpg SHA512SUMS.asc SHA512SUMS 3> gpg-status.txt \
+              && grep -q '^\[GNUPG:\] GOODSIG ' gpg-status.txt \
+              && grep -Eq "^\[GNUPG:\] VALIDSIG [0-9A-F]{40} .* ${moz_key_fpr}\$" gpg-status.txt \
+              && ! grep -Eq '^\[GNUPG:\] (BADSIG|ERRSIG|EXPKEYSIG|REVKEYSIG|EXPSIG) ' gpg-status.txt \
+            ) || fail_infra "Thunderbird ${tb_version} SHA512SUMS signature verification failed"
+            f="linux-x86_64/en-US/thunderbird-${tb_version}.tar.xz"
+            expected="$(awk -v f="$f" '$2 == f { print $1 }' "$work/SHA512SUMS")"
+            [ "$(printf '%s\n' "$expected" | wc -l)" = 1 ] || fail_infra "SHA512 sum absent or duplicated for ${f}"
+            [[ "$expected" =~ ^[0-9a-f]{128}$ ]] || fail_infra "malformed SHA512 sum for ${f}"
+            echo "Downloading Thunderbird ${TB_CHANNEL} ${tb_version} (signature-verified)"
+            curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$archive" "${rel_dir}/${f}" \
               || fail_infra "failed to download Thunderbird ${TB_CHANNEL} ${tb_version}"
+            printf '%s  %s\n' "$expected" "$archive" | sha512sum -c - \
+              || fail_infra "Thunderbird ${TB_CHANNEL} ${tb_version} archive failed SHA512 verification"
+            rm -rf "$work"
+          else
+            echo "Downloading Thunderbird ${TB_CHANNEL} ${tb_version}"
+            if ! curl -fL "$download_url" -o "$archive"; then
+              echo "::warning::download.mozilla.org failed; trying archive.mozilla.org"
+              curl -fL "$archive_url" -o "$archive" \
+                || fail_infra "failed to download Thunderbird ${TB_CHANNEL} ${tb_version}"
+            fi
           fi
 
           rm -rf "$install_dir"

@@ -11,8 +11,17 @@ const { execFileSync } = require("node:child_process");
 
 const root = path.resolve(__dirname, "..");
 const script = path.join(root, "scripts/build-xpi-reproducible.cjs");
+const scriptSource = fs.readFileSync(script, "utf8");
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const COMMIT = "0123456789abcdef0123456789abcdef01234567";
+
+// The version the build script itself requires (EXPECTED.strictMin), not a
+// number duplicated here: it moves whenever the supported minimum does.
+function expectedStrictMin() {
+  const m = scriptSource.match(/strictMin:\s*'([^']+)'/);
+  assert.ok(m, "EXPECTED.strictMin not found in build-xpi-reproducible.cjs");
+  return m[1];
+}
 
 function build(outDir, epoch = "1790000000") {
   const out = execFileSync(process.execPath, [script, "--from-tree"], {
@@ -77,7 +86,7 @@ describe("reproducible XPI build", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(root, "extension/manifest.json"), "utf8"));
     assert.equal(manifest.version, pkg.version);
     assert.equal(manifest.browser_specific_settings.gecko.id, "commonpost-mcp@commonpost.github.io");
-    assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, "156.0");
+    assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, expectedStrictMin());
     assert.equal(pkg.engines.node, ">=22");
     assert.equal(
       manifest.browser_specific_settings.gecko.update_url,
