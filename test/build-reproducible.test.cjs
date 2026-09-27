@@ -47,7 +47,7 @@ describe("reproducible XPI build", () => {
 
   it("builds the release asset name, with a sha256 file", () => {
     const out = build(dirA);
-    assert.match(out, new RegExp(`^[0-9a-f]{64}  ${name.replace(/\./g, "\\.")}`));
+    assert.match(out, new RegExp(`^[0-9a-f]{64}  ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
     assert.ok(fs.existsSync(path.join(dirA, name)));
     assert.ok(fs.existsSync(path.join(dirA, `${name}.sha256`)));
   });

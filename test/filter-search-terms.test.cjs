@@ -454,7 +454,7 @@ describe("the tool schema text is generated from the attribute table", () => {
   it("documents a value format for every attribute", () => {
     for (const name of Object.keys({ ...helpers.ATTRIB_MAP })) {
       assert.ok(
-        new RegExp(`\\b${name.replace("$", "\\$")}\\b`).test(helpers.FILTER_VALUE_DESCRIPTION),
+        new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(helpers.FILTER_VALUE_DESCRIPTION),
         `value description does not mention ${name}`
       );
     }

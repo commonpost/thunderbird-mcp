@@ -4194,9 +4194,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               if (!html) return "";
               let text = String(html);
 
-              // Remove style/script blocks
-              text = text.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ");
-              text = text.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ");
+              // Remove style/script blocks. The end tag may carry whitespace or
+              // junk before ">" (e.g. "</script >", "</script foo>"): HTML parsers
+              // accept it, so it must end the block here too.
+              text = text.replace(/<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/gi, " ");
+              text = text.replace(/<style\b[^>]*>[\s\S]*?<\/style\b[^>]*>/gi, " ");
 
               // Convert block-level tags to newlines before stripping
               text = text.replace(/<br\s*\/?>/gi, "\n");
@@ -5807,6 +5809,16 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const escapeText = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
               const escapeAttr = s => escapeText(s).replace(/"/g, "&quot;");
               const SAFE_HREF = /^(?:https?:|mailto:)/i;
+              // Remove tags until none are left (defense in depth: the text is
+              // HTML-escaped right after, so no markup can survive either way).
+              const stripTags = s => {
+                let previous;
+                do {
+                  previous = s;
+                  s = s.replace(/<[^>]*>/g, "");
+                } while (s !== previous);
+                return s;
+              };
 
               // Stash sanitized anchors so the global HTML-escape doesn't double-escape
               // them. Anchors with unsafe (e.g. javascript:, data:) or missing href are
@@ -5815,7 +5827,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const anchors = [];
               let processed = input.replace(/<a\b[^>]*>([\s\S]*?)<\/a>/gi, (whole, inner) => {
                 const hrefMatch = whole.match(/href\s*=\s*(['"])([^'"]*)\1/i);
-                const innerText = escapeText(inner.replace(/<[^>]+>/g, ""));
+                const innerText = escapeText(stripTags(inner));
                 if (!hrefMatch || !SAFE_HREF.test(hrefMatch[2].trim())) {
                   return innerText;
                 }

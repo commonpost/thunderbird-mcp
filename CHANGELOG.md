@@ -4,6 +4,15 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## Unreleased
+
+### Fixed
+- Plain-text conversion of HTML mail (`stripHtml`) now ends a `<script>` or `<style>` block on an end tag with
+  whitespace or other characters before `>` (e.g. `</script >`), as HTML parsers do, so the block's contents no
+  longer show up in the text.
+- Code scanning cleanups: tags are removed until none are left in link text of task descriptions (the text was
+  already HTML-escaped, so no markup could get through), and two tests escape every regular-expression character.
+
 ## Planned for 0.8.1
 
 - Take the third commit of TKasperczyk/thunderbird-mcp#222: strict validation, dates as local days (a breaking
