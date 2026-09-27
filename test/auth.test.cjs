@@ -12,7 +12,7 @@
  * - Bridge retry behavior
  */
 
-const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('http');
 const fs = require('fs');
