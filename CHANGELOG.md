@@ -6,6 +6,10 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Added
+- `docs/thunderbird-internals.md`: notes on how Thunderbird itself composes drafts and replies, quotes, threads,
+  searches and filters mail, with the Thunderbird source of each rule and what was verified on a real Thunderbird.
+
 ### Fixed
 - The Experiment now imports `atob`, `btoa`, `DOMParser` and `TextDecoder`
   (`Cu.importGlobalProperties`). Experiment scripts do not get these web globals, so inside Thunderbird:
