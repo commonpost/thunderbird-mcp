@@ -85,10 +85,15 @@ Compose tools validate the `from` identity strictly -- if the specified sender d
 | `deleteFilter` | Remove a filter by index |
 | `reorderFilters` | Change filter execution priority |
 | `applyFilters` | Run filters on a folder on demand -- let your AI organize your inbox |
+| `getFilterConfirmation` | Read the state of a pending confirmation (see below) |
 
 Full control over Thunderbird's message filters. Changes persist immediately. Your AI can create sorting rules, adjust priorities, and run them on existing mail.
 
-Filter rules that **forward or reply** send mail without the review window that the compose tools keep. The **Block filter forward/reply** setting (Options > Send Safety) is on by default: while it is on, such rules cannot be created or changed through MCP, and a filter list that holds one cannot be run through `applyFilters`. Deleting the rule stays possible.
+Filter rules that **forward or reply** send mail without the review window that the compose tools keep. The **Block filter forward/reply** setting (Options > Send Safety) is on by default: while it is on, such rules cannot be created or changed through MCP, and a filter list that holds one cannot be run through `applyFilters`. Deleting the rule stays possible. If you choose **Ask me each time** instead, a request of that kind returns `pending_user_confirmation` and Thunderbird shows a dialog with the rule, its conditions and its full destination; nothing is written unless you confirm it there, and closing the dialog or not answering within ten minutes writes nothing.
+
+### Encrypted messages
+
+OpenPGP and S/MIME messages are not decrypted for the assistant by default: `getMessage` returns their headers and a short notice instead of their content. The setting **Let the assistant read encrypted messages** (Options > Encrypted messages) turns this on; the decrypted content is then handed to the assistant, and so to the service that runs it.
 
 ### Contacts
 
