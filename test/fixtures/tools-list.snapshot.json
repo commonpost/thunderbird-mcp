@@ -56,65 +56,114 @@
     {
       "name": "searchMessages",
       "title": "Search Mail",
-      "description": "Search message headers and return IDs/folder paths you can use with getMessage to read full email content",
+      "description": "Search message headers across accounts (Trash/Junk skipped). Returns { messages, totalMatches, offset, limit, hasMore }; each row has id + folderPath for getMessage/getMessages. For a company use query 'participant:@domain' with groupBy.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "query": {
             "type": "string",
-            "description": "Text to search. Multi-word queries are AND-of-tokens: every word must appear somewhere across subject/author/recipients/ccList/preview (or inside the selected field when an operator is used). Prefix with 'from:', 'subject:', 'to:', or 'cc:' to restrict matching to one field (e.g. 'from:Alice Smith' requires both tokens in the author field). Use empty string to match all."
+            "description": "Words that must all match (subject, from, to, cc, preview). Operators: from:, to:, cc:, subject:, participant: (from/to/cc/bcc; '@domain' = addresses in that domain, commas = any of them: 'participant:@a.com,@b.com'); quote phrases, e.g. 'participant:@acme.com subject:\"invoice 42\"'. A single leading operator applies to all words ('from:Alice Smith'). Empty string matches all."
           },
           "folderPath": {
             "type": "string",
-            "description": "Optional folder URI (from listFolders) to limit search to that folder and its subfolders"
+            "description": "Folder URI (from listFolders) to search, with subfolders"
           },
           "startDate": {
             "type": "string",
-            "description": "Filter messages on or after this ISO 8601 date"
+            "description": "ISO 8601 date: on or after"
           },
           "endDate": {
             "type": "string",
-            "description": "Filter messages on or before this ISO 8601 date. Date-only strings (e.g. '2024-01-15') include the full day."
+            "description": "ISO 8601 date: on or before; date-only includes the whole day"
           },
           "maxResults": {
-            "type": "number",
-            "description": "Maximum number of results to return (default 50, max 200)"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 20,
+            "description": "Rows (or groups) per page"
           },
           "offset": {
-            "type": "number",
-            "description": "Number of results to skip for pagination (default 0). When provided, returns {messages, totalMatches, offset, limit, hasMore} instead of a plain array. Note: totalMatches is capped at 10000."
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Rows to skip; use with hasMore"
           },
           "sortOrder": {
             "type": "string",
-            "description": "Date sort order: asc (oldest first) or desc (newest first, default)"
+            "enum": [
+              "desc",
+              "asc"
+            ],
+            "description": "By date; default desc, asc with threadOf"
           },
           "unreadOnly": {
             "type": "boolean",
-            "description": "Only return unread messages (default: false)"
+            "description": "Only unread"
           },
           "flaggedOnly": {
             "type": "boolean",
-            "description": "Only return flagged/starred messages (default: false)"
+            "description": "Only flagged/starred"
           },
           "tag": {
             "type": "string",
-            "description": "Filter by tag keyword (e.g. '$label1' for Important, or a custom tag). Only messages with this tag are returned."
+            "description": "Tag label or key (e.g. 'Important' or '$label1')"
           },
           "includeSubfolders": {
             "type": "boolean",
-            "description": "If false, only search the specified folder — not its subfolders. Default: true."
+            "default": true,
+            "description": "Search subfolders of folderPath"
+          },
+          "includeTrash": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also search Trash and Junk"
           },
           "countOnly": {
             "type": "boolean",
-            "description": "If true, return only the match count instead of full results. Much faster for 'how many unread?' queries."
+            "description": "Return only { count }"
+          },
+          "groupBy": {
+            "type": "string",
+            "enum": [
+              "sender",
+              "thread"
+            ],
+            "description": "Collapse matches into one row per sender or conversation: count, unread, first/last date, latestId + latestFolderPath of the newest non-draft message, drafts count"
+          },
+          "threadOf": {
+            "type": "object",
+            "description": "Return the whole conversation of this message across folders (incl. Sent), oldest first. A Re: message without threading headers joins by subject the earlier message its sender took part in (linkedBy: subject)",
+            "properties": {
+              "messageId": {
+                "type": "string"
+              },
+              "folderPath": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "messageId",
+              "folderPath"
+            ],
+            "additionalProperties": false
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "objects",
+              "table"
+            ],
+            "description": "'table' returns messages as { columns, rows } (fewer tokens for long lists)"
           },
           "searchBody": {
             "type": "boolean",
-            "description": "If true, search full message bodies using Thunderbird's Gloda index (slower but finds text beyond the ~200 char preview). Requires query. IMAP accounts need offline sync enabled for body indexing."
+            "description": "Full-text search of subject, body and attachment names via the Gloda index (slower). Query: words or \"quoted phrases\", all must match, no operators; terms under 3 characters are ignored; English words match other forms (stemming), other languages such as Russian only the exact word form. IMAP needs offline sync."
           },
           "dedupByMessageId": {
             "type": "boolean",
-            "description": "If false, return every folder/label location for messages found in multiple folders. Default: true, which collapses the same RFC Message-ID into one row and lists the other folder paths in dupLocations."
+            "default": true,
+            "description": "Collapse copies of one message in several folders into one row with dupLocations"
           }
         },
         "required": [
@@ -162,7 +211,20 @@
           },
           "rawSource": {
             "type": "boolean",
-            "description": "If true, return the full raw RFC 2822 message source (all headers + MIME parts). Useful for extracting calendar invites, S/MIME data, or debugging. Other fields (body, attachments) are omitted when this is set. Note: requires local/offline message copy; IMAP messages not cached offline may fail."
+            "description": "If true, return the full raw RFC 2822 message source (all headers + MIME parts). Useful for extracting calendar invites, S/MIME data, or debugging. Decoded as UTF-8 when valid, else by the charset its Content-Type declares, else a detected one; rawCharset names it. Other fields (body, attachments) are omitted when this is set. Note: requires local/offline message copy; IMAP messages not cached offline may fail."
+          },
+          "maxBodyChars": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200000,
+            "default": 20000,
+            "description": "Max characters of body (or rawSource) returned; longer bodies set bodyTruncated and nextBodyOffset"
+          },
+          "bodyOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Continue a truncated body from nextBodyOffset"
           }
         },
         "required": [
@@ -223,7 +285,14 @@
           },
           "rawSource": {
             "type": "boolean",
-            "description": "If true, return raw RFC 2822 source for each message instead of parsed body fields"
+            "description": "If true, return raw RFC 2822 source (decoded text, rawCharset) for each message instead of parsed body fields"
+          },
+          "maxBodyChars": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200000,
+            "default": 4000,
+            "description": "Max body characters per message; read the rest with getMessage bodyOffset"
           }
         },
         "required": [
@@ -570,6 +639,14 @@
             "maximum": 500,
             "default": 100,
             "description": "Max events"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "objects",
+              "table"
+            ],
+            "description": "'table' returns { columns, rows }"
           }
         },
         "required": []
@@ -772,6 +849,14 @@
             "maximum": 500,
             "default": 100,
             "description": "Max tasks"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "objects",
+              "table"
+            ],
+            "description": "'table' returns { columns, rows }"
           }
         },
         "required": []
@@ -842,17 +927,28 @@
     {
       "name": "searchContacts",
       "title": "Search Contacts",
-      "description": "Search contacts across all address books by email address or name",
+      "description": "Search contacts in all address books by email, name or organization. Empty fields are omitted.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "query": {
             "type": "string",
-            "description": "Email address or name to search for"
+            "description": "Words that must all match email, name or organization (e.g. 'acme' or '@acme.com')"
           },
           "maxResults": {
-            "type": "number",
-            "description": "Maximum number of results to return (default 50, max 200). If truncated, response includes hasMore: true."
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50,
+            "description": "Max contacts; if cut, the response has hasMore: true"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "objects",
+              "table"
+            ],
+            "description": "'table' returns { contacts: { columns, rows } }"
           }
         },
         "required": [
@@ -1411,37 +1507,58 @@
     {
       "name": "getRecentMessages",
       "title": "Get Recent Messages",
-      "description": "Get recent messages sorted newest-first from a specific folder or all Inboxes, with date and unread filtering",
+      "description": "Recent messages newest-first from all folders of all accounts (Trash/Junk skipped) or from one folder. Same envelope and row format as searchMessages.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "folderPath": {
             "type": "string",
-            "description": "Folder URI (from listFolders) to list messages from. If omitted, returns messages from all Inboxes."
+            "description": "Folder URI (from listFolders); omit for all folders"
           },
           "daysBack": {
-            "type": "number",
-            "description": "Only return messages from the last N days (default: 7). Use a larger value like 365 for older messages."
+            "type": "integer",
+            "minimum": 1,
+            "default": 7,
+            "description": "Only messages from the last N days"
           },
           "maxResults": {
-            "type": "number",
-            "description": "Maximum number of results (default: 50, max: 200)"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 20,
+            "description": "Rows per page"
           },
           "offset": {
-            "type": "number",
-            "description": "Number of results to skip for pagination (default 0). When provided, returns {messages, totalMatches, offset, limit, hasMore} instead of a plain array. Note: totalMatches is capped at 10000."
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Rows to skip; use with hasMore"
           },
           "unreadOnly": {
             "type": "boolean",
-            "description": "Only return unread messages (default: false)"
+            "description": "Only unread"
           },
           "flaggedOnly": {
             "type": "boolean",
-            "description": "Only return flagged/starred messages (default: false)"
+            "description": "Only flagged/starred"
           },
           "includeSubfolders": {
             "type": "boolean",
-            "description": "If false, only return messages from the specified folder — not its subfolders. Default: true."
+            "default": true,
+            "description": "Include subfolders of folderPath"
+          },
+          "includeTrash": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also include Trash and Junk"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "objects",
+              "table"
+            ],
+            "description": "'table' returns messages as { columns, rows }"
           }
         },
         "required": []
