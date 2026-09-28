@@ -1,0 +1,24 @@
+From: Hana Eta <hana@eta.test>
+To: Bench User <me@bench.test>
+Subject: Quarterly numbers
+Date: Thu, 12 Mar 2026 09:00:00 +0000
+Message-ID: <html-alt@eta.test>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="alt-boundary"
+
+--alt-boundary
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+Numbers for Q1:
+* Revenue: up
+* Costs: flat
+Details: https://example.com/q1
+
+--alt-boundary
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+<html><body><p>Numbers for <b>Q1</b>:</p><ul><li>Revenue: <i>up</i></li><li>Costs: flat</li></ul><p>Details: <a href="https://example.com/q1">report</a></p></body></html>
+
+--alt-boundary--
