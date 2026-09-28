@@ -4,7 +4,7 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## Unreleased
+## [0.8.3] - 2026-09-27
 
 ### Added
 - README: a section on what to do if Thunderbird disables Experiment-API add-ons on the Release channel, as its
