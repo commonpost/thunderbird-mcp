@@ -4388,14 +4388,45 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
 
             /**
+             * Largest email HTML (in UTF-16 code units, roughly 2 MiB) handed to the DOM
+             * parser. A bigger body skips the DOM and takes the regex-based stripHtml
+             * path, so one huge message cannot stall or exhaust the Thunderbird process.
+             */
+            function htmlExceedsDomLimit(html) {
+              return String(html).length > 2 * 1024 * 1024;
+            }
+
+            /**
+             * Returns the URL to emit for a link or image found in email HTML, or ""
+             * when it must become plain text. Only absolute http:, https: and mailto:
+             * URLs survive (images: http/https only); javascript:, data:, file:,
+             * vbscript:, cid:, other schemes and scheme-less/relative URLs do not.
+             * The scheme is compared the way a browser reads it: case-insensitively,
+             * after dropping leading control characters and spaces and any tab or
+             * newline inside the URL.
+             */
+            function safeEmailUrl(url, isImage) {
+              if (typeof url !== "string") return "";
+              const cleaned = url.replace(/[\t\n\r]/g, "").replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "");
+              const allowed = isImage ? /^https?:/i : /^(?:https?|mailto):/i;
+              if (!allowed.test(cleaned)) return "";
+              // Keep the URL from closing the Markdown link/image early.
+              return cleaned.replace(/[ ()<>]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+            }
+
+            /**
              * Converts HTML to markdown using DOMParser for structure-preserving
              * body extraction. Handles headings, links, bold/italic, lists,
              * blockquotes, code blocks, images, and horizontal rules. Email
              * tables (usually layout, not data) are flattened to text.
-             * Falls back to stripHtml if DOMParser is unavailable.
+             * Only http(s) and mailto links and http(s) images are kept; any other
+             * link or image becomes plain text without its URL.
+             * Falls back to stripHtml if DOMParser is unavailable or the HTML
+             * is too large to parse.
              */
             function htmlToMarkdown(html) {
               if (!html) return "";
+              if (htmlExceedsDomLimit(html)) return stripHtml(html);
               try {
                 const doc = new DOMParser().parseFromString(html, "text/html");
 
@@ -4432,21 +4463,21 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       return t ? "*" + t + "*" : "";
                     }
                     case "a": {
-                      const href = node.getAttribute("href") || "";
+                      const href = safeEmailUrl(node.getAttribute("href") || "", false);
                       const text = inner().trim();
-                      // Skip empty/anchor-only links and mailto: without text
-                      if (!text && !href) return "";
-                      if (href && text && text !== href) return `[${text}](${href})`;
+                      // A link with an unsafe or missing URL is just its text
+                      if (!href) return text;
+                      if (text && text !== href) return `[${text}](${href})`;
                       return text || href;
                     }
                     case "img": {
                       const alt = node.getAttribute("alt") || "";
-                      const src = node.getAttribute("src") || "";
-                      // Skip tracking pixels (1x1, tiny, or data: without alt)
+                      const src = safeEmailUrl(node.getAttribute("src") || "", true);
+                      // Skip tracking pixels (1x1, tiny)
                       const w = parseInt(node.getAttribute("width")) || 0;
                       const h = parseInt(node.getAttribute("height")) || 0;
                       if ((w > 0 && w <= 3) || (h > 0 && h <= 3)) return "";
-                      if (src.startsWith("data:") && !alt) return "";
+                      // Only http(s) images are kept; the rest is its alt text
                       if (src) return `![${alt}](${src})`;
                       return alt;
                     }
