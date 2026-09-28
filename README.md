@@ -68,6 +68,7 @@ The Thunderbird extension embeds a local HTTP server with session-scoped auth to
 | `sendMail` | Compose a new email -- opens a review window; direct sending requires explicitly disabling the `skipReview` safety block |
 | `replyToMessage` | Reply with quoted original and proper threading -- `skipReview` is subject to the same safety block |
 | `forwardMessage` | Forward with all original attachments preserved -- `skipReview` is subject to the same safety block |
+| `saveDraft` | Save a new message to the Drafts folder without opening a window or sending |
 
 All compose tools open a window for you to review and edit before sending by default. The **Block `skipReview`** preference is on by default, so `skipReview: true` is rejected until you explicitly disable the preference; only then can it send directly. Attachments can be file paths or inline base64 objects.
 
@@ -112,6 +113,7 @@ Filter rules that **forward or reply** send mail without the review window that 
 | `createTask` | Open a pre-filled task dialog for review; direct creation via `skipReview` requires explicitly disabling the default safety block |
 | `listTasks` | List tasks/to-dos from calendars -- filter by completion status, due date, or calendar |
 | `updateTask` | Update a task's title, due date, description, priority, completion status, or percent complete |
+| `listCategories` | List the calendar category names defined in Thunderbird, to use exactly in events and tasks |
 
 ### Access Control
 
