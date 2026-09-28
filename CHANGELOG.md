@@ -4,6 +4,15 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Fixed
+- Direct sends (`sendMail`, `replyToMessage`, `forwardMessage` with `skipReview`) reported "sent" as soon as the
+  SMTP connection started: on Thunderbird 128+ the promise of `createAndSendMessage` resolves when delivery begins
+  (`MessageSend._deliverAsMail` awaits only the request), not when it ends. A rejected recipient, failed
+  authentication or unreachable server came back as success, and on 140 ESR an identity without an outgoing server
+  did too. A send now waits for `onStopSending`; drafts still complete on the promise.
+
 ## [0.8.3] - 2026-09-27
 
 ### Added
