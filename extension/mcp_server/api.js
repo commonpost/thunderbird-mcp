@@ -16,6 +16,14 @@
  * - IMAP folder sync (msgDatabase may be stale)
  */
 
+// Experiment scripts run in a sandbox without these web globals: without the import, DOMParser is undefined and
+// HTML bodies fall back to stripHtml instead of Markdown.
+try {
+  Cu.importGlobalProperties(["atob", "btoa", "DOMParser", "TextDecoder"]);
+} catch (e) {
+  console.warn("commonpost-mcp: web globals not imported:", e);
+}
+
 const resProto = Cc[
   "@mozilla.org/network/protocol;1?name=resource"
 ].getService(Ci.nsISubstitutingProtocolHandler);
@@ -4142,6 +4150,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * We try the modern 16-arg call first; if TB throws
              * NS_ERROR_XPC_NOT_ENOUGH_ARGS, fall back to the legacy 18-arg call.
              */
+            // BEGIN DIRECT SEND
             function sendMessageDirectly(composeFields, identity, attachDescs, originalMsgURI, compType, deliverMode, bodyType) {
               if (!identity) {
                 return Promise.resolve({ error: "No identity available for direct send" });
@@ -4160,10 +4169,19 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   }
                 };
 
+                const sendingNow = mode === Ci.nsIMsgCompDeliverMode.Now;
+
                 // Safety timeout -- if neither listener callback nor error fires
                 const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
                 timer.initWithCallback({
-                  notify() { settle({ error: "Send timed out after " + (SEND_TIMEOUT_MS / 1000) + "s" }); }
+                  notify() {
+                    const after = SEND_TIMEOUT_MS / 1000 + "s";
+                    settle({
+                      error: sendingNow
+                        ? `Send did not finish within ${after}; the outcome is unknown and the message may still be delivered. Check the Sent folder and the Outbox before retrying.`
+                        : `Save timed out after ${after}`,
+                    });
+                  }
                 }, SEND_TIMEOUT_MS, Ci.nsITimer.TYPE_ONE_SHOT);
 
                 try {
@@ -4235,6 +4253,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     onStartCopy() {},
                     setMessageKey() {},
                     onStopCopy(status) {
+                      // A send is settled by the SMTP outcome only; this is the copy to Sent
+                      if (sendingNow) return;
                       timer.cancel();
                       if (Components.isSuccessCode(status)) {
                         settle({ success: true, message: "Saved" });
@@ -4286,12 +4306,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     }
                   }
                   // Modern TB (128+) returns a Promise from createAndSendMessage.
-                  // Handle both fulfillment and rejection -- belt-and-suspenders
-                  // with the listener (settle is idempotent). For SaveAsDraft on
-                  // older TB without the copy listener, the Promise fulfillment
-                  // can be the only completion signal we get.
+                  // For drafts and queued mail it resolves once the copy is done and
+                  // can be the only completion signal on older TB. For Now it resolves
+                  // as soon as SMTP starts (MessageSend._deliverAsMail), so only
+                  // onStopSending reports the outcome.
                   if (sendResult && typeof sendResult.then === "function") {
                     sendResult.then(() => {
+                      if (sendingNow) return;
                       timer.cancel();
                       settle({ success: true });
                     }).catch(e => {
@@ -4305,6 +4326,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
               });
             }
+            // END DIRECT SEND
 
             function escapeHtml(s) {
               return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -4366,14 +4388,44 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
 
             /**
+             * Largest email HTML (in UTF-16 code units, roughly 2 MiB) handed to the DOM
+             * parser. A bigger body skips the DOM and takes the regex-based stripHtml
+             * path, so one huge message cannot stall or exhaust the Thunderbird process.
+             */
+            function htmlExceedsDomLimit(html) {
+              return String(html).length > 2 * 1024 * 1024;
+            }
+
+            /**
+             * Returns the URL to emit for a link found in email HTML, or ""
+             * when it must become plain text. Only absolute http:, https: and mailto:
+             * URLs survive; javascript:, data:, file:, vbscript:, cid:, other
+             * schemes and scheme-less/relative URLs do not.
+             * The scheme is compared the way a browser reads it: case-insensitively,
+             * after dropping leading control characters and spaces and any tab or
+             * newline inside the URL.
+             */
+            function safeEmailUrl(url) {
+              if (typeof url !== "string") return "";
+              const cleaned = url.replace(/[\t\n\r]/g, "").replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "");
+              if (!/^(?:https?|mailto):/i.test(cleaned)) return "";
+              // Keep the URL from closing the Markdown link/image early.
+              return cleaned.replace(/[ ()<>]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+            }
+
+            /**
              * Converts HTML to markdown using DOMParser for structure-preserving
              * body extraction. Handles headings, links, bold/italic, lists,
              * blockquotes, code blocks, images, and horizontal rules. Email
              * tables (usually layout, not data) are flattened to text.
-             * Falls back to stripHtml if DOMParser is unavailable.
+             * Only http(s) and mailto links are kept; any other link becomes plain
+             * text without its URL. An image becomes its alt text, never a URL.
+             * Falls back to stripHtml if DOMParser is unavailable or the HTML
+             * is too large to parse.
              */
             function htmlToMarkdown(html) {
               if (!html) return "";
+              if (htmlExceedsDomLimit(html)) return stripHtml(html);
               try {
                 const doc = new DOMParser().parseFromString(html, "text/html");
 
@@ -4410,22 +4462,22 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       return t ? "*" + t + "*" : "";
                     }
                     case "a": {
-                      const href = node.getAttribute("href") || "";
+                      const href = safeEmailUrl(node.getAttribute("href") || "");
                       const text = inner().trim();
-                      // Skip empty/anchor-only links and mailto: without text
-                      if (!text && !href) return "";
-                      if (href && text && text !== href) return `[${text}](${href})`;
+                      // A link with an unsafe or missing URL is just its text
+                      if (!href) return text;
+                      if (text && text !== href) return `[${text}](${href})`;
                       return text || href;
                     }
                     case "img": {
+                      // Never emit an image URL: a client that renders the
+                      // Markdown would load it (tracking pixels, remote content).
+                      // The alt text stands in for the image.
                       const alt = node.getAttribute("alt") || "";
-                      const src = node.getAttribute("src") || "";
-                      // Skip tracking pixels (1x1, tiny, or data: without alt)
+                      // Skip tracking pixels (1x1, tiny)
                       const w = parseInt(node.getAttribute("width")) || 0;
                       const h = parseInt(node.getAttribute("height")) || 0;
                       if ((w > 0 && w <= 3) || (h > 0 && h <= 3)) return "";
-                      if (src.startsWith("data:") && !alt) return "";
-                      if (src) return `![${alt}](${src})`;
                       return alt;
                     }
                     case "code": return "`" + node.textContent + "`";

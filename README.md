@@ -71,6 +71,8 @@ The Thunderbird extension embeds a local HTTP server with session-scoped auth to
 
 All compose tools open a window for you to review and edit before sending by default. The **Block `skipReview`** preference is on by default, so `skipReview: true` is rejected until you explicitly disable the preference; only then can it send directly. Attachments can be file paths or inline base64 objects.
 
+A direct send can take a while: the bridge waits up to 150 s for Thunderbird (30 s for every other call). Your MCP client may also have its own time limit for a tool call; if it is shorter than 150 s, the client can give up while Thunderbird goes on sending, so check the Sent folder and the Outbox before retrying to avoid sending the message twice.
+
 Compose tools validate the `from` identity strictly -- if the specified sender doesn't match any configured Thunderbird identity, the tool returns an error instead of silently substituting another account.
 
 ### Filters

@@ -20,6 +20,13 @@ const UNREACHABLE_HINT =
   'Thunderbird disables Experiment add-ons on the Release channel" ' +
   '(https://github.com/commonpost/thunderbird-mcp#if-thunderbird-disables-experiment-add-ons-on-the-release-channel).';
 const REQUEST_TIMEOUT = 30000;
+// Tools that can send mail over SMTP straight from Thunderbird, without a
+// compose window, when called with a truthy skipReview (the extension tests
+// it for truthiness, so the bridge does too). Thunderbird itself gives up on a
+// direct send after 120 s, so the bridge must wait longer than that or it
+// reports a failure for a message that may still go out.
+const DIRECT_SEND_TOOLS = new Set(['sendMail', 'replyToMessage', 'forwardMessage']);
+const DIRECT_SEND_TIMEOUT = 150000;
 const CONNECTION_RETRY_DELAY_MS = 1000;
 const CONNECTION_MAX_RETRIES = 5;
 const CONNECTION_CACHE_TTL_MS = 5000; // 5 seconds
@@ -946,8 +953,60 @@ async function handleMessage(line) {
   return forwardToThunderbird(message);
 }
 
-function tryRequest(hostname, postData, port, token) {
+// Whether a JSON-RPC message is a tools/call that may send mail directly.
+function isDirectSendCall(message) {
+  return message?.method === 'tools/call'
+    && DIRECT_SEND_TOOLS.has(message.params?.name)
+    && Boolean(message.params?.arguments?.skipReview);
+}
+
+function requestOptionsFor(message) {
+  return isDirectSendCall(message)
+    ? { timeoutMs: DIRECT_SEND_TIMEOUT, directSend: true }
+    : { timeoutMs: REQUEST_TIMEOUT, directSend: false };
+}
+
+// What a direct send that lost contact with Thunderbird must tell the client:
+// the message may already be on its way, so retrying blindly can send it twice.
+const OUTCOME_UNKNOWN_ADVICE =
+  'The outcome is UNKNOWN: the message may or may not have been sent. ' +
+  'Check the Sent folder and the Outbox in Thunderbird before retrying, ' +
+  'otherwise the message may be sent twice.';
+
+function timeoutError({ timeoutMs, directSend }) {
+  if (!directSend) {
+    return new Error('Request to Thunderbird timed out');
+  }
+  return new Error(
+    `Request to Thunderbird timed out after ${timeoutMs / 1000} s while sending a message. ${OUTCOME_UNKNOWN_ADVICE}`
+  );
+}
+
+function connectionLostError(cause) {
+  const detail = cause?.code || cause?.message || 'connection closed';
+  return new Error(
+    `Connection to Thunderbird was lost (${detail}) while sending a message. ${OUTCOME_UNKNOWN_ADVICE}`,
+    { cause }
+  );
+}
+
+function tryRequest(hostname, postData, port, token, options = requestOptionsFor(null)) {
   return new Promise((resolve, reject) => {
+    // Once the connection is open, a failure of a direct send says nothing
+    // about whether Thunderbird went on to send the message.
+    let connected = false;
+    let settled = false;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(options.directSend && connected ? connectionLostError(err) : err);
+    };
+    const failTimeout = () => {
+      if (settled) return;
+      settled = true;
+      reject(timeoutError(options));
+    };
+
     const headers = {
       'Content-Type': 'application/json',
       'Content-Length': Buffer.byteLength(postData)
@@ -964,15 +1023,26 @@ function tryRequest(hostname, postData, port, token) {
     }, (res) => {
       const chunks = [];
       res.on('data', (chunk) => chunks.push(chunk));
+      if (options.directSend) {
+        // Connection dropped in the middle of the response.
+        res.on('error', (err) => fail(err));
+        res.on('close', () => {
+          if (!res.complete) {
+            fail(new Error('response interrupted'));
+          }
+        });
+      }
       res.on('end', () => {
         if (res.statusCode === 403) {
           const err = new Error('Authentication failed (403). Token may be stale.');
           err.statusCode = 403;
+          settled = true;
           reject(err);
           return;
         }
         const data = Buffer.concat(chunks).toString('utf8');
         try {
+          settled = true;
           resolve(JSON.parse(data));
         } catch {
           try {
@@ -984,11 +1054,20 @@ function tryRequest(hostname, postData, port, token) {
       });
     });
 
-    req.on('error', reject);
+    req.on('socket', (socket) => {
+      // A reused socket is already connected.
+      if (!socket.connecting) {
+        connected = true;
+      } else {
+        socket.once('connect', () => { connected = true; });
+      }
+    });
 
-    req.setTimeout(REQUEST_TIMEOUT, () => {
+    req.on('error', fail);
+
+    req.setTimeout(options.timeoutMs, () => {
       req.destroy();
-      reject(new Error('Request to Thunderbird timed out'));
+      failTimeout();
     });
 
     req.write(postData);
@@ -1004,9 +1083,9 @@ function isRetryableConnectionError(err) {
       || err.code === 'EAFNOSUPPORT');
 }
 
-function tryAllHosts(hosts, postData, port, token) {
+function tryAllHosts(hosts, postData, port, token, options) {
   const tryNext = ([hostname, ...rest]) => {
-    return tryRequest(hostname, postData, port, token).catch((err) => {
+    return tryRequest(hostname, postData, port, token, options).catch((err) => {
       if (rest.length > 0 && (err.code === 'ECONNREFUSED' || err.code === 'EADDRNOTAVAIL')) {
         return tryNext(rest);
       }
@@ -1048,6 +1127,7 @@ function compactToolResultJsonText(response) {
 
 async function forwardToThunderbird(message) {
   const postData = JSON.stringify(message);
+  const requestOptions = requestOptionsFor(message);
 
   // Read connection info (port + auth token) from the file written by the extension.
   // Fail-closed: if no connection file exists, retry a few times (Thunderbird may
@@ -1084,7 +1164,7 @@ async function forwardToThunderbird(message) {
     }
 
     try {
-      return await tryAllHosts(THUNDERBIRD_HOSTS, postData, connInfo.port, connInfo.token);
+      return await tryAllHosts(THUNDERBIRD_HOSTS, postData, connInfo.port, connInfo.token, requestOptions);
     } catch (err) {
       if (!isRetryableConnectionError(err)) {
         throw err;
@@ -1221,10 +1301,14 @@ module.exports = {
   formatDiscoveryAttempts,
   compactToolResultJsonText,
   inlineAttachmentPaths,
+  isDirectSendCall,
   isSensitiveFilePath,
   isValidAuthToken,
   readConnectionInfo,
+  requestOptionsFor,
   startBridge,
+  tryRequest,
+  requestTimeouts: { REQUEST_TIMEOUT, DIRECT_SEND_TIMEOUT },
   attachmentLimits: {
     MAX_ATTACHMENT_BYTES,
     MAX_TOTAL_ATTACHMENT_BYTES,

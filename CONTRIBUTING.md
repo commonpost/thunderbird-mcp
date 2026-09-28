@@ -29,6 +29,9 @@ npm run lint                   # ESLint
 node scripts/build-xpi-reproducible.cjs   # builds dist/commonpost-mcp-v<version>.xpi from the committed tree
 ```
 
+Before changing how a tool composes, threads, searches or filters mail, see
+[docs/thunderbird-internals.md](docs/thunderbird-internals.md) for how Thunderbird itself does it.
+
 ### Tests on a real Thunderbird
 
 The unit tests run the code of `api.js` in Node with stubbed XPCOM; they cannot prove how Thunderbird behaves.
