@@ -16,6 +16,14 @@
  * - IMAP folder sync (msgDatabase may be stale)
  */
 
+// Experiment scripts run in a sandbox without these web globals: without the import, DOMParser is undefined and
+// HTML bodies fall back to stripHtml instead of Markdown.
+try {
+  Cu.importGlobalProperties(["atob", "btoa", "DOMParser", "TextDecoder", "TextEncoder"]);
+} catch (e) {
+  console.warn("commonpost-mcp: web globals not imported:", e);
+}
+
 const resProto = Cc[
   "@mozilla.org/network/protocol;1?name=resource"
 ].getService(Ci.nsISubstitutingProtocolHandler);
