@@ -91,7 +91,9 @@ function sendToBridge(message, { timeout = 10000 } = {}) {
  */
 function writeTestConnectionInfo(port, token) {
   fs.mkdirSync(CONN_DIR, { recursive: true });
-  fs.writeFileSync(CONN_FILE, JSON.stringify({ port, token, pid: process.pid }), 'utf8');
+  fs.writeFileSync(CONN_FILE, JSON.stringify({ port, token, pid: process.pid }), { encoding: 'utf8', mode: 0o600 });
+  // The bridge only trusts a 0600 file.
+  fs.chmodSync(CONN_FILE, 0o600);
 }
 
 /**
@@ -111,7 +113,8 @@ function backupConnectionFile() {
 function restoreConnectionFile() {
   if (savedConnectionData !== null) {
     fs.mkdirSync(CONN_DIR, { recursive: true });
-    fs.writeFileSync(CONN_FILE, savedConnectionData, 'utf8');
+    fs.writeFileSync(CONN_FILE, savedConnectionData, { encoding: 'utf8', mode: 0o600 });
+    fs.chmodSync(CONN_FILE, 0o600);
   } else {
     try { fs.unlinkSync(CONN_FILE); } catch { /* ignore */ }
   }
@@ -506,6 +509,8 @@ describe('Auth: connection file corruption', () => {
         port: TEST_PORT, token: TEST_TOKEN, pid: 12345,
         version: '2.0', extraField: 'should be ignored'
       }), 'utf8');
+      // The bridge only trusts a 0600 file.
+      fs.chmodSync(CONN_FILE, 0o600);
 
       const response = await sendToBridge({
         jsonrpc: '2.0',

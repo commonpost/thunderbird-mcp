@@ -451,7 +451,65 @@ function buildCandidateGroups(options = {}) {
   return groups;
 }
 
+// connection.json holds the bearer token for the whole mailbox: only trust a
+// regular file (never a symlink) that the current user alone can read.
+//   POSIX: owned by the current uid, no group/other permission bits.
+//   Windows: POSIX modes mean nothing there; the file must resolve (real path,
+//   junctions followed) under the current user's %TEMP% (os.tmpdir()).
+// Returns null when the file is acceptable, else the refusal reason.
+function checkConnectionFileSafety(candidatePath, context) {
+  const { fsImpl } = context;
+  let stat;
+  try {
+    stat = fsImpl.lstatSync(candidatePath);
+  } catch (err) {
+    return normalizeFsError(err);
+  }
+  if (stat.isSymbolicLink()) {
+    return 'refused: connection file is a symlink';
+  }
+  if (!stat.isFile()) {
+    return 'refused: connection file is not a regular file';
+  }
+  if (context.platform === 'win32') {
+    const winPath = (context.pathImpl && context.pathImpl.win32) || path.win32;
+    const realpath = (p) => (fsImpl.realpathSync.native ? fsImpl.realpathSync.native(p) : fsImpl.realpathSync(p));
+    let tempDir;
+    let realFile;
+    let realTemp;
+    try {
+      tempDir = context.osImpl.tmpdir();
+      realFile = realpath(candidatePath);
+      realTemp = realpath(tempDir);
+    } catch (err) {
+      return `refused: cannot resolve the connection file or %TEMP% (${normalizeFsError(err)})`;
+    }
+    const norm = (p) => winPath.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
+    if (!norm(realFile).startsWith(`${norm(realTemp)}\\`)) {
+      return `refused: connection file is not under the current user's %TEMP% (${tempDir})`;
+    }
+    return null;
+  }
+  if (context.uid === null || context.uid === undefined) {
+    return 'refused: cannot determine the current user id to check the connection file owner';
+  }
+  if (stat.uid !== context.uid) {
+    return `refused: connection file is owned by uid ${stat.uid}, not the current uid ${context.uid}`;
+  }
+  if ((stat.mode & 0o077) !== 0) {
+    return `refused: connection file mode ${(stat.mode & 0o777).toString(8)} gives group/other access (expected 600)`;
+  }
+  return null;
+}
+
 function tryReadConnectionCandidate(candidate, context) {
+  const unsafe = checkConnectionFileSafety(candidate.path, context);
+  if (unsafe) {
+    return {
+      ok: false,
+      attempt: makeAttempt(candidate.label, candidate.path, unsafe)
+    };
+  }
   try {
     const raw = context.fsImpl.readFileSync(candidate.path, 'utf8');
     let data;
@@ -569,8 +627,19 @@ const SENSITIVE_ATTACHMENT_PATTERNS = [
   /\/appdata\/roaming\/thunderbird(\/|$)/,
 ];
 
+// UNC and device-namespace paths (\\server\share, \\?\..., \\.\..., \??\...,
+// //server/share) name network locations or raw devices rather than local
+// files, and even resolving them touches the network. Never attach from them.
+// Keep in sync with extension/mcp_server/api.js isUncOrDevicePath.
+function isUncOrDevicePath(attachmentPath) {
+  if (typeof attachmentPath !== 'string' || !attachmentPath) return false;
+  const normalized = attachmentPath.replace(/\\/g, '/');
+  return normalized.startsWith('//') || normalized.startsWith('/??/');
+}
+
 function isSensitiveFilePath(attachmentPath) {
   if (typeof attachmentPath !== 'string' || !attachmentPath) return false;
+  if (isUncOrDevicePath(attachmentPath)) return true;
   const normalized = attachmentPath.replace(/\\/g, '/').toLowerCase();
   return SENSITIVE_ATTACHMENT_PATTERNS.some(re => re.test(normalized));
 }
@@ -582,7 +651,9 @@ function isSensitiveFilePath(attachmentPath) {
 // extension results in silent "failed to attach" warnings since file.exists()
 // returns false inside the sandbox. Reading on the bridge side and shipping
 // inline base64 sidesteps the sandbox entirely.
-const ATTACHMENT_TOOLS = new Set(['sendMail', 'replyToMessage', 'forwardMessage']);
+// saveDraft takes the same attachments array, so it goes through the same
+// checks.
+const ATTACHMENT_TOOLS = new Set(['sendMail', 'replyToMessage', 'forwardMessage', 'saveDraft']);
 
 // Minimal MIME map covering common attachment types (documents, images,
 // archives, A/V). Falls back to application/octet-stream which Thunderbird
@@ -666,6 +737,13 @@ function validateAttachmentStat(filePath, stat) {
 }
 
 async function inspectAttachmentPath(filePath) {
+  if (typeof filePath !== 'string' || !filePath) {
+    throw new Error('Attachment path must be a non-empty string');
+  }
+  // Before ANY filesystem access.
+  if (isUncOrDevicePath(filePath)) {
+    throw new Error(`UNC or device attachment paths are not allowed: ${filePath}`);
+  }
   // Check both the supplied path and its lexical normalization before any
   // filesystem access. The latter catches paths such as /tmp/../etc/passwd.
   if (isSensitiveFilePath(filePath) || isSensitiveFilePath(path.resolve(filePath))) {
@@ -1300,9 +1378,12 @@ module.exports = {
   findSnapConnectionCandidates,
   formatDiscoveryAttempts,
   compactToolResultJsonText,
+  checkConnectionFileSafety,
   inlineAttachmentPaths,
   isDirectSendCall,
   isSensitiveFilePath,
+  isUncOrDevicePath,
+  ATTACHMENT_TOOLS,
   isValidAuthToken,
   readConnectionInfo,
   requestOptionsFor,
