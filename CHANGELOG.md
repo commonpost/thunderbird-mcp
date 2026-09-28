@@ -11,7 +11,10 @@ project is kept in this repository.
   SMTP connection started: on Thunderbird 128+ the promise of `createAndSendMessage` resolves when delivery begins
   (`MessageSend._deliverAsMail` awaits only the request), not when it ends. A rejected recipient, failed
   authentication or unreachable server came back as success, and on 140 ESR an identity without an outgoing server
-  did too. A send now waits for `onStopSending`; drafts still complete on the promise.
+  did too. A send is now settled only by the SMTP outcome (`onStopSending`, `onSendNotPerformed`,
+  `onTransportSecurityError`); the copy to Sent (`onStopCopy`) no longer counts. Drafts still complete on the
+  promise or on `onStopCopy`. When a send hits the 120 s timeout, the error says that the outcome is unknown and
+  to check Sent and the Outbox before retrying.
 
 ## [0.8.3] - 2026-09-27
 
