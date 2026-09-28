@@ -292,8 +292,13 @@ function findSnapConnectionCandidates(context) {
           continue;
         }
 
-        const environ = fsImpl.readFileSync(pathImpl.join(procRoot, pid, 'environ'), 'utf8');
-        const tmpEntry = environ.split('\0').find((entry) => entry.startsWith('TMPDIR='));
+        const environ = fsImpl.readFileSync(pathImpl.join(procRoot, pid, 'environ'), 'utf8').split('\0');
+        // Only snap-confined processes: a non-snap Thunderbird with its own TMPDIR (e.g. a test instance)
+        // must not take over the session of the installed one.
+        if (!environ.some((entry) => entry.startsWith('SNAP_NAME='))) {
+          continue;
+        }
+        const tmpEntry = environ.find((entry) => entry.startsWith('TMPDIR='));
         if (!tmpEntry) {
           continue;
         }

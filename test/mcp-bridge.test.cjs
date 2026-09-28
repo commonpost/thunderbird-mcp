@@ -333,7 +333,7 @@ describe('Bridge discovery', () => {
     const snapTmpDir = path.join(root, 'snap-tmp');
     fs.writeFileSync(
       path.join(options.procRoot, '4242', 'environ'),
-      `TMPDIR=${snapTmpDir}\0HOME=${options.homeDir}\0`,
+      `TMPDIR=${snapTmpDir}\0HOME=${options.homeDir}\0SNAP_NAME=thunderbird\0`,
       'utf8'
     );
 
@@ -345,6 +345,31 @@ describe('Bridge discovery', () => {
     const connInfo = readConnectionInfo(options);
     assert.equal(connInfo.port, 20003);
     assert.equal(connInfo.token, 'snap-token');
+  });
+
+  it('snap detection ignores a newer non-snap Thunderbird with its own TMPDIR', () => {
+    const options = makeTestOptions(root, {
+      platform: 'linux',
+      procRoot: path.join(root, 'proc'),
+    });
+
+    fs.mkdirSync(path.join(options.homeDir, 'snap', 'thunderbird'), { recursive: true });
+    const procs = [
+      ['4242', '/snap/thunderbird/1/usr/lib/thunderbird/thunderbird-bin', 'snap-tmp', 'SNAP_NAME=thunderbird', 20003],
+      ['4343', '/home/user/bench/thunderbird/thunderbird', 'bench-tmp', 'HOME=/home/user/bench', 20005],
+    ];
+    for (const [pid, argv0, tmp, extra, port] of procs) {
+      fs.mkdirSync(path.join(options.procRoot, pid), { recursive: true });
+      fs.writeFileSync(path.join(options.procRoot, pid, 'cmdline'), `${argv0}\0--headless\0`, 'utf8');
+      fs.writeFileSync(path.join(options.procRoot, pid, 'environ'), `TMPDIR=${path.join(root, tmp)}\0${extra}\0`, 'utf8');
+      writeConnectionFile(path.join(root, tmp, 'commonpost-mcp', 'connection.json'), { port, token: `${tmp}-token` });
+    }
+    const future = new Date(Date.now() + 60000);
+    fs.utimesSync(path.join(root, 'bench-tmp', 'commonpost-mcp', 'connection.json'), future, future);
+
+    const connInfo = readConnectionInfo(options);
+    assert.equal(connInfo.port, 20003);
+    assert.equal(connInfo.token, 'snap-tmp-token');
   });
 
   it('snap detection ignores decoy processes with thunderbird only as a file arg', () => {

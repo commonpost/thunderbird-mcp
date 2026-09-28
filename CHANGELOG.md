@@ -4,6 +4,13 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Fixed
+- `mcp-bridge.cjs`: Snap discovery on Linux considers only Thunderbird processes that run as a Snap (`SNAP_NAME` in
+  their environment). Before, any other Thunderbird started with its own `TMPDIR` (a second installation, a test
+  instance) whose `connection.json` was newer took over the session of the installed Snap.
+
 ## [0.8.3] - 2026-09-27
 
 ### Added
