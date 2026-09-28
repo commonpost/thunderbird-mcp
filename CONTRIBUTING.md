@@ -29,6 +29,9 @@ npm run lint                   # ESLint
 node scripts/build-xpi-reproducible.cjs   # builds dist/commonpost-mcp-v<version>.xpi from the committed tree
 ```
 
+Before changing how a tool composes, threads, searches or filters mail, see
+[docs/thunderbird-internals.md](docs/thunderbird-internals.md) for how Thunderbird itself does it.
+
 To try the extension in Thunderbird, install the XPI from a release (Tools > Add-ons > Install Add-on From File).
 
 ## Reporting bugs and requesting features
