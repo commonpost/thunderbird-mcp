@@ -252,10 +252,15 @@ regenerateStableAuthTokenBtn.addEventListener("click", async () => {
   await generateAndStoreStableAuthToken("Regenerated and saved.");
 });
 
+let accountRestrictionInvalid = false;
+let openAllConfirmed = false;
+
 async function loadAccountAccess() {
   try {
     const data = await browser.commonpostMcp.getAccountAccessConfig();
     currentAccounts = data.accounts || [];
+    accountRestrictionInvalid = data.mode === "invalid";
+    openAllConfirmed = false;
 
     if (currentAccounts.length === 0) {
       accountList.innerHTML = "<li>No accounts found.</li>";
@@ -287,7 +292,12 @@ async function loadAccountAccess() {
     }
 
     saveBtn.disabled = false;
-    saveStatus.textContent = "";
+    if (accountRestrictionInvalid) {
+      saveStatus.textContent = "The saved account restriction could not be read: every account is blocked until you save a new choice.";
+      saveStatus.className = "save-status error";
+    } else {
+      saveStatus.textContent = "";
+    }
   } catch (e) {
     accountList.innerHTML = "";
     const li = document.createElement("li");
@@ -297,7 +307,8 @@ async function loadAccountAccess() {
 }
 
 function onAccountChange() {
-  saveStatus.textContent = "";
+  openAllConfirmed = false;
+  if (!accountRestrictionInvalid) saveStatus.textContent = "";
 }
 
 saveBtn.addEventListener("click", async () => {
@@ -314,6 +325,22 @@ saveBtn.addEventListener("click", async () => {
     } else {
       allChecked = false;
     }
+  }
+
+  // An empty selection is not "allow all": refuse it rather than open everything.
+  if (checked.length === 0) {
+    saveStatus.textContent = "Select at least one account.";
+    saveStatus.className = "save-status error";
+    saveBtn.disabled = false;
+    return;
+  }
+  // After an unreadable restriction, opening every account takes a second click.
+  if (allChecked && accountRestrictionInvalid && !openAllConfirmed) {
+    openAllConfirmed = true;
+    saveStatus.textContent = "The saved restriction was unreadable and everything is blocked. Click Save again to allow every account.";
+    saveStatus.className = "save-status error";
+    saveBtn.disabled = false;
+    return;
   }
 
   // If all are checked, send empty array (= allow all)

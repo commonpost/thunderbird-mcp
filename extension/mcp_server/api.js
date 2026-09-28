@@ -1181,6 +1181,61 @@ function isEncryptedMimeMessage(root) {
   }
 }
 // END ENCRYPTED MESSAGE HELPERS
+
+// BEGIN ACCOUNT RESTRICTION HELPERS
+// The "allowed accounts" preference is read the same way by the server and by
+// the options page: an unset value or an empty array means every account is
+// allowed; a non-empty array of strings restricts to those accounts; anything
+// else (not JSON, not an array, non-string entries) is "invalid" and refuses
+// everything until the user saves a new choice.
+const INVALID_ACCOUNT_RESTRICTION = "__invalid__";
+
+function parseAllowedAccountsPref(raw) {
+  if (raw === undefined || raw === null || raw === "") return { state: "all", ids: [] };
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { state: "invalid", ids: [] };
+  }
+  if (!Array.isArray(parsed) || !parsed.every((id) => typeof id === "string" && id !== "")) {
+    return { state: "invalid", ids: [] };
+  }
+  if (parsed.length === 0) return { state: "all", ids: [] };
+  return { state: "restricted", ids: parsed };
+}
+
+const lowerText = (value) => String(value || "").trim().toLowerCase();
+
+// Address books and calendars belong to no mail account in Thunderbird, so
+// ownership is inferred from what they name: the e-mail address or user name
+// of a remote collection, or the identity / account key stored on a
+// calendar. `hints` = { emails: [], identityKeys: [], accountKeys: [], remote }.
+// `accounts` = [{ key, allowed, emails: [], identityKeys: [] }].
+// Rules, in order: nothing is allowed when the restriction is invalid; a
+// collection that names a restricted account is refused (even if it also
+// names an allowed one); one that names an allowed account is allowed; one
+// that names no account is allowed only if it is local (a remote collection
+// that cannot be attributed is refused).
+function isCollectionAllowed(state, hints, accounts) {
+  if (state === "invalid") return false;
+  if (state === "all") return true;
+  const emails = new Set((hints.emails || []).map(lowerText).filter(Boolean));
+  const identityKeys = new Set((hints.identityKeys || []).filter(Boolean));
+  const accountKeys = new Set((hints.accountKeys || []).filter(Boolean));
+  let namesAllowed = false;
+  for (const account of accounts) {
+    const named = accountKeys.has(account.key)
+      || account.identityKeys.some((key) => identityKeys.has(key))
+      || account.emails.some((email) => emails.has(lowerText(email)));
+    if (!named) continue;
+    if (!account.allowed) return false;
+    namesAllowed = true;
+  }
+  if (namesAllowed) return true;
+  return hints.remote !== true;
+}
+// END ACCOUNT RESTRICTION HELPERS
 let _tempFileCounter = 0;
 const DEFAULT_MAX_RESULTS = 50;
 const PREF_ALLOWED_ACCOUNTS = "extensions.commonpost-mcp.allowedAccounts";
@@ -4271,20 +4326,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * Returns an empty array if no restriction is set (all accounts allowed).
              */
             function getAllowedAccountIds() {
+              let raw;
               try {
-                const pref = Services.prefs.getStringPref(PREF_ALLOWED_ACCOUNTS, "");
-                if (!pref) return [];
-                const parsed = JSON.parse(pref);
-                if (!Array.isArray(parsed)) {
-                  console.error("commonpost-mcp: allowed accounts pref is not an array, blocking all accounts");
-                  return ["__invalid__"];
-                }
-                return parsed;
+                raw = Services.prefs.getStringPref(PREF_ALLOWED_ACCOUNTS, "");
               } catch (e) {
-                // Fail closed: corrupt pref means block all accounts, not allow all
-                console.error("commonpost-mcp: failed to parse allowed accounts pref, blocking all accounts:", e);
-                return ["__invalid__"];
+                // Fail closed: an unreadable pref blocks all accounts, not allows all.
+                console.error("commonpost-mcp: failed to read allowed accounts pref, blocking all accounts:", e);
+                return [INVALID_ACCOUNT_RESTRICTION];
               }
+              const parsed = parseAllowedAccountsPref(raw);
+              if (parsed.state === "invalid") {
+                console.error("commonpost-mcp: allowed accounts pref is not a list of account ids, blocking all accounts");
+                return [INVALID_ACCOUNT_RESTRICTION];
+              }
+              return parsed.ids;
             }
 
             /**
@@ -4407,6 +4462,85 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
               }
               return result;
+            }
+
+            function accountRestrictionState() {
+              const allowed = getAllowedAccountIds();
+              if (allowed.length === 0) return "all";
+              if (allowed.length === 1 && allowed[0] === INVALID_ACCOUNT_RESTRICTION) return "invalid";
+              return "restricted";
+            }
+
+            /** Accounts as isCollectionAllowed() needs them. */
+            function describeAccountsForOwnership() {
+              const accounts = [];
+              for (const account of MailServices.accounts.accounts) {
+                const emails = [];
+                const identityKeys = [];
+                try {
+                  for (const identity of account.identities) {
+                    identityKeys.push(identity.key);
+                    if (identity.email) emails.push(identity.email);
+                  }
+                  const server = account.incomingServer;
+                  if (server && server.username) emails.push(server.username);
+                  if (server && server.realUsername) emails.push(server.realUsername);
+                } catch (e) {
+                  console.warn("commonpost-mcp: could not read account identities for ownership:", e);
+                }
+                accounts.push({ key: account.key, allowed: isAccountAllowed(account.key), emails, identityKeys });
+              }
+              return accounts;
+            }
+
+            function readTextProperty(read) {
+              try {
+                const value = read();
+                return typeof value === "string" ? value : "";
+              } catch {
+                return "";
+              }
+            }
+
+            /**
+             * Calendars, filtered by the allowed accounts (see isCollectionAllowed).
+             * A calendar that cannot be read counts as remote and unattributed.
+             */
+            function getAccessibleCalendars() {
+              const calendars = cal.manager.getCalendars();
+              const state = accountRestrictionState();
+              if (state === "all") return calendars;
+              if (state === "invalid") return [];
+              const accounts = describeAccountsForOwnership();
+              return calendars.filter((c) => isCollectionAllowed(state, {
+                emails: [readTextProperty(() => c.getProperty("username")), readTextProperty(() => c.getProperty("imip.identity.email"))],
+                identityKeys: [readTextProperty(() => c.getProperty("imip.identity.key"))],
+                accountKeys: [readTextProperty(() => c.getProperty("imip.account.key"))],
+                remote: readTextProperty(() => c.type) !== "storage",
+              }, accounts));
+            }
+
+            /**
+             * Address books, filtered by the allowed accounts. Local books
+             * (Personal, Collected) are dirType 101/2; anything else counts as
+             * remote and must name an allowed account.
+             */
+            function getAccessibleAddressBooks() {
+              const books = Array.from(MailServices.ab.directories);
+              const state = accountRestrictionState();
+              if (state === "all") return books;
+              if (state === "invalid") return [];
+              const accounts = describeAccountsForOwnership();
+              return books.filter((book) => {
+                let dirType = -1;
+                try { dirType = book.dirType; } catch { /* treated as remote */ }
+                return isCollectionAllowed(state, {
+                  emails: [readTextProperty(() => book.getStringValue("carddav.username", ""))],
+                  identityKeys: [],
+                  accountKeys: [],
+                  remote: dirType !== 101 && dirType !== 2,
+                }, accounts);
+              });
             }
 
             /**
@@ -6189,7 +6323,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 : DEFAULT_MAX_RESULTS;
               let truncated = false;
 
-              for (const book of MailServices.ab.directories) {
+              for (const book of getAccessibleAddressBooks()) {
                 for (const card of book.childCards) {
                   if (card.isMailList) continue;
 
@@ -6223,7 +6357,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * Returns { card, book } or { error }.
              */
             function findContactByUID(contactId) {
-              for (const book of MailServices.ab.directories) {
+              for (const book of getAccessibleAddressBooks()) {
                 for (const card of book.childCards) {
                   if (card.isMailList) continue;
                   if (card.UID === contactId) {
@@ -6279,7 +6413,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 // Find the target address book
                 let targetBook = null;
                 if (addressBookId) {
-                  for (const book of MailServices.ab.directories) {
+                  for (const book of getAccessibleAddressBooks()) {
                     if (book.dirPrefId === addressBookId || book.UID === addressBookId || book.URI === addressBookId) {
                       targetBook = book;
                       break;
@@ -6290,7 +6424,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   }
                 } else {
                   // Use the first writable address book
-                  for (const book of MailServices.ab.directories) {
+                  for (const book of getAccessibleAddressBooks()) {
                     if (!book.readOnly) {
                       targetBook = book;
                       break;
@@ -6400,7 +6534,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 return { error: "Calendar not available" };
               }
               try {
-                return cal.manager.getCalendars().map(c => ({
+                return getAccessibleCalendars().map(c => ({
                   id: c.id,
                   name: c.name,
                   type: c.type,
@@ -6520,7 +6654,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (onlineMeeting) event.setProperty("X-ONLINE-MEETING-PROVIDER", "TeamsForBusiness");
 
                 // Find target calendar
-                const calendars = cal.manager.getCalendars();
+                const calendars = getAccessibleCalendars();
                 let targetCalendar = null;
                 if (calendarId) {
                   targetCalendar = calendars.find(c => c.id === calendarId);
@@ -6661,7 +6795,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (!taskId) return { error: "taskId is required" };
                 if (!calendarId) return { error: "calendarId is required" };
 
-                const calendar = cal.manager.getCalendars().find(c => c.id === calendarId);
+                const calendar = getAccessibleCalendars().find(c => c.id === calendarId);
                 if (!calendar) return { error: `Calendar not found: ${calendarId}` };
                 if (calendar.readOnly) return { error: `Calendar is read-only: ${calendar.name}` };
                 if (calendar.getProperty("capabilities.tasks.supported") === false) {
@@ -6777,7 +6911,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 return { error: "Calendar not available" };
               }
               try {
-                const calendars = cal.manager.getCalendars();
+                const calendars = getAccessibleCalendars();
                 let targets = calendars;
                 if (calendarId) {
                   const found = calendars.find(c => c.id === calendarId);
@@ -6877,7 +7011,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             async function listTasks(calendarId, completed, dueBefore, maxResults) {
               if (!cal) return { error: "Calendar not available" };
               try {
-                const calendars = cal.manager.getCalendars();
+                const calendars = getAccessibleCalendars();
                 let targets = calendars.filter(c =>
                   c.getProperty("capabilities.tasks.supported") !== false
                 );
@@ -6963,7 +7097,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (!eventId) return { error: "eventId is required" };
                 if (!calendarId) return { error: "calendarId is required" };
 
-                const calendar = cal.manager.getCalendars().find(c => c.id === calendarId);
+                const calendar = getAccessibleCalendars().find(c => c.id === calendarId);
                 if (!calendar) return { error: `Calendar not found: ${calendarId}` };
                 if (calendar.readOnly) return { error: `Calendar is read-only: ${calendar.name}` };
 
@@ -7084,7 +7218,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (!eventId) return { error: "eventId is required" };
                 if (!calendarId) return { error: "calendarId is required" };
 
-                const calendar = cal.manager.getCalendars().find(c => c.id === calendarId);
+                const calendar = getAccessibleCalendars().find(c => c.id === calendarId);
                 if (!calendar) return { error: `Calendar not found: ${calendarId}` };
                 if (calendar.readOnly) return { error: `Calendar is read-only: ${calendar.name}` };
 
@@ -7177,7 +7311,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 // Find target calendar (must support tasks)
                 let targetCalendar = null;
                 if (calendarId) {
-                  targetCalendar = cal.manager.getCalendars().find(c => c.id === calendarId);
+                  targetCalendar = getAccessibleCalendars().find(c => c.id === calendarId);
                   if (!targetCalendar) return { error: `Calendar not found: ${calendarId}` };
                   if (targetCalendar.readOnly) return { error: `Calendar is read-only: ${targetCalendar.name}` };
                   if (targetCalendar.getProperty("capabilities.tasks.supported") === false) {
@@ -7205,7 +7339,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
                 if (skipReview) {
                   if (!targetCalendar) {
-                    targetCalendar = cal.manager.getCalendars().find(
+                    targetCalendar = getAccessibleCalendars().find(
                       c => !c.readOnly && c.getProperty("capabilities.tasks.supported") !== false
                     );
                     if (!targetCalendar) return { error: "No writable task-capable calendar found" };
@@ -11190,14 +11324,16 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           const { MailServices } = ChromeUtils.importESModule(
             "resource:///modules/MailServices.sys.mjs"
           );
-          let allowed = [];
+          // Same reading as the server (parseAllowedAccountsPref): an
+          // unreadable preference is reported as "invalid", not as "all".
+          let restriction;
           try {
-            const pref = Services.prefs.getStringPref(PREF_ALLOWED_ACCOUNTS, "");
-            if (pref) allowed = JSON.parse(pref);
+            restriction = parseAllowedAccountsPref(Services.prefs.getStringPref(PREF_ALLOWED_ACCOUNTS, ""));
           } catch (e) {
-            // Falls back to "all accounts allowed"; surface the corruption.
-            console.warn("commonpost-mcp: account-access pref is not valid JSON:", e.message);
+            console.warn("commonpost-mcp: account-access pref is unreadable:", e.message);
+            restriction = { state: "invalid", ids: [] };
           }
+          const { state, ids: allowed } = restriction;
 
           const accounts = [];
           for (const account of MailServices.accounts.accounts) {
@@ -11206,11 +11342,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               id: account.key,
               name: server.prettyName,
               type: server.type,
-              allowed: allowed.length === 0 || allowed.includes(account.key),
+              allowed: state === "all" || (state === "restricted" && allowed.includes(account.key)),
             });
           }
           return {
-            mode: allowed.length === 0 ? "all" : "restricted",
+            mode: state === "restricted" ? "restricted" : state,
             allowedAccountIds: allowed,
             accounts,
           };
