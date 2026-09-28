@@ -1241,14 +1241,68 @@ const LOCAL_DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const pad2 = (n) => String(n).padStart(2, "0");
 const formatLocalDay = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
+// ── Free text that Thunderbird persists in msgFilterRules.dat ──
+//
+// Each filter name, condition value and action value is stored as one quoted
+// line. The format has no escape for line breaks, NUL or a backslash, so such
+// text does not round-trip and could corrupt the list it is written to. It is
+// refused before Thunderbird sees it.
+const FILTER_NAME_MAX_LENGTH = 500;
+const FILTER_VALUE_MAX_LENGTH = 1000;
+const FILTER_HEADER_MAX_LENGTH = 100;
+const FILTER_TAG_KEY_MAX_LENGTH = 100;
+// C0 and C1 controls, DEL, and the Unicode line/paragraph separators.
+const FILTER_TEXT_FORBIDDEN = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u;
+const FILTER_TEXT_NOTE = "it cannot be represented in msgFilterRules.dat";
+const FILTER_TAG_KEY_PATTERN = /^[!#$&'+,\-.0-9:;=?@A-Z[^_\x60a-z|}~]+$/;
+
+function assertFilterText(label, value, maxLength) {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+  if (value.length > maxLength) {
+    throw new Error(`${label} is too long (${value.length} characters, limit ${maxLength})`);
+  }
+  const bad = FILTER_TEXT_FORBIDDEN.exec(value);
+  if (bad) {
+    const code = bad[0].codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
+    throw new Error(`${label} contains a control or line-separator character (U+${code} at position ${bad.index}); ${FILTER_TEXT_NOTE}`);
+  }
+  const backslash = value.indexOf("\\");
+  if (backslash >= 0) {
+    throw new Error(`${label} contains a backslash (position ${backslash}); ${FILTER_TEXT_NOTE}`);
+  }
+  if (typeof value.isWellFormed === "function" && !value.isWellFormed()) {
+    throw new Error(`${label} contains a lone UTF-16 surrogate`);
+  }
+  return value;
+}
+
 // Each codec: the hint shown in the schema and in error messages, parse(raw,
 // label, spec) for writing, format(stored) for reading back. label is the
 // full phrase an error names ("Condition value for ..." or "Action value
 // for ...", built by the caller), so the same message reads right either way.
+
 const VALUE_CODECS = {
   text: {
     hint: "text",
-    parse: (raw) => (raw == null ? "" : String(raw)),
+    parse: (raw, label) => assertFilterText(label, raw == null ? "" : String(raw), FILTER_VALUE_MAX_LENGTH),
+    format: (stored) => stored || "",
+  },
+  // A tag key as Thunderbird's tag service makes them (nsMsgTagService::AddTag
+  // lowercases and replaces space ( ) / { % * < > " and non-ASCII): one IMAP
+  // keyword. A space would add several keywords at once (keywords are
+  // space-separated), e.g. "$label1 junk".
+  tagKey: {
+    hint: 'a tag key such as "$label1"',
+    parse: (raw, label) => {
+      const key = assertFilterText(label, raw == null ? "" : String(raw), FILTER_TAG_KEY_MAX_LENGTH);
+      if (!FILTER_TAG_KEY_PATTERN.test(key)) {
+        throw new Error(`${label} must be a tag key: ${JSON.stringify(key)} (one word of printable ASCII, `
+          + 'without space ( ) / { % * < > " \\ ])');
+      }
+      return key;
+    },
     format: (stored) => stored || "",
   },
   integer: {
@@ -1382,10 +1436,18 @@ function isArbitraryHeaderAttrib(attrib) {
   return otherHeader !== undefined && attrib > otherHeader && attrib < MAX_SEARCH_ATTRIB;
 }
 
+// Header names are RFC 7230 tokens. Stricter than the C++ side
+// (IsRFC822HeaderFieldName accepts any printable ASCII but ':'): the header is
+// written quoted inside the condition string, "Name",op,value, and a '"', ',',
+// '(' , ')' or '\' in it would change how Thunderbird parses the conditions
+// back (nsMsgFilter::ParseCondition), so it is refused here.
+const FILTER_HEADER_NAME_PATTERN = /^[A-Za-z0-9!#$%&'*+.^_\x60|~-]+$/;
+
 function arbitraryHeaderAttrib(header) {
-  // Same validity rule as the C++ side (IsRFC822HeaderFieldName).
-  if (!/^[!-9;-~]+$/.test(header)) {
-    throw new Error(`Invalid header name: ${JSON.stringify(header)}`);
+  if (typeof header !== "string" || header.length > FILTER_HEADER_MAX_LENGTH
+      || !FILTER_HEADER_NAME_PATTERN.test(header)) {
+    throw new Error(`Invalid header name: ${JSON.stringify(header)} (letters, digits and !#$%&'*+.^_\`|~- only, `
+      + `at most ${FILTER_HEADER_MAX_LENGTH} characters)`);
   }
   const base = ATTRIB_MAP.otherHeader + 1;
   let custom = "";
@@ -1478,7 +1540,7 @@ const FILTER_ACTION_DEFS = [
   { action: "changePriority", idl: "ChangePriority", member: "priority", codec: "priority" },
   // nsMsgRuleAction::SetJunkScore rejects anything outside 0..100.
   { action: "junkScore", idl: "JunkScore", member: "junkScore", codec: "integer", min: 0, max: 100, hint: "an integer from 0 (not junk) to 100 (junk)" },
-  { action: "addTag", idl: "AddTag", member: "strValue", codec: "text", hint: 'a tag key such as "$label1"' },
+  { action: "addTag", idl: "AddTag", member: "strValue", codec: "tagKey" },
   { action: "reply", idl: "Reply", member: "strValue", codec: "text", hint: "a reply template message URI" },
   { action: "forward", idl: "Forward", member: "strValue", codec: "text", hint: "an email address" },
   { action: "delete", idl: "Delete" },
@@ -1818,6 +1880,41 @@ function serializeFilterRule(filter, index) {
   return out;
 }
 
+// Filter name and type as written to msgFilterRules.dat (name="...",
+// type="..."). The name is free text: see FILTER_TEXT_FORBIDDEN above.
+function validateFilterName(name) {
+  if (typeof name !== "string" || name.length === 0) {
+    throw new Error("Filter name must be a non-empty string");
+  }
+  return assertFilterText("Filter name", name, FILTER_NAME_MAX_LENGTH);
+}
+
+// Every bit nsMsgFilterType defines, resolved by name. NOT
+// nsMsgFilterType.All: in Thunderbird 156 that constant is only
+// Incoming | Manual (0x1f), without PostPlugin, PostOutgoing, Archive and
+// Periodic (measured in the lab: a 0x1f mask refused legitimate types).
+// Any other bit means nothing to Thunderbird.
+const FILTER_TYPE_BIT_NAMES = [
+  "InboxRule", "InboxJavaScript", "NewsRule", "NewsJavaScript", "Manual",
+  "PostPlugin", "PostOutgoing", "Archive", "Periodic", "All",
+];
+const FILTER_TYPE_KNOWN_BITS = (() => {
+  let mask = 0;
+  for (const name of FILTER_TYPE_BIT_NAMES) {
+    const value = resolveXpcomConstant("nsMsgFilterType", name);
+    if (typeof value === "number" && value > 0) mask |= value;
+  }
+  return mask || 0x1ff; // no XPCOM (unit tests without Ci): nsMsgFilterCore.idl
+})();
+
+function validateFilterType(type) {
+  if (!Number.isInteger(type) || type <= 0 || (type & ~FILTER_TYPE_KNOWN_BITS) !== 0) {
+    throw new Error(`type must be a positive integer made of nsMsgFilterType bits (known bits: 0x${FILTER_TYPE_KNOWN_BITS.toString(16)}), `
+      + `got: ${JSON.stringify(type)}`);
+  }
+  return type;
+}
+
 // updateFilter without silent data loss. Conditions/actions are replaced by
 // rebuilding the rule (nsIMsgFilter has no way to clear its terms); whatever
 // is not replaced is COPIED typed, and any copy failure throws before the
@@ -1827,6 +1924,10 @@ function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSend
   if (typeof resolveFolder !== "function") {
     throw new Error("planFilterUpdate requires a resolveFolder(uri) function");
   }
+  // Validated here too (not only by the tool): nothing reaches Thunderbird
+  // unchecked, whoever calls this helper.
+  if (update.name !== undefined) validateFilterName(update.name);
+  if (update.type !== undefined) validateFilterType(update.type);
   const changes = [];
   if (update.name !== undefined) changes.push("name");
   if (update.enabled !== undefined) changes.push("enabled");
@@ -8734,9 +8835,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (typeof enabled === "string") enabled = enabled === "true";
                 if (typeof type === "string") type = parseInt(type, 10);
                 if (typeof insertAtIndex === "string") insertAtIndex = parseInt(insertAtIndex, 10);
-                if (type !== undefined && type !== null && !(Number.isInteger(type) && type > 0)) {
-                  return { error: "type must be a positive integer filter type bitmask" };
-                }
+                // Free text and bits Thunderbird persists: checked before any
+                // filter object exists (see FILTER_TEXT_FORBIDDEN).
+                validateFilterName(name);
+                if (type !== undefined && type !== null) validateFilterType(type);
 
                 if (!Array.isArray(conditions) || conditions.length === 0) {
                   return { error: "conditions must be a non-empty array" };
@@ -8800,9 +8902,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   return { error: `Invalid filter index: ${filterIndex}` };
                 }
 
-                if (type !== undefined && !(Number.isInteger(type) && type > 0)) {
-                  return { error: "type must be a positive integer filter type bitmask" };
-                }
+                if (name !== undefined) validateFilterName(name);
+                if (type !== undefined) validateFilterType(type);
 
                 // Forward/reply guard: covers (re)enabling, retargeting or
                 // marking for outgoing mail (PostOutgoing) a sending rule.
