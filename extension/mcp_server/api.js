@@ -1138,6 +1138,49 @@ function folderDisplayName(folder) {
   return folder?.localizedName ?? folder?.prettyName;
 }
 // END FOLDER NAME HELPERS
+
+// BEGIN ENCRYPTED MESSAGE HELPERS
+// Encrypted messages (OpenPGP, S/MIME) are not decrypted for the assistant
+// unless the user switches the option on: their decrypted content would be
+// handed to whichever service runs the assistant.
+const PREF_ALLOW_ENCRYPTED_CONTENT = "extensions.commonpost-mcp.allowEncryptedContent";
+const ENCRYPTED_CONTENT_NOTICE =
+  "message chiffré : contenu non transmis (option à activer) / "
+  + "encrypted message: content not sent (option to enable in the add-on settings)";
+const ENCRYPTED_CONTENT_TYPES = new Set([
+  "multipart/encrypted",
+  "application/pkcs7-mime",
+  "application/x-pkcs7-mime",
+  "application/pgp-encrypted",
+]);
+const ENCRYPTED_WALK_MAX_NODES = 5000;
+
+function mimeBaseType(value) {
+  return String(value || "").split(";")[0].trim().toLowerCase();
+}
+
+// True when a part of the parsed message (Gloda MimeMessage tree) is an
+// OpenPGP or S/MIME encrypted container. Fails closed: a tree that cannot be
+// read or is too large to walk counts as encrypted.
+function isEncryptedMimeMessage(root) {
+  try {
+    const pending = [root];
+    let visited = 0;
+    while (pending.length > 0) {
+      const part = pending.pop();
+      if (!part || typeof part !== "object") continue;
+      if (++visited > ENCRYPTED_WALK_MAX_NODES) return true;
+      if (ENCRYPTED_CONTENT_TYPES.has(mimeBaseType(part.contentType))) return true;
+      const header = part.headers && part.headers["content-type"];
+      if (header && ENCRYPTED_CONTENT_TYPES.has(mimeBaseType(Array.isArray(header) ? header[0] : header))) return true;
+      if (Array.isArray(part.parts)) pending.push(...part.parts);
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+// END ENCRYPTED MESSAGE HELPERS
 let _tempFileCounter = 0;
 const DEFAULT_MAX_RESULTS = 50;
 const PREF_ALLOWED_ACCOUNTS = "extensions.commonpost-mcp.allowedAccounts";
@@ -4252,6 +4295,19 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const allowed = getAllowedAccountIds();
               if (allowed.length === 0) return true;
               return allowed.includes(accountKey);
+            }
+
+            /**
+             * Whether decrypted content of encrypted messages may be handed to
+             * the assistant (option "Read encrypted messages"). Off by default;
+             * an unreadable preference counts as off.
+             */
+            function isEncryptedContentAllowed() {
+              try {
+                return Services.prefs.getBoolPref(PREF_ALLOW_ENCRYPTED_CONTENT, false) === true;
+              } catch {
+                return false;
+              }
             }
 
             /**
@@ -7748,9 +7804,27 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                    "resource:///modules/gloda/MimeMessage.sys.mjs"
 	                  );
 
+                  const encryptedAllowed = isEncryptedContentAllowed();
                   MsgHdrToMimeMessage(msgHdr, null, (aMsgHdr, aMimeMsg) => {
                     if (!aMimeMsg) {
                       resolve({ error: "Could not parse message" });
+                      return;
+                    }
+
+                    if (!encryptedAllowed && isEncryptedMimeMessage(aMimeMsg)) {
+                      resolve({
+                        id: msgHdr.messageId,
+                        subject: msgHdr.mime2DecodedSubject || msgHdr.subject,
+                        author: msgHdr.mime2DecodedAuthor || msgHdr.author,
+                        recipients: msgHdr.mime2DecodedRecipients || msgHdr.recipients,
+                        ccList: msgHdr.ccList,
+                        date: msgHdr.date ? new Date(msgHdr.date / 1000).toISOString() : null,
+                        tags: getUserTags(msgHdr),
+                        body: ENCRYPTED_CONTENT_NOTICE,
+                        bodyIsHtml: false,
+                        encrypted: true,
+                        attachments: [],
+                      });
                       return;
                     }
 
@@ -8493,7 +8567,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       }
                       resolveBaseResponse();
                     })();
-                  }, true, { examineEncryptedParts: true });
+                  }, true, { examineEncryptedParts: encryptedAllowed });
 
 	                } catch (e) {
 	                  console.error("commonpost-mcp: getMessage failed:", e);
@@ -8777,8 +8851,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                      "resource:///modules/gloda/MimeMessage.sys.mjs"
                       );
 
+	                    const encryptedAllowed = isEncryptedContentAllowed();
 	                    MsgHdrToMimeMessage(msgHdr, null, (aMsgHdr, aMimeMsg) => {
 	                      try {
+	                        if (!encryptedAllowed && isEncryptedMimeMessage(aMimeMsg)) {
+	                          resolve({ error: `${ENCRYPTED_CONTENT_NOTICE}; nothing was sent` });
+	                          return;
+	                        }
 	                        const originalBody = extractPlainTextBody(aMimeMsg);
 
 	                        if (replyAll) {
@@ -8840,7 +8919,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                      } catch (e) {
 	                        resolve({ error: e.toString() });
 	                      }
-	                    }, true, { examineEncryptedParts: true });
+	                    }, true, { examineEncryptedParts: encryptedAllowed });
 	                    return;
 	                  }
 
@@ -8941,8 +9020,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       "resource:///modules/gloda/MimeMessage.sys.mjs"
                     );
 
+                    const encryptedAllowed = isEncryptedContentAllowed();
                     MsgHdrToMimeMessage(msgHdr, null, (aMsgHdr, aMimeMsg) => {
                       try {
+                        if (!encryptedAllowed && isEncryptedMimeMessage(aMimeMsg)) {
+                          resolve({ error: `${ENCRYPTED_CONTENT_NOTICE}; nothing was sent` });
+                          return;
+                        }
                         const originalBody = extractPlainTextBody(aMimeMsg);
 
                         composeFields.to = to;
@@ -9015,7 +9099,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       } catch (e) {
                         resolve({ error: e.toString() });
                       }
-                    }, true, { examineEncryptedParts: true });
+                    }, true, { examineEncryptedParts: encryptedAllowed });
                     return;
                   }
 
@@ -11298,6 +11382,24 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           }
           Services.prefs.setBoolPref(PREF_BLOCK_FILTER_FORWARD_REPLY, blockFilterForwardReply);
           return { success: true, blockFilterForwardReply };
+        },
+
+        getAllowEncryptedContent: async function() {
+          let allowed = false;
+          try {
+            allowed = Services.prefs.getBoolPref(PREF_ALLOW_ENCRYPTED_CONTENT, false) === true;
+          } catch (e) {
+            console.warn("commonpost-mcp: allowEncryptedContent unreadable, reported as off:", e);
+          }
+          return { allowEncryptedContent: allowed };
+        },
+
+        setAllowEncryptedContent: async function(allowEncryptedContent) {
+          if (typeof allowEncryptedContent !== "boolean") {
+            return { error: "allowEncryptedContent must be a boolean" };
+          }
+          Services.prefs.setBoolPref(PREF_ALLOW_ENCRYPTED_CONTENT, allowEncryptedContent);
+          return { success: true, allowEncryptedContent };
         },
 
         getStableAuthToken: async function() {

@@ -119,6 +119,26 @@
         ]
       },
       {
+        "name": "getAllowEncryptedContent",
+        "type": "function",
+        "async": true,
+        "description": "Get the Read encrypted messages preference (default false: the content of OpenPGP and S/MIME messages is not handed to the assistant).",
+        "parameters": []
+      },
+      {
+        "name": "setAllowEncryptedContent",
+        "type": "function",
+        "async": true,
+        "description": "Set whether the decrypted content of encrypted messages may be handed to the assistant. Defaults to false.",
+        "parameters": [
+          {
+            "name": "allowEncryptedContent",
+            "type": "boolean",
+            "description": "When false (the default), getMessage returns a short notice instead of the content of an OpenPGP or S/MIME message, and replyToMessage / forwardMessage do not send it without review. When true, Thunderbird decrypts such messages for the tools."
+          }
+        ]
+      },
+      {
         "name": "getStableAuthToken",
         "type": "function",
         "async": true,
