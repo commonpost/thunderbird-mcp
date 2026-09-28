@@ -243,21 +243,18 @@ whole body.
 ## Experiment and platform pitfalls
 
 - Experiment scripts have no web globals. `TextDecoder` is silently `undefined`; import what you need with
-  `Cu.importGlobalProperties(["atob", "btoa", "DOMParser", "TextDecoder", "TextEncoder"])`.
+  `Cu.importGlobalProperties(["atob", "btoa", "DOMParser", "TextDecoder"])`.
 - `folder.addMessage` must use the mbox's own line endings. CRLF messages in an LF mbox made Thunderbird 156's mbox
   reader reject the preceding message (`0x80550023`).
 - A compose window's `compose-window-init` event does not bubble; listen on the window itself.
 - `nsIMsgSend.createAndSendMessage` returns a promise on 128+ (`MessageSend.sys.mjs`). For `SaveAsDraft` and the
   queue modes it resolves after the copy; for `Now` it resolves as soon as SMTP delivery **starts**
-  (`_deliverAsMail` awaits only the request). The outcome of a send is `onStopSending` on the listener; treating
-  the promise as success reports rejected recipients or failed authentication as sent. On 140 an identity without
-  an outgoing server also resolves the promise without any listener call.
+  (`_deliverAsMail` awaits only the request). The outcome of a send is `onStopSending`, `onSendNotPerformed` or
+  `onTransportSecurityError` on the listener; `onStopCopy` after a send is only the copy to Sent. Treating the
+  promise as success reports rejected recipients or failed authentication as sent. On 140 an identity without an
+  outgoing server also resolves the promise without any listener call.
 - Thunderbird caches extension code aggressively. After changing the source, remove the add-on, restart, install
   the new XPI and restart again.
-- Snap: a Snap Thunderbird has its own `TMPDIR`, which a bridge finds by reading `/proc/<pid>/environ` of the
-  running Thunderbird. Only processes with `SNAP_NAME` in their environment should be taken into account: any other
-  Thunderbird started with a custom `TMPDIR` (a test instance, for example) would otherwise take over the session
-  of the installed one.
 
 ## Running a real Thunderbird headless for tests
 
@@ -273,3 +270,6 @@ whole body.
   `WebDriver:NewSession`, `Marionette:SetContext` chrome, `WebDriver:ExecuteAsyncScript`) runs privileged JS in the
   test profile. That makes the native compose window usable as an oracle: open it as `ComposeMessage` does, save
   with `SaveAsDraft()` and compare the draft with the one the tool produced.
+- Never use `--remote-allow-system-access` with a real profile: any local process that reaches the Marionette port
+  can then run privileged JavaScript in that profile, with access to its mail, passwords and keys. Use it only on
+  a throwaway test profile.
