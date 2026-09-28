@@ -482,13 +482,14 @@ describe('Bridge discovery', () => {
     assert.match(buildConnectionDiscoveryErrorMessage(), /file not found/);
   });
 
-  it('discovery failures hint at Experiment add-ons possibly being disabled on Release, without naming an internal pref', () => {
+  it('discovery failures point at the README section on Experiment add-ons being disabled on Release', () => {
     const message = buildConnectionDiscoveryErrorMessage();
     assert.match(message, /check that the add-on is enabled/);
     assert.match(message, /Experiment add-ons/);
     assert.match(message, /README section/i);
-    assert.doesNotMatch(message, /about:config/i);
-    assert.doesNotMatch(message, /extensions\.experiments\.suppressed/);
+    assert.ok(message.includes('https://github.com/commonpost/thunderbird-mcp#if-thunderbird-disables-experiment-add-ons-on-the-release-channel'));
+    // Stays a pointer: no preference names or settings to change.
+    assert.doesNotMatch(message, /about:config|\bextensions\.[a-z]/i);
   });
 
   it('discoverConnectionInfo collects every valid candidate, not just the winner', () => {

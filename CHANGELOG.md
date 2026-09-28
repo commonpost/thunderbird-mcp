@@ -7,11 +7,12 @@ project is kept in this repository.
 ## Unreleased
 
 ### Added
-- README: a section on what to do if Thunderbird disables Experiment-API add-ons on the Release channel (switch
-  to Thunderbird ESR, supported since 0.8.2).
+- README: a section on what to do if Thunderbird disables Experiment-API add-ons on the Release channel, as its
+  Add-ons team has announced (switch to Thunderbird ESR, supported since 0.8.2).
 - `mcp-bridge.cjs`: when Thunderbird cannot be reached (no connection file, or the connection is refused), the
   error now also suggests checking that the add-on is enabled, since Thunderbird Release may disable Experiment
-  add-ons, with a pointer to the new README section.
+  add-ons, with a link to the new README section. The bridge is not updated with the add-on: download
+  `mcp-bridge.cjs` from this release to get the new message.
 
 ### Changed
 - `docs/experiment-inventory.md`: the Calendar row now notes Thunderbird's announced (but, as far as we found,

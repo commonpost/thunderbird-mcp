@@ -12,12 +12,13 @@ const path = require('path');
 const os = require('os');
 
 const THUNDERBIRD_HOSTS = ['127.0.0.1'];
-// Appended to every "can't reach Thunderbird" error: a neutral pointer, no
-// internal pref name or about:config workaround (see the README section).
+// Appended to every "can't reach Thunderbird" error; the README section
+// explains what to do.
 const UNREACHABLE_HINT =
   'If Thunderbird is running, check that the add-on is enabled; Thunderbird ' +
   'Release may disable Experiment add-ons -- see the README section "If ' +
-  'Thunderbird disables Experiment add-ons on the Release channel".';
+  'Thunderbird disables Experiment add-ons on the Release channel" ' +
+  '(https://github.com/commonpost/thunderbird-mcp#if-thunderbird-disables-experiment-add-ons-on-the-release-channel).';
 const REQUEST_TIMEOUT = 30000;
 const CONNECTION_RETRY_DELAY_MS = 1000;
 const CONNECTION_MAX_RETRIES = 5;
