@@ -1337,6 +1337,24 @@ function protectMessageToolResult(toolName, result, nonce) {
   return untrustedContentNotice(nonce, removed);
 }
 // END UNTRUSTED CONTENT HELPERS
+
+// BEGIN UNINSTALL CLEANUP HELPERS
+// Preferences of a removed add-on stay in the profile. The stable token and the
+// listen-on-all-interfaces setting are cleared when the user removes the
+// add-on; a disabled or updated add-on keeps them.
+function createUninstallCleanupListener(addonId, clear) {
+  return {
+    onUninstalling(addon) {
+      if (!addon || addon.id !== addonId) return;
+      try {
+        clear();
+      } catch (e) {
+        console.error("commonpost-mcp: could not clear preferences on uninstall:", e);
+      }
+    },
+  };
+}
+// END UNINSTALL CLEANUP HELPERS
 let _tempFileCounter = 0;
 const DEFAULT_MAX_RESULTS = 50;
 const PREF_ALLOWED_ACCOUNTS = "extensions.commonpost-mcp.allowedAccounts";
@@ -3189,6 +3207,22 @@ function getFilterConfirmationStore() {
 // eslint-disable-next-line no-unused-vars -- read by Thunderbird: the Experiment API namespace "commonpostMcp" (schema.json)
 var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
   getAPI(context) {
+    // Clear the stable token and the listen-all setting when the user removes
+    // the add-on (see UNINSTALL CLEANUP HELPERS).
+    try {
+      const { AddonManager } = ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");
+      if (globalThis.__commonpostUninstallListener) {
+        AddonManager.removeAddonListener(globalThis.__commonpostUninstallListener);
+      }
+      globalThis.__commonpostUninstallListener = createUninstallCleanupListener(context.extension.id, () => {
+        for (const pref of [PREF_STABLE_AUTH_TOKEN, PREF_LISTEN_ALL]) {
+          try { Services.prefs.clearUserPref(pref); } catch { /* not set */ }
+        }
+      });
+      AddonManager.addAddonListener(globalThis.__commonpostUninstallListener);
+    } catch (e) {
+      console.warn("commonpost-mcp: uninstall cleanup listener not installed:", e);
+    }
     const extensionRoot = context.extension.rootURI;
     const resourceName = "commonpost-mcp";
 
@@ -11722,6 +11756,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
   }
 
   onShutdown(isAppShutdown) {
+    if (globalThis.__commonpostUninstallListener) {
+      try {
+        const { AddonManager } = ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");
+        AddonManager.removeAddonListener(globalThis.__commonpostUninstallListener);
+      } catch (e) {
+        console.error("commonpost-mcp: could not remove the uninstall listener:", e);
+      }
+      globalThis.__commonpostUninstallListener = null;
+    }
     // Pending filter confirmations end here: nothing is written, their
     // dialogs close.
     if (globalThis.__commonpostMcpFilterConfirmations) {
