@@ -23,7 +23,7 @@ reference release by release. Corrections are welcome.
 | Move, tag, flag, delete messages | `MailServices.copy`, message headers | `messages.move`, `update`, `delete`, `tags` (permission `messagesMove`). |
 | Compose, reply, forward, send | `@mozilla.org/messengercompose*`, `nsIMsgSend`, compose params and fields | `compose.beginNew`, `beginReply`, `beginForward`, `sendMessage` (permission `compose`). Direct-send control and inline attachment handling need checking. |
 | Contacts | `@mozilla.org/addressbook/cardproperty;1`, `VCardUtils` | `addressBooks` and `contacts` APIs (permission `addressBooks`). |
-| Calendar (events, tasks) | `CalEvent`, `CalTodo`, `calUtils`, calendar manager | No stable MailExtension API known to us. |
+| Calendar (events, tasks) | `CalEvent`, `CalTodo`, `calUtils`, calendar manager | Thunderbird's Add-ons team announced (2026-05-21) that calendar APIs would be added to the WebExtension surface alongside the Experiment-API changes on Release. As of 2026-09-27 we found no `calendar` (or similarly named) module in the [WebExtension API reference](https://webextension-api.thunderbird.net/en/latest/) and no mention of a new calendar API in the [Thunderbird 153 release notes](https://www.thunderbird.net/en-US/thunderbird/153.0/releasenotes/) (which list only calendar bug fixes). Re-check before assuming it exists. |
 | Message filters | `@mozilla.org/messenger/filter-service;1`, `Services.filters` | No public MailExtension API. |
 | Options page | Standard `options_ui` page; talks to the Experiment for the items above | Fully standard once the items above move. |
 

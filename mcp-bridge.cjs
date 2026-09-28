@@ -12,6 +12,13 @@ const path = require('path');
 const os = require('os');
 
 const THUNDERBIRD_HOSTS = ['127.0.0.1'];
+// Appended to every "can't reach Thunderbird" error; the README section
+// explains what to do.
+const UNREACHABLE_HINT =
+  'If Thunderbird is running, check that the add-on is enabled; Thunderbird ' +
+  'Release may disable Experiment add-ons -- see the README section "If ' +
+  'Thunderbird disables Experiment add-ons on the Release channel" ' +
+  '(https://github.com/commonpost/thunderbird-mcp#if-thunderbird-disables-experiment-add-ons-on-the-release-channel).';
 const REQUEST_TIMEOUT = 30000;
 const CONNECTION_RETRY_DELAY_MS = 1000;
 const CONNECTION_MAX_RETRIES = 5;
@@ -849,7 +856,8 @@ function buildConnectionDiscoveryErrorMessage() {
     'Connection discovery failed. ' +
     'Tried: ' + formatDiscoveryAttempts() + '. ' +
     'Is Thunderbird running with the MCP extension? ' +
-    'The extension must be started first to create the connection file.'
+    'The extension must be started first to create the connection file. ' +
+    UNREACHABLE_HINT
   );
 }
 
@@ -1093,12 +1101,12 @@ async function forwardToThunderbird(message) {
         clearConnectionCache();
         connInfo = readConnectionInfo();
         if (!connInfo) {
-          throw new Error(`Connection failed: ${err.message}. Is Thunderbird running with the MCP extension?`, { cause: err });
+          throw new Error(`Connection failed: ${err.message}. Is Thunderbird running with the MCP extension? ${UNREACHABLE_HINT}`, { cause: err });
         }
         continue;
       }
 
-      throw new Error(`Connection failed: ${err.message}. Is Thunderbird running with the MCP extension?`, { cause: err });
+      throw new Error(`Connection failed: ${err.message}. Is Thunderbird running with the MCP extension? ${UNREACHABLE_HINT}`, { cause: err });
     }
   }
 }

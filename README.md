@@ -201,6 +201,19 @@ Both add-ons can be installed at the same time: they use different ids, preferen
 
 ---
 
+## If Thunderbird disables Experiment add-ons on the Release channel
+
+This add-on uses a Thunderbird Experiment API (see [docs/experiment-inventory.md](docs/experiment-inventory.md)).
+Thunderbird's Add-ons team has announced plans to stop running Experiment-API add-ons on the Release channel, and to
+keep supporting them on the ESR (Extended Support Release) channel. As of September 2026 this had not happened yet.
+
+If that happens on your Thunderbird and this add-on stops working: switch to Thunderbird ESR. Downloads for every
+platform are on the [official Thunderbird site](https://www.thunderbird.net/en-US/thunderbird/all/) (look for the
+"ESR" builds). This continuation has supported Thunderbird ESR since 0.8.2 (minimum 140.0; see the badge above and
+[CHANGELOG.md](CHANGELOG.md)).
+
+---
+
 ## Troubleshooting
 
 | Problem | Fix |
