@@ -90,7 +90,7 @@ resolve_version() {
     esr-next) key="THUNDERBIRD_ESR_NEXT" ;;&
     stable|beta|esr|esr-next)
       curl -fsSL https://product-details.mozilla.org/1.0/thunderbird_versions.json \
-        | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s)['$key']))" ;;
+        | TB_VERSIONS_KEY="$key" node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s)[process.env.TB_VERSIONS_KEY]))" ;;
     *) die "unsupported TB_CHANNEL: $TB_CHANNEL" ;;
   esac
 }
@@ -123,9 +123,9 @@ setup() {
 
 # One line with the add-on state from extensions.json (load failures: appDisabled, inactive).
 addon_state() {
-  node -e "
+  EXTENSIONS_JSON="$BENCH/profile/extensions.json" TB_ADDON_ID="$ADDON_ID" node -e "
     try {
-      const a = JSON.parse(require('fs').readFileSync('$BENCH/profile/extensions.json', 'utf8')).addons.find(x => x.id === '$ADDON_ID');
+      const a = JSON.parse(require('fs').readFileSync(process.env.EXTENSIONS_JSON, 'utf8')).addons.find(x => x.id === process.env.TB_ADDON_ID);
       console.log(a ? 'add-on ' + a.version + ': active=' + a.active + ', appDisabled=' + a.appDisabled : 'add-on not in extensions.json');
     } catch { console.log('extensions.json not written'); }
   "
@@ -210,7 +210,15 @@ start() {
     > "$BENCH/thunderbird.log" 2>&1 &
   local pid=$!
   local conn="$BENCH/tmp/commonpost-mcp/connection.json"
-  node -e "require('fs').writeFileSync('$STATE', JSON.stringify({pid:$pid,marionettePort:$PORT,connectionFile:'$conn',profileDir:'$profile',version:'$VERSION'}, null, 2))"
+  STATE_FILE="$STATE" STATE_PID="$pid" STATE_PORT="$PORT" STATE_CONN="$conn" STATE_PROFILE="$profile" STATE_VERSION="$VERSION" node -e "
+    require('fs').writeFileSync(process.env.STATE_FILE, JSON.stringify({
+      pid: Number(process.env.STATE_PID),
+      marionettePort: Number(process.env.STATE_PORT),
+      connectionFile: process.env.STATE_CONN,
+      profileDir: process.env.STATE_PROFILE,
+      version: process.env.STATE_VERSION,
+    }, null, 2));
+  "
 
   for _ in $(seq 1 120); do
     kill -0 "$pid" 2>/dev/null || fail_start "Thunderbird exited"
@@ -220,23 +228,30 @@ start() {
   [ -s "$conn" ] || fail_start "MCP server did not start (connection.json not written)"
 
   local expected
-  expected="$(node -e "const c=$counts;let n=0;for(const[k,v]of Object.entries(c))if(!/^(Trash|Junk)$/.test(k))n+=v;process.stdout.write(String(n))")"
+  expected="$(COUNTS_JSON="$counts" node -e "
+    const c = JSON.parse(process.env.COUNTS_JSON);
+    let n = 0;
+    for (const [k, v] of Object.entries(c)) if (!/^(Trash|Junk)$/.test(k)) n += v;
+    process.stdout.write(String(n));
+  ")"
   local ready
-  ready="$(node -e "
-    const { Marionette } = require('$ROOT/test/bench/marionette.cjs');
+  ready="$(ROOT_DIR="$ROOT" TB_PORT="$PORT" TB_EXPECTED="$expected" node -e "
+    const path = require('path');
+    const { Marionette } = require(path.join(process.env.ROOT_DIR, 'test/bench/marionette.cjs'));
     const fs = require('fs');
     (async () => {
-      const m = await new Marionette($PORT).start();
-      const res = await m.exec(fs.readFileSync('$ROOT/test/bench/ready.js', 'utf8'), { expected: $expected, timeoutMs: 90000 });
+      const m = await new Marionette(Number(process.env.TB_PORT)).start();
+      const res = await m.exec(fs.readFileSync(path.join(process.env.ROOT_DIR, 'test/bench/ready.js'), 'utf8'), { expected: Number(process.env.TB_EXPECTED), timeoutMs: 90000 });
       m.close();
       process.stdout.write(JSON.stringify(res));
     })().catch(e => { console.error(e.message); process.exit(1); });
   ")" || fail_start "ready script failed"
-  node -e "
+  STATE_FILE="$STATE" READY_JSON="$ready" EXPECTED_INDEXED="$expected" node -e "
     const fs = require('fs');
-    const s = JSON.parse(fs.readFileSync('$STATE', 'utf8'));
-    s.ready = $ready; s.expectedIndexed = $expected;
-    fs.writeFileSync('$STATE', JSON.stringify(s, null, 2));
+    const s = JSON.parse(fs.readFileSync(process.env.STATE_FILE, 'utf8'));
+    s.ready = JSON.parse(process.env.READY_JSON);
+    s.expectedIndexed = Number(process.env.EXPECTED_INDEXED);
+    fs.writeFileSync(process.env.STATE_FILE, JSON.stringify(s, null, 2));
   "
   local line
   line="$(node -p "const r=$ready; 'TB '+r.appVersion+', default '+JSON.stringify(r.defaultAccount)+', gloda '+r.indexed+'/'+$expected")"
