@@ -10,6 +10,19 @@ project is kept in this repository.
 - `docs/thunderbird-internals.md`: notes on how Thunderbird itself composes drafts and replies, quotes, threads,
   searches and filters mail, with the Thunderbird source of each rule and what was verified on a real Thunderbird.
 
+### Fixed
+- The Experiment now imports `atob`, `btoa`, `DOMParser` and `TextDecoder`
+  (`Cu.importGlobalProperties`). Experiment scripts do not get these web globals, so inside Thunderbird:
+  - `getMessage`/`getMessages` returned HTML bodies as flat text instead of Markdown (no links, bold or lists:
+    `htmlToMarkdown` fell back to `stripHtml`);
+  - `includeInlineImages` never returned an image (`btoa` threw, every image was skipped with
+    "Inline image fetch failed");
+  - the raw-MIME body fallback returned no body (`TextDecoder` threw) and RFC 2231 attachment names stayed
+    percent-encoded;
+  - HTML compose bodies with a full document or a `moz-signature` were not cleaned up.
+  The unit tests did not catch this because their sandboxes provide Node's globals. A new test fails when
+  `api.js` uses one of these globals without importing it, or imports one it does not use.
+
 ## [0.8.3] - 2026-09-27
 
 ### Added
