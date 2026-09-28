@@ -22,7 +22,7 @@ const sandbox = { getConfiguredGetMessagesLimit: () => 20, console: { warn() {} 
 vm.createContext(sandbox);
 vm.runInContext(`${[
   'INLINE ATTACHMENT BASE64 HELPERS', 'OUTBOUND ATTACHMENT LIMITS', 'CONTACT FIELD CONSTANTS', 'FILTER SEARCH TERM HELPERS',
-  'TOOL SCHEMA BUILDER', 'TOOL SCHEMA VALIDATOR', 'TOOL ARGUMENT CHECKS',
+  'MESSAGE SEARCH HELPERS', 'TOOL SCHEMA BUILDER', 'TOOL SCHEMA VALIDATOR', 'TOOL ARGUMENT CHECKS',
 ].map(snippet).join('\n')}
 this.coerceToolArgs = coerceToolArgs;
 this.validateToolArgs = validateToolArgs;`, sandbox);

@@ -120,6 +120,7 @@ function loadGetMessage({ stream, log, findMessageError }) {
   const sandbox = {
     Cr: { NS_BASE_STREAM_CLOSED },
     console: { error: (...args) => log.push(args) },
+    displaySubject: (msgHdr) => msgHdr.mime2DecodedSubject || "",
     findMessage() {
       if (findMessageError) throw findMessageError;
       return {

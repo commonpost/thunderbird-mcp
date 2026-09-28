@@ -1784,8 +1784,386 @@ function createUninstallCleanupListener(addonId, clear) {
   };
 }
 // END UNINSTALL CLEANUP HELPERS
-let _tempFileCounter = 0;
+
+
+// Message search and body paging. Pure: XPCOM glue lives in getAPI().
+// BEGIN MESSAGE SEARCH HELPERS
 const DEFAULT_MAX_RESULTS = 50;
+const DEFAULT_SEARCH_RESULTS = 20;
+const MAX_SEARCH_RESULTS_CAP = 200;
+const SEARCH_COLLECTION_CAP = 10000;
+const SEARCH_PREVIEW_CHARS = 120;
+const SEARCH_FIELD_OPERATORS = { from: "author", subject: "subject", to: "recipients", cc: "ccList", participant: "participant" };
+const SEARCH_ROW_COLUMNS = ["id", "folderPath", "date", "author", "recipients", "ccList", "subject", "read", "flagged", "tags", "preview", "dupLocations"];
+
+/**
+ * Parse a search query into { terms: [{ field, value }], failed }.
+ * field is null (any field), a row field name, or "participant" (from/to/cc/bcc).
+ * One leading operator keeps the legacy meaning: every word goes to that field.
+ */
+function parseSearchQuery(query) {
+  const raw = String(query || "");
+  const q = raw.toLowerCase().trim();
+  // "" matches all; whitespace-only matches nothing
+  if (!q) return { terms: [], failed: raw.length > 0 };
+  const tokens = [];
+  const re = /([a-z]+):"([^"]*)"?|"([^"]*)"?|(\S+)/g;
+  let m;
+  while ((m = re.exec(q))) {
+    if (m[1] !== undefined) {
+      if (SEARCH_FIELD_OPERATORS[m[1]]) tokens.push({ op: m[1], value: m[2].trim(), quoted: true });
+      else tokens.push({ op: null, value: `${m[1]}:${m[2]}`.trim() });
+    } else if (m[3] !== undefined) {
+      tokens.push({ op: null, value: m[3].trim() });
+    } else {
+      const opm = m[4].match(/^([a-z]+):(.*)$/);
+      if (opm && SEARCH_FIELD_OPERATORS[opm[1]]) tokens.push({ op: opm[1], value: opm[2] });
+      else tokens.push({ op: null, value: m[4] });
+    }
+  }
+
+  // "participant:@a.com, @b.com": the list goes on after a trailing comma
+  for (let i = 0; i < tokens.length - 1; i++) {
+    const t = tokens[i];
+    while (t.op === "participant" && t.value.endsWith(",") && tokens[i + 1] && !tokens[i + 1].op) {
+      t.value += tokens.splice(i + 1, 1)[0].value;
+    }
+  }
+
+  const opCount = tokens.filter(t => t.op).length;
+  if (opCount === 1 && tokens[0].op) {
+    const field = SEARCH_FIELD_OPERATORS[tokens[0].op];
+    const values = tokens.map(t => t.value).filter(Boolean);
+    return { terms: values.map(value => ({ field, value })), failed: values.length === 0 };
+  }
+
+  const terms = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.op && !t.value && !t.quoted) {
+      // "from: alice" - the value is the next plain token
+      const next = tokens[i + 1];
+      if (next && !next.op && next.value) {
+        terms.push({ field: SEARCH_FIELD_OPERATORS[t.op], value: next.value });
+        i++;
+      }
+      continue;
+    }
+    if (!t.value) continue;
+    terms.push({ field: t.op ? SEARCH_FIELD_OPERATORS[t.op] : null, value: t.value });
+  }
+  return { terms, failed: terms.length === 0 };
+}
+
+/**
+ * participant: comma-separated values, any may match. "@domain" is the domain suffix of an address, as Gloda's
+ * identity query valueLike(WILDCARD, "@domain") (LIKE '%@domain'); other values match as substrings.
+ */
+function matchParticipant(value, fields) {
+  let emails = null;
+  return value.split(",").map(v => v.trim()).filter(Boolean).some(v => {
+    if (v.startsWith("@")) {
+      emails ||= headerEmails(fields.author, fields.recipients, fields.ccList, fields.bccList);
+      return emails.some(e => e.endsWith(v));
+    }
+    return fields.author.includes(v) || fields.recipients.includes(v) || fields.ccList.includes(v) || fields.bccList.includes(v);
+  });
+}
+
+// fields: lowercased { subject, author, recipients, ccList, bccList, preview }.
+function matchSearchTerms(terms, fields) {
+  return terms.every(({ field, value }) => {
+    if (field === "participant") return matchParticipant(value, fields);
+    if (field) return (fields[field] || "").includes(value);
+    return fields.subject.includes(value) || fields.author.includes(value) || fields.recipients.includes(value)
+      || fields.ccList.includes(value) || fields.preview.includes(value);
+  });
+}
+
+// Terms as GlodaMsgSearcher.parseSearchString splits them (words, "quoted phrases"); buildFulltextQuery leaves out
+// terms under 3 characters, except NEAR and one or two CJK characters (code >= 0x2000).
+function glodaSearchTerms(query) {
+  const kept = [];
+  const dropped = [];
+  const keeps = t => /^NEAR(\/\d+)?$/.test(t) || t.length >= 3
+    || (t.length === 1 && t.charCodeAt(0) >= 0x2000)
+    || (t.length === 2 && t.charCodeAt(0) >= 0x2000 && t.charCodeAt(1) >= 0x2000);
+  const add = t => { if (t) (keeps(t) ? kept : dropped).push(t); };
+  let s = String(query || "").trim();
+  while (s) {
+    if (s.startsWith('"')) {
+      const end = s.indexOf('"', 1);
+      if (end === -1) { s = s.substring(1); continue; }
+      add(s.substring(1, end).trim());
+      s = s.substring(end + 1);
+      continue;
+    }
+    const space = s.indexOf(" ");
+    if (space === -1) { add(s); break; }
+    add(s.substring(0, space));
+    s = s.substring(space + 1);
+  }
+  return { kept, dropped };
+}
+
+// Drop internal/empty fields and the folder display name; flagged only when true.
+function compactSearchRow(row, previewChars = SEARCH_PREVIEW_CHARS) {
+  const out = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (key.startsWith("_") || key === "folder" || key === "threadId") continue;
+    if (value === "" || value === null || value === undefined || (Array.isArray(value) && value.length === 0)) continue;
+    if (key === "flagged" && value === false) continue;
+    out[key] = value;
+  }
+  if (typeof out.preview === "string" && out.preview.length > previewChars) {
+    out.preview = `${out.preview.slice(0, previewChars).trimEnd()}...`;
+  }
+  return out;
+}
+
+function rowsToTable(rows) {
+  const keys = new Set();
+  for (const row of rows) for (const key of Object.keys(row)) keys.add(key);
+  const columns = [
+    ...SEARCH_ROW_COLUMNS.filter(c => keys.has(c)),
+    ...[...keys].filter(k => !SEARCH_ROW_COLUMNS.includes(k)).sort(),
+  ];
+  return { columns, rows: rows.map(row => columns.map(c => (row[c] === undefined ? null : row[c]))) };
+}
+
+// format "table" for tools that return a plain array of objects.
+function listResultAsTable(result, format) {
+  if (format !== "table" || !Array.isArray(result)) return result;
+  return rowsToTable(result.map(r => compactSearchRow(r)));
+}
+
+function senderGroupKey(author) {
+  const s = String(author || "");
+  return (s.match(/<([^>]+)>/)?.[1] || s).trim().toLowerCase();
+}
+
+// Reply / forward / auto-reply prefixes, incl. Russian and German clients.
+const THREAD_SUBJECT_PREFIX_RE = /^(?:re|fwd?|aw|wg|sv|tr|отв|ответ|пересл|автоматический ответ|automatic reply|autoreply|out of office)\s*(?:\[\d+\]|\(\d+\))?\s*:\s*/iu;
+const MIN_THREAD_SUBJECT_CHARS = 6;
+
+// Subject key for linking mail sent without threading headers; "" when too generic.
+function threadSubjectKey(subject) {
+  let s = String(subject || "").replace(/\s+/g, " ").trim();
+  for (let prev = ""; prev !== s;) {
+    prev = s;
+    s = s.replace(THREAD_SUBJECT_PREFIX_RE, "");
+  }
+  s = s.toLowerCase();
+  return s.length >= MIN_THREAD_SUBJECT_CHARS ? s : "";
+}
+
+function headerEmails(...headers) {
+  return headers.flatMap(h => String(h || "").toLowerCase().match(/[^\s<>",;:()]+@[^\s<>",;:()]+/g) || []);
+}
+
+// Participants other than the user.
+function counterpartEmails(fields, ownEmails) {
+  return [...new Set(headerEmails(fields.author, fields.recipients, fields.ccList, fields.bccList))].filter(e => !ownEmails.has(e));
+}
+
+// People of a message for subject linking: key = whom a reply answers (its author; for own mail the To, else Cc
+// addresses), all = its counterparts.
+function threadPeople(fields, ownEmails) {
+  const others = (...headers) => headerEmails(...headers).filter(e => !ownEmails.has(e));
+  let key = others(fields.author);
+  if (!key.length) key = others(fields.recipients);
+  if (!key.length) key = others(fields.ccList);
+  return { key, all: new Set(counterpartEmails(fields, ownEmails)) };
+}
+
+/**
+ * Conversations across folders (T1, T2), independent of the order messages are read in.
+ * items: [{ id, refs, dateTs, subjectKey, hasRe }]; peopleOf(i) -> threadPeople, read only for subject links.
+ * - References: a message joins every id it references (nsMsgDatabase::ThreadNewHdr reference threading, with
+ *   mail.correct_threading also through a shared missing parent).
+ * - Subject: ThreadNewHdr with mail.strict_threading off threads by subject only a message with Re: (HasRe) that
+ *   found no reference. Such a message joins the nearest earlier one with the same subject key that has one of its
+ *   key people among its participants; the check stands in for the per-folder thread table, so the same outreach
+ *   mail to two companies with a shared Cc stays two conversations.
+ */
+function conversationGraph(items, peopleOf) {
+  const parent = new Map();
+  const find = k => {
+    while (parent.has(k)) {
+      const up = parent.get(k);
+      if (parent.has(up)) parent.set(k, parent.get(up));
+      k = up;
+    }
+    return k;
+  };
+  const union = (a, b) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(rb, ra);
+  };
+  const ids = items.map((it, i) => it.id || `\0${i}`);
+  items.forEach((it, i) => { for (const ref of it.refs || []) union(ids[i], ref); });
+  const refRoot = ids.map(find);
+  const idsPerRoot = new Map();
+  ids.forEach((id, i) => {
+    const set = idsPerRoot.get(refRoot[i]) || new Set();
+    set.add(id);
+    idsPerRoot.set(refRoot[i], set);
+  });
+  const byKey = new Map();
+  items.forEach((it, i) => {
+    if (it.subjectKey) byKey.set(it.subjectKey, [...(byKey.get(it.subjectKey) || []), i]);
+  });
+  const people = new Map();
+  const peopleAt = i => {
+    if (!people.has(i)) people.set(i, peopleOf(i));
+    return people.get(i);
+  };
+  const earlier = (a, b) => items[a].dateTs < items[b].dateTs || (items[a].dateTs === items[b].dateTs && ids[a] < ids[b]);
+  const linkKey = key => {
+    const list = (byKey.get(key) || []).slice().sort((a, b) => (earlier(a, b) ? -1 : earlier(b, a) ? 1 : 0));
+    list.forEach((i, pos) => {
+      if (!items[i].hasRe || idsPerRoot.get(refRoot[i]).size > 1) return;
+      const wanted = peopleAt(i).key;
+      if (!wanted.length) return;
+      for (let k = pos - 1; k >= 0; k--) {
+        const j = list[k];
+        if (ids[j] === ids[i]) continue;
+        const all = peopleAt(j).all;
+        if (wanted.some(e => all.has(e))) {
+          union(ids[j], ids[i]);
+          break;
+        }
+      }
+    });
+  };
+  return { ids, find, refRoot, byKey, linkKey };
+}
+
+// groupBy "thread": conversation key of each item.
+function threadKeysOf(items, peopleOf) {
+  const graph = conversationGraph(items, peopleOf);
+  for (const key of graph.byKey.keys()) graph.linkKey(key);
+  return graph.ids.map(graph.find);
+}
+
+/**
+ * threadOf: indexes of the seed's conversation -> "references" | "subject" (how it joined). Subject keys are
+ * linked as the conversation reaches them, so only the people of those messages are read.
+ */
+function conversationMembers(items, seedIndex, peopleOf) {
+  const graph = conversationGraph(items, peopleOf);
+  const linked = new Set();
+  for (let grew = true; grew;) {
+    grew = false;
+    const root = graph.find(graph.ids[seedIndex]);
+    for (let i = 0; i < items.length; i++) {
+      const key = items[i].subjectKey;
+      if (!key || linked.has(key) || graph.find(graph.ids[i]) !== root) continue;
+      linked.add(key);
+      graph.linkKey(key);
+      grew = true;
+    }
+  }
+  const root = graph.find(graph.ids[seedIndex]);
+  const members = new Map();
+  graph.ids.forEach((id, i) => {
+    if (graph.find(id) === root) members.set(i, graph.refRoot[i] === graph.refRoot[seedIndex] ? "references" : "subject");
+  });
+  return members;
+}
+
+/**
+ * Collapse rows (with _dateTs, and _threadKey for "thread") into one row per
+ * sender or conversation, newest group first unless sortOrder is "asc".
+ * latestId skips drafts (_draft) unless the group has nothing else.
+ */
+function groupSearchRows(rows, groupBy, sortOrder) {
+  const groups = new Map();
+  for (const row of rows) {
+    const key = groupBy === "sender" ? senderGroupKey(row.author) : (row._threadKey || row.id);
+    let g = groups.get(key);
+    if (!g) {
+      g = { count: 0, unread: 0, drafts: 0, first: row, last: row };
+      groups.set(key, g);
+    }
+    g.count++;
+    if (!row.read) g.unread++;
+    if (row._draft) g.drafts++;
+    if (row._dateTs < g.first._dateTs) g.first = row;
+    const newer = !!g.last._draft === !!row._draft ? row._dateTs >= g.last._dateTs : !row._draft;
+    if (newer) g.last = row;
+  }
+  const out = [...groups.values()].map(g => {
+    const head = groupBy === "sender"
+      ? { sender: g.last.author, latestSubject: g.last.subject }
+      : { subject: g.first.subject, lastAuthor: g.last.author };
+    return {
+      ...head,
+      count: g.count,
+      unread: g.unread,
+      firstDate: g.first.date,
+      lastDate: g.last.date,
+      latestId: g.last.id,
+      latestFolderPath: g.last.folderPath,
+      ...(g.drafts ? { drafts: g.drafts } : {}),
+      _dateTs: g.last._dateTs,
+    };
+  });
+  out.sort((a, b) => (sortOrder === "asc" ? a._dateTs - b._dateTs : b._dateTs - a._dateTs));
+  return out;
+}
+
+// One page of sorted rows (or groups) in the fixed search envelope.
+function buildSearchPage(rows, { offset, limit, format, incomplete, key = "messages" }) {
+  const start = offset > 0 ? Math.floor(offset) : 0;
+  const page = rows.slice(start, start + limit).map(r => compactSearchRow(r));
+  const out = {
+    [key]: format === "table" ? rowsToTable(page) : page,
+    [key === "groups" ? "totalGroups" : "totalMatches"]: rows.length,
+    offset: start,
+    limit,
+    hasMore: start + limit < rows.length,
+  };
+  if (incomplete) out.incomplete = true;
+  return out;
+}
+
+const DEFAULT_GET_MESSAGE_BODY_CHARS = 20000;
+const DEFAULT_GET_MESSAGES_BODY_CHARS = 4000;
+const MAX_BODY_CHARS = 200000;
+
+// Page body (or rawSource) of a getMessage result; error results pass through.
+function pageMessageBody(result, bodyOffset, maxBodyChars, defaultChars) {
+  if (!result || typeof result !== "object" || result.error) return result;
+  const requested = Number(maxBodyChars);
+  const maxChars = Math.min(requested > 0 ? Math.floor(requested) : defaultChars, MAX_BODY_CHARS);
+  return pageTextField(result, typeof result.rawSource === "string" ? "rawSource" : "body", bodyOffset, maxChars);
+}
+
+// Page a long text field in place; adds bodyTotalChars / bodyTruncated / nextBodyOffset.
+function pageTextField(result, field, offset, maxChars) {
+  if (!result || typeof result !== "object" || typeof result[field] !== "string") return result;
+  const text = result[field];
+  const total = text.length;
+  const start = Math.min(Math.max(0, Math.floor(Number(offset) || 0)), total);
+  let end = Math.min(total, start + maxChars);
+  if (end < total && end > start) {
+    const code = text.charCodeAt(end - 1);
+    if (code >= 0xd800 && code <= 0xdbff) end--;
+  }
+  if (start === 0 && end === total) return result;
+  result[field] = text.slice(start, end);
+  result.bodyTotalChars = total;
+  if (start > 0) result.bodyOffset = start;
+  if (end < total) {
+    result.bodyTruncated = true;
+    result.nextBodyOffset = end;
+  }
+  return result;
+}
+// END MESSAGE SEARCH HELPERS
+let _tempFileCounter = 0;
 const PREF_ALLOWED_ACCOUNTS = "extensions.commonpost-mcp.allowedAccounts";
 const PREF_DISABLED_TOOLS = "extensions.commonpost-mcp.disabledTools";
 const PREF_BLOCK_SKIPREVIEW = "extensions.commonpost-mcp.blockSkipReview";
@@ -1800,8 +2178,6 @@ const VALID_CRUD = ["create", "read", "update", "delete"];
 const CRUD_ORDER = { read: 0, create: 1, update: 2, delete: 3 };
 // Tools that cannot be disabled via the settings page (infrastructure tools)
 const UNDISABLEABLE_TOOLS = new Set(["listAccounts", "listFolders", "getAccountAccess"]);
-const MAX_SEARCH_RESULTS_CAP = 200;
-const SEARCH_COLLECTION_CAP = 10000;
 const DEFAULT_GET_MESSAGES_LIMIT = 10;
 // 20 is a reasonable upper bound for now; adjust later if usage supports it.
 const MAX_GET_MESSAGES_LIMIT = 20;
@@ -3916,24 +4292,37 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "searchMessages",
         group: "messages", crud: "read",
         title: "Search Mail",
-        description: "Search message headers and return IDs/folder paths you can use with getMessage to read full email content",
+        description: "Search message headers across accounts (Trash/Junk skipped). Returns { messages, totalMatches, offset, limit, hasMore }; each row has id + folderPath for getMessage/getMessages. For a company use query 'participant:@domain' with groupBy.",
         inputSchema: {
           type: "object",
           properties: {
-            query: { type: "string", description: "Text to search. Multi-word queries are AND-of-tokens: every word must appear somewhere across subject/author/recipients/ccList/preview (or inside the selected field when an operator is used). Prefix with 'from:', 'subject:', 'to:', or 'cc:' to restrict matching to one field (e.g. 'from:Alice Smith' requires both tokens in the author field). Use empty string to match all." },
-            folderPath: { type: "string", description: "Optional folder URI (from listFolders) to limit search to that folder and its subfolders" },
-            startDate: { type: "string", description: "Filter messages on or after this ISO 8601 date" },
-            endDate: { type: "string", description: "Filter messages on or before this ISO 8601 date. Date-only strings (e.g. '2024-01-15') include the full day." },
-            maxResults: { type: "number", description: "Maximum number of results to return (default 50, max 200)" },
-            offset: { type: "number", description: "Number of results to skip for pagination (default 0). When provided, returns {messages, totalMatches, offset, limit, hasMore} instead of a plain array. Note: totalMatches is capped at 10000." },
-            sortOrder: { type: "string", description: "Date sort order: asc (oldest first) or desc (newest first, default)" },
-            unreadOnly: { type: "boolean", description: "Only return unread messages (default: false)" },
-            flaggedOnly: { type: "boolean", description: "Only return flagged/starred messages (default: false)" },
-            tag: { type: "string", description: "Filter by tag keyword (e.g. '$label1' for Important, or a custom tag). Only messages with this tag are returned." },
-            includeSubfolders: { type: "boolean", description: "If false, only search the specified folder — not its subfolders. Default: true." },
-            countOnly: { type: "boolean", description: "If true, return only the match count instead of full results. Much faster for 'how many unread?' queries." },
-            searchBody: { type: "boolean", description: "If true, search full message bodies using Thunderbird's Gloda index (slower but finds text beyond the ~200 char preview). Requires query. IMAP accounts need offline sync enabled for body indexing." },
-            dedupByMessageId: { type: "boolean", description: "If false, return every folder/label location for messages found in multiple folders. Default: true, which collapses the same RFC Message-ID into one row and lists the other folder paths in dupLocations." },
+            query: { type: "string", description: "Words that must all match (subject, from, to, cc, preview). Operators: from:, to:, cc:, subject:, participant: (from/to/cc/bcc; '@domain' = addresses in that domain, commas = any of them: 'participant:@a.com,@b.com'); quote phrases, e.g. 'participant:@acme.com subject:\"invoice 42\"'. A single leading operator applies to all words ('from:Alice Smith'). Empty string matches all." },
+            folderPath: { type: "string", description: "Folder URI (from listFolders) to search, with subfolders" },
+            startDate: { type: "string", description: "ISO 8601 date: on or after" },
+            endDate: { type: "string", description: "ISO 8601 date: on or before; date-only includes the whole day" },
+            maxResults: { type: "integer", minimum: 1, maximum: MAX_SEARCH_RESULTS_CAP, default: DEFAULT_SEARCH_RESULTS, description: "Rows (or groups) per page" },
+            offset: { type: "integer", minimum: 0, default: 0, description: "Rows to skip; use with hasMore" },
+            sortOrder: { type: "string", enum: ["desc", "asc"], description: "By date; default desc, asc with threadOf" },
+            unreadOnly: { type: "boolean", description: "Only unread" },
+            flaggedOnly: { type: "boolean", description: "Only flagged/starred" },
+            tag: { type: "string", description: "Tag label or key (e.g. 'Important' or '$label1')" },
+            includeSubfolders: { type: "boolean", default: true, description: "Search subfolders of folderPath" },
+            includeTrash: { type: "boolean", default: false, description: "Also search Trash and Junk" },
+            countOnly: { type: "boolean", description: "Return only { count }" },
+            groupBy: { type: "string", enum: ["sender", "thread"], description: "Collapse matches into one row per sender or conversation: count, unread, first/last date, latestId + latestFolderPath of the newest non-draft message, drafts count" },
+            threadOf: {
+              type: "object",
+              description: "Return the whole conversation of this message across folders (incl. Sent), oldest first. A Re: message without threading headers joins by subject the earlier message its sender took part in (linkedBy: subject)",
+              properties: {
+                messageId: { type: "string" },
+                folderPath: { type: "string" },
+              },
+              required: ["messageId", "folderPath"],
+              additionalProperties: false,
+            },
+            format: { type: "string", enum: ["objects", "table"], description: "'table' returns messages as { columns, rows } (fewer tokens for long lists)" },
+            searchBody: { type: "boolean", description: "Full-text search of subject, body and attachment names via the Gloda index (slower). Query: words or \"quoted phrases\", all must match, no operators; terms under 3 characters are ignored; English words match other forms (stemming), other languages such as Russian only the exact word form. IMAP needs offline sync." },
+            dedupByMessageId: { type: "boolean", default: true, description: "Collapse copies of one message in several folders into one row with dupLocations" },
           },
           required: ["query"],
         },
@@ -3951,7 +4340,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             saveAttachments: { type: "boolean", description: "If true, save attachments to <OS temp dir>/commonpost-mcp/<messageId>/ and include filePath in response (default: false)" },
             includeInlineImages: { type: "boolean", description: "If true, append supported inline email images as MCP image content blocks after the text result (default: false; max 1 MiB base64 per image and 4 MiB total). Images referenced by the rendered body are attempted first in document order, followed by remaining inline images in MIME order. Ignored when rawSource is true." },
             bodyFormat: { type: "string", enum: ["markdown", "text", "html"], description: "Body output format: 'markdown' (default, preserves structure), 'text' (plain text), 'html' (raw HTML)" },
-            rawSource: { type: "boolean", description: "If true, return the full raw RFC 2822 message source (all headers + MIME parts). Useful for extracting calendar invites, S/MIME data, or debugging. Other fields (body, attachments) are omitted when this is set. Note: requires local/offline message copy; IMAP messages not cached offline may fail." },
+            rawSource: { type: "boolean", description: "If true, return the full raw RFC 2822 message source (all headers + MIME parts). Useful for extracting calendar invites, S/MIME data, or debugging. Decoded as UTF-8 when valid, else by the charset its Content-Type declares, else a detected one; rawCharset names it. Other fields (body, attachments) are omitted when this is set. Note: requires local/offline message copy; IMAP messages not cached offline may fail." },
+            maxBodyChars: { type: "integer", minimum: 1, maximum: MAX_BODY_CHARS, default: DEFAULT_GET_MESSAGE_BODY_CHARS, description: "Max characters of body (or rawSource) returned; longer bodies set bodyTruncated and nextBodyOffset" },
+            bodyOffset: { type: "integer", minimum: 0, default: 0, description: "Continue a truncated body from nextBodyOffset" },
           },
           required: ["messageId", "folderPath"],
         },
@@ -3981,7 +4372,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             },
             saveAttachments: { type: "boolean", description: "If true, save attachments for each message and include filePath in attachment metadata (default: false)" },
             bodyFormat: { type: "string", enum: ["markdown", "text", "html"], description: "Body output format shared by all messages: 'markdown' (default), 'text', or 'html'" },
-            rawSource: { type: "boolean", description: "If true, return raw RFC 2822 source for each message instead of parsed body fields" },
+            rawSource: { type: "boolean", description: "If true, return raw RFC 2822 source (decoded text, rawCharset) for each message instead of parsed body fields" },
+            maxBodyChars: { type: "integer", minimum: 1, maximum: MAX_BODY_CHARS, default: DEFAULT_GET_MESSAGES_BODY_CHARS, description: "Max body characters per message; read the rest with getMessage bodyOffset" },
           },
           required: ["messages"],
         },
@@ -4118,6 +4510,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             startDate: { type: "string", description: "Start of date range in ISO 8601 format (default: now)" },
             endDate: { type: "string", description: "End of date range in ISO 8601 format (default: 30 days from startDate)" },
             maxResults: { type: "integer", minimum: 1, maximum: 500, default: 100, description: "Max events" },
+            format: { type: "string", enum: ["objects", "table"], description: "'table' returns { columns, rows }" },
           },
           required: [],
         },
@@ -4197,6 +4590,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             completed: { type: "boolean", description: "Filter by completion status. true = completed only, false = outstanding only. Omit for all tasks." },
             dueBefore: { type: "string", description: "Return tasks due before this ISO 8601 date" },
             maxResults: { type: "integer", minimum: 1, maximum: 500, default: 100, description: "Max tasks" },
+            format: { type: "string", enum: ["objects", "table"], description: "'table' returns { columns, rows }" },
           },
           required: [],
         },
@@ -4225,12 +4619,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "searchContacts",
         group: "contacts", crud: "read",
         title: "Search Contacts",
-        description: "Search contacts across all address books by email address or name",
+        description: "Search contacts in all address books by email, name or organization. Empty fields are omitted.",
         inputSchema: {
           type: "object",
           properties: {
-            query: { type: "string", description: "Email address or name to search for" },
-            maxResults: { type: "number", description: "Maximum number of results to return (default 50, max 200). If truncated, response includes hasMore: true." },
+            query: { type: "string", description: "Words that must all match email, name or organization (e.g. 'acme' or '@acme.com')" },
+            maxResults: { type: "integer", minimum: 1, maximum: MAX_SEARCH_RESULTS_CAP, default: DEFAULT_MAX_RESULTS, description: "Max contacts; if cut, the response has hasMore: true" },
+            format: { type: "string", enum: ["objects", "table"], description: "'table' returns { contacts: { columns, rows } }" },
           },
           required: ["query"],
         },
@@ -4386,17 +4781,19 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "getRecentMessages",
         group: "messages", crud: "read",
         title: "Get Recent Messages",
-        description: "Get recent messages sorted newest-first from a specific folder or all Inboxes, with date and unread filtering",
+        description: "Recent messages newest-first from all folders of all accounts (Trash/Junk skipped) or from one folder. Same envelope and row format as searchMessages.",
         inputSchema: {
           type: "object",
           properties: {
-            folderPath: { type: "string", description: "Folder URI (from listFolders) to list messages from. If omitted, returns messages from all Inboxes." },
-            daysBack: { type: "number", description: "Only return messages from the last N days (default: 7). Use a larger value like 365 for older messages." },
-            maxResults: { type: "number", description: "Maximum number of results (default: 50, max: 200)" },
-            offset: { type: "number", description: "Number of results to skip for pagination (default 0). When provided, returns {messages, totalMatches, offset, limit, hasMore} instead of a plain array. Note: totalMatches is capped at 10000." },
-            unreadOnly: { type: "boolean", description: "Only return unread messages (default: false)" },
-            flaggedOnly: { type: "boolean", description: "Only return flagged/starred messages (default: false)" },
-            includeSubfolders: { type: "boolean", description: "If false, only return messages from the specified folder — not its subfolders. Default: true." },
+            folderPath: { type: "string", description: "Folder URI (from listFolders); omit for all folders" },
+            daysBack: { type: "integer", minimum: 1, default: 7, description: "Only messages from the last N days" },
+            maxResults: { type: "integer", minimum: 1, maximum: MAX_SEARCH_RESULTS_CAP, default: DEFAULT_SEARCH_RESULTS, description: "Rows per page" },
+            offset: { type: "integer", minimum: 0, default: 0, description: "Rows to skip; use with hasMore" },
+            unreadOnly: { type: "boolean", description: "Only unread" },
+            flaggedOnly: { type: "boolean", description: "Only flagged/starred" },
+            includeSubfolders: { type: "boolean", default: true, description: "Include subfolders of folderPath" },
+            includeTrash: { type: "boolean", default: false, description: "Also include Trash and Junk" },
+            format: { type: "string", enum: ["objects", "table"], description: "'table' returns messages as { columns, rows }" },
           },
           required: [],
         },
@@ -4848,34 +5245,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             function readRequestBody(request) {
               const stream = request.bodyInputStream;
               return NetUtil.readInputStreamToString(stream, stream.available(), { charset: "UTF-8" });
-            }
-
-            /**
-             * Apply offset-based pagination to a sorted results array.
-             * Removes the internal _dateTs property from each result.
-             *
-             * Backward-compatible: when offset is undefined/null (not provided),
-             * returns a plain array. When offset is explicitly provided (even 0),
-             * returns structured { messages, totalMatches, offset, limit, hasMore }.
-             * Note: totalMatches is capped at SEARCH_COLLECTION_CAP and may underreport.
-             */
-            function paginate(results, offset, effectiveLimit) {
-              const offsetProvided = offset !== undefined && offset !== null;
-              const effectiveOffset = (offset > 0) ? Math.floor(offset) : 0;
-              const page = results.slice(effectiveOffset, effectiveOffset + effectiveLimit).map(r => {
-                delete r._dateTs;
-                return r;
-              });
-              if (!offsetProvided) {
-                return page;
-              }
-              return {
-                messages: page,
-                totalMatches: results.length,
-                offset: effectiveOffset,
-                limit: effectiveLimit,
-                hasMore: effectiveOffset + effectiveLimit < results.length
-              };
             }
 
             function normalizeMessageIdForDedup(value) {
@@ -6941,36 +7310,151 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	              return { msgHdr, folder, db };
 	            }
 
+            function isTrashOrJunkFolder(folder, checkAncestors) {
+              try {
+                return folder.isSpecialFolder(Ci.nsMsgFolderFlags.Trash | Ci.nsMsgFolderFlags.Junk, !!checkAncestors);
+              } catch {
+                return false;
+              }
+            }
+
+            function messageReferences(msgHdr) {
+              const refs = [];
+              try {
+                for (let i = 0; i < msgHdr.numReferences; i++) {
+                  const ref = normalizeMessageIdForDedup(msgHdr.getStringReference(i));
+                  if (ref) refs.push(ref);
+                }
+              } catch { /* no references */ }
+              return refs;
+            }
+
+            const DRAFT_FOLDER_FLAGS = Ci.nsMsgFolderFlags.Drafts | Ci.nsMsgFolderFlags.Templates | Ci.nsMsgFolderFlags.Queue;
+            const draftFolderCache = new Map();
+            function isDraftFolder(folder) {
+              let v = draftFolderCache.get(folder.URI);
+              if (v === undefined) {
+                try { v = folder.isSpecialFolder(DRAFT_FOLDER_FLAGS, true); } catch { v = false; }
+                draftFolderCache.set(folder.URI, v);
+              }
+              return v;
+            }
+
+            // The database keeps replies' subjects without "Re:" and flags them (the UI adds it back)
+            function displaySubject(msgHdr) {
+              const s = msgHdr.mime2DecodedSubject || msgHdr.subject || "";
+              return msgHdr.flags & Ci.nsMsgMessageFlags.HasRe ? `Re: ${s}` : s;
+            }
+
+            function buildSearchRow(msgHdr, folder) {
+              const row = {
+                id: msgHdr.messageId,
+                subject: displaySubject(msgHdr),
+                author: msgHdr.mime2DecodedAuthor || msgHdr.author,
+                recipients: msgHdr.mime2DecodedRecipients || msgHdr.recipients,
+                ccList: decodeHeaderValue(msgHdr.ccList),
+                date: msgHdr.date ? new Date(msgHdr.date / 1000).toISOString() : null,
+                folderPath: folder.URI,
+                read: msgHdr.isRead,
+                flagged: msgHdr.isFlagged,
+                tags: getUserTags(msgHdr),
+                _dateTs: msgHdr.date || 0,
+              };
+              if (isDraftFolder(folder)) row._draft = true;
+              const preview = msgHdr.getStringProperty("preview") || "";
+              if (preview) row.preview = preview;
+              return row;
+            }
+
+            function addThreadGroupingFields(row, msgHdr, refs, ownEmails) {
+              row._msgId = normalizeMessageIdForDedup(msgHdr.messageId);
+              row._refs = refs || messageReferences(msgHdr);
+              row._subjectKey = threadSubjectKey(row.subject);
+              row._hasRe = !!(msgHdr.flags & Ci.nsMsgMessageFlags.HasRe);
+              row._people = threadPeople(row, ownEmails);
+            }
+
+            function assignThreadKeys(rows) {
+              const items = rows.map(r => ({ id: r._msgId, refs: r._refs, dateTs: r._dateTs, subjectKey: r._subjectKey, hasRe: r._hasRe }));
+              threadKeysOf(items, i => rows[i]._people).forEach((key, i) => { rows[i]._threadKey = key; });
+            }
+
+            /**
+             * Shared option parsing for searchMessages / getRecentMessages.
+             * Returns { error } or normalized options with a cheap header predicate.
+             */
+            function prepareSearch(args) {
+              const parsedStart = args.startDate ? new Date(args.startDate).getTime() : null;
+              const parsedEnd = args.endDate ? new Date(args.endDate).getTime() : null;
+              if (parsedStart !== null && isNaN(parsedStart)) return { error: `Invalid startDate: ${args.startDate}` };
+              if (parsedEnd !== null && isNaN(parsedEnd)) return { error: `Invalid endDate: ${args.endDate}` };
+              // Date-only endDate ("2024-01-15") includes the whole day
+              const endIsDateOnly = typeof args.endDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.endDate.trim());
+              const startDateTs = parsedStart !== null ? parsedStart * 1000 : null;
+              const endDateTs = parsedEnd !== null ? (parsedEnd + (endIsDateOnly ? 86400000 : 0)) * 1000 : null;
+
+              const requestedLimit = Number(args.maxResults);
+              const limit = Math.min(
+                Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.floor(requestedLimit) : DEFAULT_SEARCH_RESULTS,
+                MAX_SEARCH_RESULTS_CAP
+              );
+
+              let tagKey = null;
+              if (args.tag) {
+                try { tagKey = resolveTagKey(args.tag); } catch { tagKey = args.tag; }
+              }
+
+              const { unreadOnly, flaggedOnly } = args;
+              function passesHeaderFilters(msgHdr) {
+                const ts = msgHdr.date || 0;
+                if (startDateTs !== null && ts < startDateTs) return false;
+                if (endDateTs !== null && ts > endDateTs) return false;
+                if (unreadOnly && msgHdr.isRead) return false;
+                if (flaggedOnly && !msgHdr.isFlagged) return false;
+                if (tagKey && !(msgHdr.getStringProperty("keywords") || "").split(/\s+/).includes(tagKey)) return false;
+                return true;
+              }
+
+              return {
+                limit,
+                sortOrder: args.sortOrder === "asc" || (args.sortOrder !== "desc" && args.threadOf) ? "asc" : "desc",
+                passesHeaderFilters,
+              };
+            }
+
+            // Dedup, count, sort, group and page collected rows into the search envelope.
+            function finishSearch(rows, args, prepared, incomplete) {
+              const finalRows = args.dedupByMessageId !== false ? dedupeSearchMessageResults(rows) : rows;
+              if (args.countOnly) {
+                return incomplete ? { count: finalRows.length, incomplete: true } : { count: finalRows.length };
+              }
+              const dir = prepared.sortOrder === "asc" ? 1 : -1;
+              finalRows.sort((a, b) => dir * (a._dateTs - b._dateTs));
+              const pageOpts = { offset: args.offset, limit: prepared.limit, format: args.format, incomplete };
+              if (args.groupBy === "sender" || args.groupBy === "thread") {
+                if (args.groupBy === "thread") assignThreadKeys(finalRows);
+                const page = buildSearchPage(groupSearchRows(finalRows, args.groupBy, prepared.sortOrder), { ...pageOpts, key: "groups" });
+                page.totalMatches = finalRows.length;
+                return page;
+              }
+              return buildSearchPage(finalRows, pageOpts);
+            }
+
             /**
              * Full-text body search using Thunderbird's Gloda index via
              * GlodaMsgSearcher. Searches subject, body, and attachment
-             * names. Returns a Promise resolving to the same format as
-             * searchMessages. IMAP accounts need offline sync for body
-             * indexing; without it only headers are searched.
+             * names. IMAP accounts need offline sync for body indexing;
+             * without it only headers are searched.
              */
-            function glodaBodySearch(query, folderPath, startDate, endDate, maxResults, offset, sortOrder, unreadOnly, flaggedOnly, tag, countOnly, dedupByMessageId) {
-              const requestedLimit = Number(maxResults);
-              const effectiveLimit = Math.min(
-                Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.floor(requestedLimit) : DEFAULT_MAX_RESULTS,
-                MAX_SEARCH_RESULTS_CAP
-              );
-              const normalizedSortOrder = sortOrder === "asc" ? "asc" : "desc";
-              const parsedStartDate = startDate ? new Date(startDate).getTime() : null;
-              const parsedEndDate = endDate ? new Date(endDate).getTime() : null;
-              if (parsedStartDate !== null && isNaN(parsedStartDate)) return { error: `Invalid startDate: ${startDate}` };
-              if (parsedEndDate !== null && isNaN(parsedEndDate)) return { error: `Invalid endDate: ${endDate}` };
-              // Match the regular search path: expand date-only endDate to end of day
-              const isDateOnly = endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate.trim());
-              const endDateOffset = isDateOnly ? 86400000 : 0;
-              const endDateTs = parsedEndDate !== null ? (parsedEndDate + endDateOffset) * 1000 : null;
-              const startDateTs = parsedStartDate !== null ? parsedStartDate * 1000 : null;
-
-              // Resolve folder filter upfront -- match by URI prefix for subfolder inclusion
+            function glodaBodySearch(args, prepared) {
               let folderFilterURI = null;
-              if (folderPath) {
-                const result = getAccessibleFolder(folderPath);
+              let trashAllowed = !!args.includeTrash;
+              const ownEmails = args.groupBy === "thread" ? getOwnEmails() : null;
+              if (args.folderPath) {
+                const result = getAccessibleFolder(args.folderPath);
                 if (result.error) return result;
                 folderFilterURI = result.folder.URI;
+                if (isTrashOrJunkFolder(result.folder, true)) trashAllowed = true;
               }
 
               return new Promise((resolve) => {
@@ -6981,79 +7465,40 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     onItemsRemoved() {},
                     onQueryCompleted(collection) {
                       try {
-                        const results = [];
+                        const rows = [];
+                        let incomplete = false;
                         const encryptedAllowed = isEncryptedContentAllowed();
                         for (const glodaMsg of collection.items) {
-                          if (results.length >= SEARCH_COLLECTION_CAP) break;
-                          // Get the underlying msgHdr
+                          if (rows.length >= SEARCH_COLLECTION_CAP) { incomplete = true; break; }
                           let msgHdr;
                           try {
                             msgHdr = glodaMsg.folderMessage;
                           } catch { continue; }
                           if (!msgHdr) continue;
 
-                          // Account access control
                           const folder = msgHdr.folder;
-                          if (!folder) continue;
-                          if (!isFolderAccessible(folder)) continue;
-
+                          if (!folder || !isFolderAccessible(folder)) continue;
                           // A Gloda hit can come from the full-text index, which may
                           // hold decrypted content for a message opened once before:
                           // excluded outright rather than trusted to filter what it
                           // shows, same as getMessage's own encrypted gate.
                           if (!encryptedAllowed && isRawMimeEnvelopeEncrypted(msgHdr)) continue;
-
-                          // Folder filter (URI prefix match includes subfolders)
+                          // URI prefix match includes subfolders
                           if (folderFilterURI && !folder.URI.startsWith(folderFilterURI)) continue;
+                          if (!trashAllowed && isTrashOrJunkFolder(folder, true)) continue;
+                          if (!prepared.passesHeaderFilters(msgHdr)) continue;
 
-                          // Date filters (timestamps in microseconds)
-                          const msgDateTs = msgHdr.date || 0;
-                          if (startDateTs !== null && msgDateTs < startDateTs) continue;
-                          if (endDateTs !== null && msgDateTs > endDateTs) continue;
-
-                          // Boolean filters
-                          if (unreadOnly && msgHdr.isRead) continue;
-                          if (flaggedOnly && !msgHdr.isFlagged) continue;
-                          if (tag) {
-                            const keywords = (msgHdr.getStringProperty("keywords") || "").split(/\s+/);
-                            if (!keywords.includes(tag)) continue;
-                          }
-
-                          const msgTags = getUserTags(msgHdr);
-                          const preview = msgHdr.getStringProperty("preview") || "";
-                          const result = {
-                            id: msgHdr.messageId,
-                            threadId: msgHdr.threadId,
-                            subject: msgHdr.mime2DecodedSubject || msgHdr.subject,
-                            author: msgHdr.mime2DecodedAuthor || msgHdr.author,
-                            recipients: msgHdr.mime2DecodedRecipients || msgHdr.recipients,
-                            ccList: msgHdr.ccList,
-                            date: msgHdr.date ? new Date(msgHdr.date / 1000).toISOString() : null,
-                            folder: folderDisplayName(folder),
-                            folderPath: folder.URI,
-                            read: msgHdr.isRead,
-                            flagged: msgHdr.isFlagged,
-                            tags: msgTags,
-                            _dateTs: msgDateTs
-                          };
-                          if (preview) result.preview = preview;
-                          results.push(result);
+                          const row = buildSearchRow(msgHdr, folder);
+                          if (ownEmails) addThreadGroupingFields(row, msgHdr, null, ownEmails);
+                          rows.push(row);
                         }
-
-                        const finalResults = dedupByMessageId !== false ? dedupeSearchMessageResults(results) : results;
-
-                        if (countOnly) {
-                          resolve({ count: finalResults.length });
-                          return;
-                        }
-                        finalResults.sort((a, b) => normalizedSortOrder === "asc" ? a._dateTs - b._dateTs : b._dateTs - a._dateTs);
-                        resolve(paginate(finalResults, offset, effectiveLimit));
+                        resolve(finishSearch(rows, args, prepared, incomplete));
                       } catch (e) {
                         resolve({ error: e.toString() });
                       }
                     }
                   };
-                  const searcher = new GlodaMsgSearcher(listener, query);
+                  const searcher = new GlodaMsgSearcher(listener, args.query);
                   searcher.getCollection();
                 } catch (e) {
                   resolve({ error: e.toString() });
@@ -7061,166 +7506,170 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               });
             }
 
-	            function searchMessages(query, folderPath, startDate, endDate, maxResults, offset, sortOrder, unreadOnly, flaggedOnly, tag, includeSubfolders, countOnly, searchBody, dedupByMessageId) {
-	              // Gloda full-body search path (async)
-	              if (searchBody) {
+	            function searchMessages(args) {
+	              const prepared = prepareSearch(args);
+	              if (prepared.error) return prepared;
+
+	              if (args.searchBody) {
 	                if (!GlodaMsgSearcher) return { error: "Gloda full-text index is not available" };
-	                if (!query) return { error: "searchBody requires a non-empty query" };
-	                return glodaBodySearch(query, folderPath, startDate, endDate, maxResults, offset, sortOrder, unreadOnly, flaggedOnly, tag, countOnly, dedupByMessageId);
+	                if (!args.query) return { error: "searchBody requires a non-empty query" };
+	                if (args.threadOf) return { error: "threadOf cannot be combined with searchBody" };
+	                const { kept, dropped } = glodaSearchTerms(args.query);
+	                const warning = dropped.length ? `Terms under 3 characters are not searched: ${dropped.join(", ")}` : null;
+	                if (!kept.length) return { error: ["searchBody needs a term of at least 3 characters.", warning].filter(Boolean).join(" ") };
+	                if (!warning) return glodaBodySearch(args, prepared);
+	                return Promise.resolve(glodaBodySearch(args, prepared)).then(res => (res.error ? res : { ...res, warning }));
 	              }
-	              const results = [];
+
+	              const { terms, failed } = parseSearchQuery(args.query);
+	              // Whitespace-only queries and bare operators ("from:") match nothing;
+	              // an empty string is the documented way to match everything.
+	              if (failed) return finishSearch([], args, prepared, false);
+
+	              if (args.threadOf) return threadOfSearch(args, prepared, terms);
+
+	              const ownEmails = args.groupBy === "thread" ? getOwnEmails() : null;
 	              const encryptedAllowed = isEncryptedContentAllowed();
-	              const lowerQuery = (query || "").toLowerCase();
-	              const hasQuery = !!lowerQuery;
-	              // Parse optional field-operator prefix and split into AND tokens.
-	              // Supports: from:Name, subject:Text, to:Email, cc:Email
-	              // Without an operator, every token must appear somewhere across all fields.
-	              const OPERATOR_RE = /^(from|subject|to|cc):\s*/;
-	              let fieldTarget = null;
-	              let queryTokens = [];
-	              if (hasQuery) {
-	                const opMatch = lowerQuery.match(OPERATOR_RE);
-	                if (opMatch) {
-	                  const opMap = { from: 'author', subject: 'subject', to: 'recipients', cc: 'ccList' };
-	                  fieldTarget = opMap[opMatch[1]];
-	                  queryTokens = lowerQuery.slice(opMatch[0].length).trim().split(/\s+/).filter(Boolean);
-	                } else {
-	                  queryTokens = lowerQuery.split(/\s+/).filter(Boolean);
+	              const rows = [];
+	              let incomplete = false;
+	              const walked = walkSearchFolders(args, (folder, db) => {
+	                for (const msgHdr of db.enumerateMessages()) {
+	                  if (rows.length >= SEARCH_COLLECTION_CAP) { incomplete = true; return false; }
+	                  if (!prepared.passesHeaderFilters(msgHdr) || !headerMatchesTerms(msgHdr, terms)) continue;
+	                  // Checked only for a message that already passed the cheap
+	                  // filters above, not the whole folder: msgHdr.subject/preview
+	                  // can themselves be what OpenPGP rewrote after decrypting a
+	                  // protected-header message once, so a candidate matched (or
+	                  // listed, with no query) on those is excluded outright rather
+	                  // than trusted to show only what it should.
+	                  if (!encryptedAllowed && isRawMimeEnvelopeEncrypted(msgHdr)) continue;
+	                  const row = buildSearchRow(msgHdr, folder);
+	                  if (ownEmails) addThreadGroupingFields(row, msgHdr, null, ownEmails);
+	                  rows.push(row);
 	                }
+	                return true;
+	              });
+	              if (walked) return walked;
+	              return finishSearch(rows, args, prepared, incomplete);
+	            }
+
+	            function headerMatchesTerms(msgHdr, terms) {
+	              if (!terms.length) return true;
+	              // mime2Decoded* so "=?UTF-8?Q?...?=" headers match plain text
+	              return matchSearchTerms(terms, {
+	                subject: displaySubject(msgHdr).toLowerCase(),
+	                author: (msgHdr.mime2DecodedAuthor || msgHdr.author || "").toLowerCase(),
+	                recipients: (msgHdr.mime2DecodedRecipients || msgHdr.recipients || "").toLowerCase(),
+	                ccList: decodeHeaderValue(msgHdr.ccList).toLowerCase(),
+	                bccList: decodeHeaderValue(msgHdr.bccList).toLowerCase(),
+	                preview: (msgHdr.getStringProperty("preview") || "").toLowerCase(),
+	              });
+	            }
+
+	            /**
+	             * Folder databases a search covers, depth first: folderPath (with subfolders unless includeSubfolders
+	             * is false) or every accessible account; Trash / Junk only when asked for. visit(folder, db) returns
+	             * false to stop. Returns { error } for a bad folderPath, else null.
+	             */
+	            function walkSearchFolders(args, visit) {
+	              let rootFolder = null;
+	              let stopped = false;
+	              const walk = folder => {
+	                // Flag check only: descendants of an explicitly requested Trash stay searchable
+	                if (!args.includeTrash && folder !== rootFolder && isTrashOrJunkFolder(folder, false)) return;
+	                try {
+	                  refreshImapFolderSync(folder);
+	                  const db = folder.msgDatabase;
+	                  if (db && visit(folder, db) === false) stopped = true;
+	                } catch {
+	                  // Skip inaccessible folders
+	                }
+	                if (args.includeSubfolders !== false && folder.hasSubFolders) {
+	                  for (const subfolder of folder.subFolders) {
+	                    if (stopped) return;
+	                    walk(subfolder);
+	                  }
+	                }
+	              };
+	              if (args.folderPath) {
+	                const result = getAccessibleFolder(args.folderPath);
+	                if (result.error) return result;
+	                rootFolder = result.folder;
+	                walk(rootFolder);
+	                return null;
 	              }
-	              // Treat whitespace-only queries and bare field operators (e.g. "from:"
-	              // with nothing after) as failed queries that match nothing, rather
-	              // than silently matching every message. The documented way to match
-	              // all messages is to pass an empty string, which keeps hasQuery=false.
-	              const failedQuery = hasQuery && queryTokens.length === 0;
-	              const parsedStartDate = startDate ? new Date(startDate).getTime() : NaN;
-              const parsedEndDate = endDate ? new Date(endDate).getTime() : NaN;
-              const startDateTs = Number.isFinite(parsedStartDate) ? parsedStartDate * 1000 : null;
-              // Add 24h only for date-only strings (e.g. "2024-01-15") to include the full day.
-              // Use regex to detect ISO date-only format rather than checking for "T" which
-              // would match arbitrary strings like "Totally invalid".
-              const isDateOnly = endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate.trim());
-              const endDateOffset = isDateOnly ? 86400000 : 0;
-              const endDateTs = Number.isFinite(parsedEndDate) ? (parsedEndDate + endDateOffset) * 1000 : null;
-              const requestedLimit = Number(maxResults);
-              const effectiveLimit = Math.min(
-                Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.floor(requestedLimit) : DEFAULT_MAX_RESULTS,
-                MAX_SEARCH_RESULTS_CAP
-              );
-              const normalizedSortOrder = sortOrder === "asc" ? "asc" : "desc";
+	              for (const account of getAccessibleAccounts()) {
+	                if (stopped) break;
+	                rootFolder = account.incomingServer.rootFolder;
+	                walk(rootFolder);
+	              }
+	              return null;
+	            }
 
-              function searchFolder(folder) {
-                if (results.length >= SEARCH_COLLECTION_CAP) return;
+	            /**
+	             * threadOf (T1): every header in scope is read first (id, References, subject key, Re: flag), then the
+	             * conversation is joined (conversationMembers), so the folder order does not matter. Filters and query
+	             * terms select rows of the conversation; they do not cut its links.
+	             */
+	            function threadOfSearch(args, prepared, terms) {
+	              const found = findMessage(args.threadOf.messageId, args.threadOf.folderPath);
+	              if (found.error) return found;
+	              const seedHdr = found.msgHdr;
+	              const seedFolderURI = seedHdr.folder.URI;
+	              const items = [];
+	              const sources = [];
+	              let seedIndex = -1;
+	              const add = (msgHdr, source) => {
+	                items.push({
+	                  id: normalizeMessageIdForDedup(msgHdr.messageId),
+	                  refs: messageReferences(msgHdr),
+	                  dateTs: msgHdr.date || 0,
+	                  subjectKey: threadSubjectKey(msgHdr.mime2DecodedSubject || msgHdr.subject),
+	                  hasRe: !!(msgHdr.flags & Ci.nsMsgMessageFlags.HasRe),
+	                });
+	                sources.push(source);
+	              };
+	              const walked = walkSearchFolders(args, (folder, db) => {
+	                for (const msgHdr of db.enumerateMessages()) {
+	                  if (seedIndex < 0 && msgHdr.messageKey === seedHdr.messageKey && folder.URI === seedFolderURI) seedIndex = items.length;
+	                  add(msgHdr, { folder, key: msgHdr.messageKey });
+	                }
+	                return true;
+	              });
+	              if (walked) return walked;
+	              // A seed outside the scope still anchors the conversation
+	              if (seedIndex < 0) {
+	                seedIndex = items.length;
+	                add(seedHdr, { hdr: seedHdr });
+	              }
 
-                try {
-                  refreshImapFolderSync(folder);
+	              const hdrAt = i => sources[i].hdr || sources[i].folder.msgDatabase.getMsgHdrForKey(sources[i].key);
+	              const ownEmails = getOwnEmails();
+	              const members = conversationMembers(items, seedIndex, i => {
+	                const h = hdrAt(i);
+	                return threadPeople({ author: h.author, recipients: h.recipients, ccList: h.ccList, bccList: h.bccList }, ownEmails);
+	              });
 
-                  const db = folder.msgDatabase;
-                  if (!db) return;
+	              const encryptedAllowed = isEncryptedContentAllowed();
+	              const rows = [];
+	              let incomplete = false;
+	              for (const [i, how] of members) {
+	                if (!sources[i].folder) continue;
+	                if (rows.length >= SEARCH_COLLECTION_CAP) { incomplete = true; break; }
+	                let msgHdr;
+	                try { msgHdr = hdrAt(i); } catch { continue; }
+	                if (!prepared.passesHeaderFilters(msgHdr) || !headerMatchesTerms(msgHdr, terms)) continue;
+	                // Same rule as the other search paths: an encrypted message is left out.
+	                if (!encryptedAllowed && isRawMimeEnvelopeEncrypted(msgHdr)) continue;
+	                const row = buildSearchRow(msgHdr, sources[i].folder);
+	                if (how === "subject") row.linkedBy = "subject";
+	                if (args.groupBy === "thread") addThreadGroupingFields(row, msgHdr, items[i].refs, ownEmails);
+	                rows.push(row);
+	              }
+	              return finishSearch(rows, args, prepared, incomplete);
+	            }
 
-                  for (const msgHdr of db.enumerateMessages()) {
-                    if (results.length >= SEARCH_COLLECTION_CAP) break;
-
-                    // Check cheap numeric/boolean filters before string work
-                    const msgDateTs = msgHdr.date || 0;
-                    if (startDateTs !== null && msgDateTs < startDateTs) continue;
-                    if (endDateTs !== null && msgDateTs > endDateTs) continue;
-                    if (unreadOnly && msgHdr.isRead) continue;
-                    if (flaggedOnly && !msgHdr.isFlagged) continue;
-                    if (tag) {
-                      const keywords = (msgHdr.getStringProperty("keywords") || "").split(/\s+/);
-                      if (!keywords.includes(tag)) continue;
-                    }
-
-                    // IMPORTANT: Use mime2Decoded* properties for searching.
-                    // Raw headers contain MIME encoding like "=?UTF-8?Q?...?="
-                    // which won't match plain text searches.
-                    const preview = msgHdr.getStringProperty("preview") || "";
-                    if (failedQuery) continue;
-                    if (hasQuery) {
-                      const subject = (msgHdr.mime2DecodedSubject || msgHdr.subject || "").toLowerCase();
-                      const author = (msgHdr.mime2DecodedAuthor || msgHdr.author || "").toLowerCase();
-                      const recipients = (msgHdr.mime2DecodedRecipients || msgHdr.recipients || "").toLowerCase();
-                      const ccList = (msgHdr.ccList || "").toLowerCase();
-                      // AND-of-tokens: every token must appear somewhere across the fields.
-                      // If a field operator (from:, subject:, to:, cc:) was given,
-                      // restrict matching to that specific field only.
-                      const fieldValues = { subject, author, recipients, ccList };
-                      const matches = fieldTarget
-                        ? queryTokens.every(t => (fieldValues[fieldTarget] || "").includes(t))
-                        : queryTokens.every(t =>
-                            subject.includes(t) ||
-                            author.includes(t) ||
-                            recipients.includes(t) ||
-                            ccList.includes(t) ||
-                            preview.toLowerCase().includes(t)
-                          );
-                      if (!matches) continue;
-                    }
-
-                    // Checked only for a message that already passed the cheap
-                    // filters above, not the whole folder: msgHdr.subject/preview
-                    // can themselves be what OpenPGP rewrote after decrypting a
-                    // protected-header message once, so a candidate matched (or
-                    // listed, with no query) on those is excluded outright rather
-                    // than trusted to show only what it should.
-                    if (!encryptedAllowed && isRawMimeEnvelopeEncrypted(msgHdr)) continue;
-
-                    const msgTags = getUserTags(msgHdr);
-                    const result = {
-                      id: msgHdr.messageId,
-                      threadId: msgHdr.threadId, // folder-local, use with folderPath for grouping
-                      subject: msgHdr.mime2DecodedSubject || msgHdr.subject,
-                      author: msgHdr.mime2DecodedAuthor || msgHdr.author,
-                      recipients: msgHdr.mime2DecodedRecipients || msgHdr.recipients,
-                      ccList: msgHdr.ccList,
-                      date: msgHdr.date ? new Date(msgHdr.date / 1000).toISOString() : null,
-                      folder: folderDisplayName(folder),
-                      folderPath: folder.URI,
-                      read: msgHdr.isRead,
-                      flagged: msgHdr.isFlagged,
-                      tags: msgTags,
-                      _dateTs: msgDateTs
-                    };
-                    if (preview) result.preview = preview;
-                    results.push(result);
-                  }
-                } catch {
-                  // Skip inaccessible folders
-                }
-
-                const recurse = includeSubfolders !== false; // default true
-                if (recurse && folder.hasSubFolders) {
-                  for (const subfolder of folder.subFolders) {
-                    if (results.length >= SEARCH_COLLECTION_CAP) break;
-                    searchFolder(subfolder);
-                  }
-                }
-              }
-
-              if (folderPath) {
-                const result = getAccessibleFolder(folderPath);
-                if (result.error) return result;
-                searchFolder(result.folder);
-              } else {
-                for (const account of getAccessibleAccounts()) {
-                  if (results.length >= SEARCH_COLLECTION_CAP) break;
-                  searchFolder(account.incomingServer.rootFolder);
-                }
-              }
-
-              const finalResults = dedupByMessageId !== false ? dedupeSearchMessageResults(results) : results;
-
-              if (countOnly) {
-                return { count: finalResults.length };
-              }
-
-              finalResults.sort((a, b) => normalizedSortOrder === "asc" ? a._dateTs - b._dateTs : b._dateTs - a._dateTs);
-
-              return paginate(finalResults, offset, effectiveLimit);
-            }
-
-            function searchContacts(query, maxResults) {
+            function searchContacts(query, maxResults, format) {
               const results = [];
               const lowerQuery = (query || "").toLowerCase();
               const hasQuery = !!lowerQuery;
@@ -7240,18 +7689,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 for (const card of book.childCards) {
                   if (card.isMailList) continue;
 
-                  const email = (card.primaryEmail || "").toLowerCase();
-                  const displayName = (card.displayName || "").toLowerCase();
-                  const firstName = (card.firstName || "").toLowerCase();
-                  const lastName = (card.lastName || "").toLowerCase();
-                  const fields = [email, displayName, firstName, lastName];
-
                   if (failedQuery) continue;
+                  const contact = formatContact(card, book);
+                  const fields = [contact.email, contact.displayName, contact.firstName, contact.lastName, contact.organization]
+                    .map(v => (v || "").toLowerCase());
                   const matches = !hasQuery || queryTokens.every(token =>
                     fields.some(field => field.includes(token))
                   );
                   if (matches) {
-                    results.push(formatContact(card, book));
+                    results.push(compactSearchRow(contact));
                   }
 
                   if (results.length >= limit) { truncated = true; break; }
@@ -7259,6 +7705,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (truncated) break;
               }
 
+              if (format === "table") {
+                return truncated ? { contacts: rowsToTable(results), hasMore: true } : { contacts: rowsToTable(results) };
+              }
               if (truncated) {
                 return { contacts: results, hasMore: true, message: `Results limited to ${limit}. Refine your query to see more.` };
               }
@@ -8707,6 +9156,30 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
               return bodyPart;
             }
+
+            // Raw source as text: strict UTF-8; else a charset declared in a Content-Type (non-UTF-8 first, since the
+            // bytes are not UTF-8); else detect(raw) (MailStringUtils.detectCharset, Gecko's EncodingDetector).
+            function decodeRawSource(raw, detect) {
+              const bytes = rawMimeBytesFromByteString(raw);
+              try {
+                return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes), charset: "utf-8" };
+              } catch {}
+              const declared = [];
+              for (const [header] of raw.matchAll(/^content-type:[^\r\n]*(?:\r?\n[ \t][^\r\n]*)*/gim)) {
+                const label = header.match(/charset\s*=\s*["']?([^"';\s]+)/i)?.[1]?.toLowerCase();
+                if (label && label !== "us-ascii" && !declared.includes(label)) declared.push(label);
+              }
+              const isUtf8 = label => /^utf-?8$/.test(label);
+              const candidates = [...declared.filter(l => !isUtf8(l)), ...declared.filter(isUtf8)];
+              try { if (detect) candidates.push(detect(raw)); } catch {}
+              for (const label of candidates) {
+                try {
+                  const decoder = new TextDecoder(label);
+                  return { text: decoder.decode(bytes), charset: decoder.encoding };
+                } catch {}
+              }
+              return { text: raw, charset: "iso-8859-1" };
+            }
             // END RAW MIME PARSING HELPERS
 
             // BEGIN RAW MIME ATTACHMENT HELPERS
@@ -8895,16 +9368,18 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                    try {
 	                      const folder = msgHdr.folder;
 	                      stream = folder.getMsgInputStream(msgHdr, {});
-	                      // Latin-1 default preserves raw bytes; UTF-8 corrupts 8-bit content.
 	                      const raw = readMessageStreamFully(stream);
 	                      if (!raw || raw.length === 0) {
 	                        resolve({ error: "Message has zero size - cannot read raw source" });
 	                        return;
 	                      }
+	                      const { MailStringUtils } = ChromeUtils.importESModule("resource:///modules/MailStringUtils.sys.mjs");
+	                      const decoded = decodeRawSource(raw, bytes => MailStringUtils.detectCharset(bytes));
 	                      resolve({
 	                        id: msgHdr.messageId,
 	                        subject: outerWireSubject(msgHdr, msgHdr.mime2DecodedSubject || msgHdr.subject),
-	                        rawSource: raw,
+	                        rawSource: decoded.text,
+	                        rawCharset: decoded.charset,
 	                      });
 	                    } catch (e) {
 	                      console.error("commonpost-mcp: raw source read failed:", e);
@@ -9256,10 +9731,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     const msgTags = getUserTags(msgHdr);
                     const baseResponse = {
                       id: msgHdr.messageId,
-                      subject: msgHdr.mime2DecodedSubject || msgHdr.subject,
+                      subject: displaySubject(msgHdr),
                       author: msgHdr.mime2DecodedAuthor || msgHdr.author,
                       recipients: msgHdr.mime2DecodedRecipients || msgHdr.recipients,
-                      ccList: msgHdr.ccList,
+                      ccList: decodeHeaderValue(msgHdr.ccList),
                       date: msgHdr.date ? new Date(msgHdr.date / 1000).toISOString() : null,
                       tags: msgTags,
                       body,
@@ -9703,7 +10178,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	              });
 	            }
 
-            async function getMessages(messages, saveAttachments, bodyFormat, rawSource) {
+            async function getMessages(messages, saveAttachments, bodyFormat, rawSource, maxBodyChars) {
               if (typeof messages === "string") {
                 try { messages = JSON.parse(messages); } catch { /* leave as-is */ }
               }
@@ -9744,12 +10219,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   continue;
                 }
 
-                const result = await getMessage(
-                  messageId,
-                  folderPath,
-                  saveAttachments,
-                  bodyFormat,
-                  rawSource
+                const result = pageMessageBody(
+                  await getMessage(messageId, folderPath, saveAttachments, bodyFormat, rawSource),
+                  0, maxBodyChars, DEFAULT_GET_MESSAGES_BODY_CHARS
                 );
                 results.push({ index: i, messageId, folderPath, ...result });
               }
@@ -9845,6 +10317,26 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               } catch (e) {
                 return { error: e.toString() };
               }
+            }
+
+            function decodeHeaderValue(value) {
+              if (!value) return "";
+              if (!value.includes("=?")) return value;
+              try {
+                return MailServices.mimeConverter.decodeMimeHeader(value, null, false, true) || value;
+              } catch {
+                return value;
+              }
+            }
+
+            function getOwnEmails() {
+              const emails = new Set();
+              for (const account of MailServices.accounts.accounts) {
+                for (const identity of account.identities) {
+                  if (identity.email) emails.add(identity.email.toLowerCase());
+                }
+              }
+              return emails;
             }
 
             /**
@@ -10309,99 +10801,22 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               };
             }
 
-            function getRecentMessages(folderPath, daysBack, maxResults, offset, unreadOnly, flaggedOnly, includeSubfolders) {
-              const results = [];
-              // Checked once per message below (no query to narrow candidates
-              // first, unlike searchMessages): a bounded raw-header read per
-              // listed message, only while the option is off (the default).
-              // Accepted for the same reason every other deny-list/content
-              // check in this file is: the alternative is trusting a field
-              // OpenPGP is known to rewrite after a decryption.
-              const encryptedAllowed = isEncryptedContentAllowed();
-              const days = Number.isFinite(Number(daysBack)) && Number(daysBack) > 0 ? Math.floor(Number(daysBack)) : 7;
-              const cutoffTs = (Date.now() - days * 86400000) * 1000; // Thunderbird uses microseconds
-              const requestedLimit = Number(maxResults);
-              const effectiveLimit = Math.min(
-                Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.floor(requestedLimit) : DEFAULT_MAX_RESULTS,
-                MAX_SEARCH_RESULTS_CAP
-              );
-
-              function collectFromFolder(folder) {
-                if (results.length >= SEARCH_COLLECTION_CAP) return;
-
-                try {
-                  const db = folder.msgDatabase;
-                  if (!db) return;
-
-                  for (const msgHdr of db.enumerateMessages()) {
-                    if (results.length >= SEARCH_COLLECTION_CAP) break;
-
-                    const msgDateTs = msgHdr.date || 0;
-                    if (msgDateTs < cutoffTs) continue;
-                    if (unreadOnly && msgHdr.isRead) continue;
-                    if (flaggedOnly && !msgHdr.isFlagged) continue;
-
-                    // preview (and subject, below) can be what OpenPGP rewrote
-                    // after decrypting a protected-header message once: withheld
-                    // rather than trusted, the same as getMessage's own body.
-                    const encrypted = !encryptedAllowed && isRawMimeEnvelopeEncrypted(msgHdr);
-                    const msgTags = getUserTags(msgHdr);
-                    const preview = encrypted ? "" : (msgHdr.getStringProperty("preview") || "");
-                    const result = {
-                      id: msgHdr.messageId,
-                      threadId: msgHdr.threadId, // folder-local, use with folderPath for grouping
-                      subject: encrypted
-                        ? outerWireSubject(msgHdr, msgHdr.mime2DecodedSubject || msgHdr.subject)
-                        : (msgHdr.mime2DecodedSubject || msgHdr.subject),
-                      author: msgHdr.mime2DecodedAuthor || msgHdr.author,
-                      recipients: msgHdr.mime2DecodedRecipients || msgHdr.recipients,
-                      ccList: msgHdr.ccList,
-                      date: msgHdr.date ? new Date(msgHdr.date / 1000).toISOString() : null,
-                      folder: folderDisplayName(folder),
-                      folderPath: folder.URI,
-                      read: msgHdr.isRead,
-                      flagged: msgHdr.isFlagged,
-                      tags: msgTags,
-                      _dateTs: msgDateTs
-                    };
-                    if (encrypted) result.encrypted = true;
-                    if (preview) result.preview = preview;
-                    results.push(result);
-                  }
-                } catch {
-                  // Skip inaccessible folders
-                }
-
-                const recurse = includeSubfolders !== false; // default true
-                if (recurse && folder.hasSubFolders) {
-                  for (const subfolder of folder.subFolders) {
-                    if (results.length >= SEARCH_COLLECTION_CAP) break;
-                    collectFromFolder(subfolder);
-                  }
-                }
-              }
-
-              if (folderPath) {
-                // Specific folder
-                const opened = openFolder(folderPath);
-                if (opened.error) return { error: opened.error };
-                collectFromFolder(opened.folder);
-              } else {
-                // All folders across accessible accounts
-                for (const account of getAccessibleAccounts()) {
-                  if (results.length >= SEARCH_COLLECTION_CAP) break;
-                  try {
-                    const root = account.incomingServer.rootFolder;
-                    collectFromFolder(root);
-                  } catch {
-                    // Skip inaccessible accounts
-                  }
-                }
-              }
-
-              results.sort((a, b) => b._dateTs - a._dateTs);
-
-              return paginate(results, offset, effectiveLimit);
+            // Recent mail across all folders (or one folder), newest first, Trash/Junk skipped.
+            function getRecentMessages(args) {
+              const days = Number(args.daysBack) > 0 ? Math.floor(Number(args.daysBack)) : 7;
+              return searchMessages({
+                query: "",
+                folderPath: args.folderPath,
+                startDate: new Date(Date.now() - days * 86400000).toISOString(),
+                maxResults: args.maxResults,
+                offset: args.offset,
+                sortOrder: "desc",
+                unreadOnly: args.unreadOnly,
+                flaggedOnly: args.flaggedOnly,
+                includeSubfolders: args.includeSubfolders,
+                includeTrash: args.includeTrash,
+                format: args.format,
+              });
             }
 
             function isTrashOrDescendant(folder) {
@@ -10935,6 +11350,26 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               } catch (e) {
                 return { error: e.toString() };
               }
+            }
+
+            function getTagList() {
+              try {
+                return MailServices.tags.getAllTags().map(t => ({ key: t.key, label: t.tag }));
+              } catch {
+                return [];
+              }
+            }
+
+            function resolveTagKey(labelOrKey) {
+              const wanted = String(labelOrKey || "").trim();
+              const tags = getTagList();
+              const lower = wanted.toLowerCase();
+              const hit = tags.find(t => t.key === wanted)
+                || tags.find(t => t.key.toLowerCase() === lower)
+                || tags.find(t => (t.label || "").toLowerCase() === lower);
+              if (hit) return hit.key;
+              const known = tags.map(t => `${t.label} (${t.key})`).join(", ") || "none";
+              throw new Error(`Unknown tag '${wanted}'. Known tags: ${known}`);
             }
 
             function getFilterListForAccount(accountId) {
@@ -12049,13 +12484,16 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "listFolders":
                   return listFolders(args.accountId, args.folderPath, args.format, args.favoritesOnly);
                 case "searchMessages":
-                  return await searchMessages(args.query || "", args.folderPath, args.startDate, args.endDate, args.maxResults, args.offset, args.sortOrder, args.unreadOnly, args.flaggedOnly, args.tag, args.includeSubfolders, args.countOnly, args.searchBody, args.dedupByMessageId);
+                  return await searchMessages({ ...args, query: args.query || "" });
                 case "getMessage":
-                  return await getMessage(args.messageId, args.folderPath, args.saveAttachments, args.bodyFormat, args.rawSource, args.includeInlineImages);
+                  return pageMessageBody(
+                    await getMessage(args.messageId, args.folderPath, args.saveAttachments, args.bodyFormat, args.rawSource, args.includeInlineImages),
+                    args.bodyOffset, args.maxBodyChars, DEFAULT_GET_MESSAGE_BODY_CHARS
+                  );
                 case "getMessages":
-                  return await getMessages(args.messages, args.saveAttachments, args.bodyFormat, args.rawSource);
+                  return await getMessages(args.messages, args.saveAttachments, args.bodyFormat, args.rawSource, args.maxBodyChars);
                 case "searchContacts":
-                  return searchContacts(args.query || "", args.maxResults);
+                  return searchContacts(args.query || "", args.maxResults, args.format);
                 case "getContact":
                   return getContact(args.contactId);
                 case "createContact":
@@ -12069,7 +12507,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "createEvent":
                   return await createEvent(args.title, args.startDate, args.endDate, args.location, args.description, args.calendarId, args.allDay, args.skipReview, args.status, args.showAs, args.categories, args.onlineMeeting);
                 case "listEvents":
-                  return await listEvents(args.calendarId, args.startDate, args.endDate, args.maxResults);
+                  return listResultAsTable(await listEvents(args.calendarId, args.startDate, args.endDate, args.maxResults), args.format);
                 case "updateEvent":
                   return await updateEvent(args.eventId, args.calendarId, args.title, args.startDate, args.endDate, args.location, args.description, args.status, args.showAs, args.categories, args.onlineMeeting);
                 case "deleteEvent":
@@ -12079,7 +12517,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "createTask":
                   return await createTask(args.title, args.dueDate, args.calendarId, args.description, args.priority, args.categories, args.skipReview);
                 case "listTasks":
-                  return await listTasks(args.calendarId, args.completed, args.dueBefore, args.maxResults);
+                  return listResultAsTable(await listTasks(args.calendarId, args.completed, args.dueBefore, args.maxResults), args.format);
                 case "updateTask":
                   return await updateTask(args.taskId, args.calendarId, args.title, args.dueDate, args.description, args.completed, args.percentComplete, args.priority);
                 case "sendMail":
@@ -12091,7 +12529,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "forwardMessage":
                   return await forwardMessage(args.messageId, args.folderPath, args.to, args.body, args.isHtml, args.cc, args.bcc, args.from, args.attachments, args.skipReview);
                 case "getRecentMessages":
-                  return getRecentMessages(args.folderPath, args.daysBack, args.maxResults, args.offset, args.unreadOnly, args.flaggedOnly, args.includeSubfolders);
+                  return getRecentMessages(args);
                 case "displayMessage":
                   return displayMessage(args.messageId, args.folderPath, args.displayMode);
                 case "deleteMessages":
