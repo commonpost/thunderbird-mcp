@@ -64,13 +64,29 @@ function makeTestOptions(root, overrides = {}) {
 }
 
 function makeFsWithStatOverrides(overrides) {
+  // The bridge re-checks the owner on the opened descriptor (fstatSync):
+  // remember which path each descriptor was opened for.
+  const pathByFd = new Map();
   return new Proxy(fs, {
     get(target, prop) {
+      if (prop === 'openSync') {
+        return (filePath, ...args) => {
+          const fd = target.openSync(filePath, ...args);
+          pathByFd.set(fd, filePath);
+          return fd;
+        };
+      }
+      if (prop === 'closeSync') {
+        return (fd) => {
+          pathByFd.delete(fd);
+          return target.closeSync(fd);
+        };
+      }
       // lstatSync too: the connection-file safety check reads the owner with it.
-      if (prop === 'statSync' || prop === 'lstatSync') {
+      if (prop === 'statSync' || prop === 'lstatSync' || prop === 'fstatSync') {
         return (filePath, ...args) => {
           const stat = target[prop](filePath, ...args);
-          const override = overrides.get(filePath);
+          const override = overrides.get(prop === 'fstatSync' ? pathByFd.get(filePath) : filePath);
           if (!override) {
             return stat;
           }
