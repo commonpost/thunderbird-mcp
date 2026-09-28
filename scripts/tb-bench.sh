@@ -24,6 +24,55 @@ validate_version() {
   [[ "$1" =~ ^[0-9]+(\.[0-9]+){0,2}(esr|b[0-9]+)?$ ]] || die "invalid Thunderbird version: $1"
 }
 
+# Mozilla release signing key, pinned by fingerprint.
+MOZ_RELEASE_KEY_FPR="14F26682D0916CDD81E37B6D61B7B526D98F0353"
+MOZ_RELEASE_SIGNING_SUBKEY_FPR="827E658608679618CD349F93678E455D76767AA3"
+
+# Confirms the key imported into $1 (a GNUPGHOME) is Mozilla's release key: its primary
+# fingerprint matches MOZ_RELEASE_KEY_FPR and one of its subkeys matches
+# MOZ_RELEASE_SIGNING_SUBKEY_FPR. Refuses (die) on any mismatch.
+check_release_key_pins() {
+  local gnupghome="$1" listing primary_fpr
+  listing="$(GNUPGHOME="$gnupghome" gpg --batch --with-colons --fingerprint --fingerprint --list-keys 2>/dev/null)"
+  primary_fpr="$(awk -F: '
+    $1=="pub"{ctx="pub"} $1=="sub"{ctx="sub"}
+    $1=="fpr" && ctx=="pub" && p==""{p=$10}
+    END{print p}
+  ' <<<"$listing")"
+  [ "$primary_fpr" = "$MOZ_RELEASE_KEY_FPR" ] \
+    || die "Mozilla release key fingerprint mismatch: got '${primary_fpr:-none}', expected $MOZ_RELEASE_KEY_FPR"
+  awk -F: -v want="$MOZ_RELEASE_SIGNING_SUBKEY_FPR" '
+    $1=="pub"{ctx="pub"} $1=="sub"{ctx="sub"}
+    $1=="fpr" && ctx=="sub" && $10==want{found=1}
+    END{exit(found ? 0 : 1)}
+  ' <<<"$listing" || die "Mozilla signing subkey $MOZ_RELEASE_SIGNING_SUBKEY_FPR not found on the imported release key"
+}
+
+# Verifies $1 (a downloaded archive) against the SHA512SUMS for $2 (its path within the
+# release, e.g. linux-x86_64/en-US/thunderbird-<version>.tar.xz), fetched with $3 (the
+# release's base URL) and authenticated with Mozilla's release key pinned by fingerprint.
+# Returns non-zero if the archive's hash does not match; dies on any other failure.
+verify_archive() {
+  local archive="$1" rel_path="$2" base_url="$3"
+  local vtmp="$CACHE/thunderbird/.verify"
+  rm -rf "$vtmp" && mkdir -p "$vtmp"
+  curl -fsSL -o "$vtmp/SHA512SUMS" "$base_url/SHA512SUMS" || die "failed to download SHA512SUMS"
+  curl -fsSL -o "$vtmp/SHA512SUMS.asc" "$base_url/SHA512SUMS.asc" || die "failed to download SHA512SUMS.asc"
+  curl -fsSL -o "$vtmp/KEY" "$base_url/KEY" || die "failed to download the release KEY"
+  local gnupghome="$vtmp/gnupg"
+  mkdir -m 700 -p "$gnupghome"
+  GNUPGHOME="$gnupghome" gpg --batch --quiet --import "$vtmp/KEY" 2>/dev/null || die "failed to import the Mozilla release key"
+  check_release_key_pins "$gnupghome"
+  GNUPGHOME="$gnupghome" gpg --batch --quiet --verify "$vtmp/SHA512SUMS.asc" "$vtmp/SHA512SUMS" 2>/dev/null \
+    || die "SHA512SUMS signature does not verify against the pinned Mozilla release key"
+  local expected actual
+  expected="$(awk -v p="$rel_path" '$2==p || $2=="./"p {print $1; exit}' "$vtmp/SHA512SUMS")"
+  [ -n "$expected" ] || die "no SHA512SUMS entry for $rel_path"
+  actual="$(sha512sum "$archive" | awk '{print $1}')"
+  rm -rf "$vtmp"
+  [ "$actual" = "$expected" ]
+}
+
 resolve_version() {
   if [ -n "${TB_VERSION:-}" ]; then echo "$TB_VERSION"; return; fi
   case "${TB_CHANNEL:-}" in
@@ -45,13 +94,20 @@ setup() {
   TB_DIR="$CACHE/thunderbird/$VERSION"
   TB_BIN="$TB_DIR/thunderbird"
   [ -x "$TB_BIN" ] && return
+  command -v gpg >/dev/null 2>&1 || die "gpg is required to verify the Thunderbird release signature"
+  local rel_path="linux-x86_64/en-US/thunderbird-$VERSION.tar.xz"
+  local base_url="https://archive.mozilla.org/pub/thunderbird/releases/$VERSION"
   local archive="$CACHE/thunderbird/thunderbird-$VERSION.tar.xz"
   mkdir -p "$CACHE/thunderbird"
+  if [ -s "$archive" ] && ! verify_archive "$archive" "$rel_path" "$base_url"; then
+    log "cached archive no longer matches SHA512SUMS, redownloading"
+    rm -f "$archive"
+  fi
   if [ ! -s "$archive" ]; then
     log "downloading Thunderbird $VERSION"
-    curl -fL -o "$archive.part" \
-      "https://archive.mozilla.org/pub/thunderbird/releases/$VERSION/linux-x86_64/en-US/thunderbird-$VERSION.tar.xz"
+    curl -fL -o "$archive.part" "$base_url/$rel_path"
     mv "$archive.part" "$archive"
+    verify_archive "$archive" "$rel_path" "$base_url" || die "downloaded archive does not match SHA512SUMS"
   fi
   rm -rf "$TB_DIR" && mkdir -p "$TB_DIR"
   tar -xf "$archive" -C "$TB_DIR" --strip-components=1
