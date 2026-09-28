@@ -334,13 +334,18 @@ describe("wiring", () => {
     assert.match(apiSource.slice(i, i + 300), /nsIRandomGenerator[\s\S]*generateRandomBytes\(12\)/);
   });
 
-  it("an error thrown while protecting the result reaches the client as a JSON-RPC error, not a partial result", () => {
+  it("an error thrown while protecting the result reaches the client as an error, not a partial result", () => {
     const i = apiSource.indexOf("const toolResult = await callTool(params.name, toolArgs);");
     const enclosingTry = apiSource.lastIndexOf("try {", i);
     assert.ok(enclosingTry >= 0 && enclosingTry < i);
     const matchingCatch = apiSource.indexOf("} catch (e) {", i);
     assert.ok(matchingCatch > i);
-    const catchBody = apiSource.slice(matchingCatch, matchingCatch + 400);
-    assert.match(catchBody, /error: \{ code: -32000, message: e\.toString\(\) \}/);
+    // result is only assigned once the protection has run and the content is built
+    const tryBody = apiSource.slice(enclosingTry, matchingCatch);
+    assert.equal(tryBody.match(/\bresult = /g).length, 1);
+    assert.ok(tryBody.indexOf("result = { content }") > tryBody.indexOf("protectMessageToolResult("));
+    // the catch answers with the error message alone (isError), none of the result
+    const catchBody = apiSource.slice(matchingCatch, matchingCatch + 200);
+    assert.match(catchBody, /^\} catch \(e\) \{\s*result = toolCallError\(e\?\.message \|\| String\(e\)\);\s*\}/);
   });
 });

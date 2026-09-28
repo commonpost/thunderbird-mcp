@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/commonpost/thunderbird-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/commonpost/thunderbird-mcp/actions/workflows/ci.yml)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14985/badge)](https://www.bestpractices.dev/projects/14985)
-[![Tools](https://img.shields.io/badge/40_Tools-email%2C_compose%2C_filters%2C_calendar%2C_contacts-blue.svg)](#what-you-can-do)
+[![Tools](https://img.shields.io/badge/41_Tools-email%2C_compose%2C_filters%2C_calendar%2C_contacts-blue.svg)](#what-you-can-do)
 [![Localhost Only](https://img.shields.io/badge/Privacy-localhost_only-green.svg)](#security)
 [![Thunderbird](https://img.shields.io/badge/Thunderbird-140%2B-0a84ff.svg)](https://www.thunderbird.net/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-grey.svg)](LICENSE)
@@ -21,7 +21,7 @@ Give your AI assistant full access to Thunderbird -- search mail, compose messag
 
 ## Why?
 
-Thunderbird has no official API for AI tools. Your AI assistant can't read your email, can't help you draft replies, can't organize your inbox. This extension fixes that -- it exposes 40 tools over MCP so any compatible AI (Claude, GPT, local models) can work with your mail the way you'd expect.
+Thunderbird has no official API for AI tools. Your AI assistant can't read your email, can't help you draft replies, can't organize your inbox. This extension fixes that -- it exposes 41 tools over MCP so any compatible AI (Claude, GPT, local models) can work with your mail the way you'd expect.
 
 Mail sends and event/task creation require review by default because **Block `skipReview`** starts enabled. `skipReview: true` is honored only after you explicitly disable that safety setting. **By default, nothing is sent or created without your review.**
 
@@ -68,6 +68,7 @@ The Thunderbird extension embeds a local HTTP server with session-scoped auth to
 | `sendMail` | Compose a new email -- opens a review window; direct sending requires explicitly disabling the `skipReview` safety block |
 | `replyToMessage` | Reply with quoted original and proper threading -- `skipReview` is subject to the same safety block |
 | `forwardMessage` | Forward with all original attachments preserved -- `skipReview` is subject to the same safety block |
+| `saveDraft` | Save a new message to the Drafts folder without opening a window or sending |
 
 All compose tools open a window for you to review and edit before sending by default. The **Block `skipReview`** preference is on by default, so `skipReview: true` is rejected until you explicitly disable the preference; only then can it send directly. Attachments can be file paths or inline base64 objects.
 
@@ -117,6 +118,7 @@ OpenPGP and S/MIME messages are not decrypted for the assistant by default: `get
 | `createTask` | Open a pre-filled task dialog for review; direct creation via `skipReview` requires explicitly disabling the default safety block |
 | `listTasks` | List tasks/to-dos from calendars -- filter by completion status, due date, or calendar |
 | `updateTask` | Update a task's title, due date, description, priority, completion status, or percent complete |
+| `listCategories` | List the calendar category names defined in Thunderbird, to use exactly in events and tasks |
 
 ### Access Control
 
@@ -302,7 +304,7 @@ commonpost-mcp/
 │   ├── options.js              # Settings page logic
 │   ├── icons/                  # Extension icons
 │   └── mcp_server/
-│       ├── api.js              # All 40 MCP tools + auth + access control
+│       ├── api.js              # All 41 MCP tools + auth + access control
 │       └── schema.json
 ├── test/                       # Test suite (node:test; fast-check for the property tests)
 ├── docs/                       # Experiment inventory, filter API notes
