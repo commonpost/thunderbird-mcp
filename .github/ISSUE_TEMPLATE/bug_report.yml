@@ -1,0 +1,72 @@
+name: Bug report
+description: Something does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. **Security problems:** please do not open a public issue; see the [security policy](https://github.com/commonpost/thunderbird-mcp/security/policy).
+        Before pasting logs or messages, remove personal data: email addresses, message content, tokens.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. ...\n2. ...\n3. ..."
+  - type: input
+    id: version
+    attributes:
+      label: Commonpost MCP version
+      placeholder: "e.g. 0.8.3 (Thunderbird: Add-ons and Themes)"
+    validations:
+      required: true
+  - type: input
+    id: thunderbird
+    attributes:
+      label: Thunderbird version
+      placeholder: "e.g. 140.16.0esr or 156.0.1 (Help > About Thunderbird)"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux (package or tarball)
+        - Linux (Snap)
+        - Linux (Flatpak)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client and Node.js version
+      placeholder: "e.g. Claude Desktop, Claude Code, other; node --version"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error messages or logs
+      description: The bridge's error message, or Thunderbird's Error Console (Ctrl+Shift+J) lines about the add-on.
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I removed personal data (addresses, message content, tokens) from what I pasted.
+          required: true
