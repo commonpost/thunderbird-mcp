@@ -703,6 +703,17 @@ const SENSITIVE_ATTACHMENT_PATTERNS = [
   /\/\.(?:thunderbird|icedove)(\/|$)/,
   /\/library\/thunderbird(\/|$)/,
   /\/appdata\/roaming\/thunderbird(\/|$)/,
+  // Windows compatibility junctions reach the same directories under another
+  // name: <profile>\Application Data ->
+  // AppData\Roaming, Local Settings -> AppData\Local (and its Application
+  // Data), AppData\Local\Application Data -> AppData\Local, All Users ->
+  // ProgramData, ProgramData\Application Data -> ProgramData, Documents and
+  // Settings -> Users. macOS: /etc and /var are symlinks into /private.
+  /\/application data\/thunderbird(\/|$)/,
+  /\/(application data|local settings)\/microsoft\/(credentials|crypto|protect|vault)(\/|$)/,
+  /\/all users\/(application data\/)?microsoft\/(crypto|protect)\//,
+  /^[a-z]:\/programdata\/application data\/microsoft\/(crypto|protect)\//,
+  /^\/private\/(etc|var\/log|var\/root)\//,
 ];
 
 // UNC and device-namespace paths (\\server\share, \\?\..., \\.\..., \??\...,
@@ -715,11 +726,43 @@ function isUncOrDevicePath(attachmentPath) {
   return normalized.startsWith('//') || normalized.startsWith('/??/');
 }
 
-function isSensitiveFilePath(attachmentPath) {
-  if (typeof attachmentPath !== 'string' || !attachmentPath) return false;
-  if (isUncOrDevicePath(attachmentPath)) return true;
+// Windows path forms that Windows resolves to ANOTHER name than the one the
+// lexical deny-list sees:
+//   - an alternate data stream (logins.json::$DATA, a.kdbx:s) reads a file or
+//     stream whose name does not end the path;
+//   - a trailing dot or space in a component is stripped (Thunderbird. is
+//     Thunderbird, a.pem. is a.pem);
+//   - an 8.3 short name (THUNDE~1, APPDAT~1) hides the long name.
+// Returns the reason, or null. Keep in sync with extension/mcp_server/api.js.
+function windowsPathAmbiguity(attachmentPath) {
+  if (typeof attachmentPath !== 'string') return null;
+  const rest = attachmentPath.replace(/^[A-Za-z]:/, '');
+  if (rest.includes(':')) {
+    return "names an alternate data stream (':' after the drive)";
+  }
+  for (const part of rest.split(/[\\/]+/)) {
+    if (part === '' || part === '.' || part === '..') continue;
+    if (/[. ]$/.test(part)) {
+      return `has a component ending with a dot or a space (${JSON.stringify(part)})`;
+    }
+    if (/^[^.~\s]{1,6}~[0-9]{1,6}(\.[^.\s]{1,3})?$/.test(part) && part.split('.')[0].length <= 8) {
+      return `has an 8.3 short-name component (${JSON.stringify(part)})`;
+    }
+  }
+  return null;
+}
+
+function matchesSensitivePattern(attachmentPath) {
   const normalized = attachmentPath.replace(/\\/g, '/').toLowerCase();
   return SENSITIVE_ATTACHMENT_PATTERNS.some(re => re.test(normalized));
+}
+
+// `windows`: apply the Windows-only rules (defaults to the running platform).
+function isSensitiveFilePath(attachmentPath, windows = process.platform === 'win32') {
+  if (typeof attachmentPath !== 'string' || !attachmentPath) return false;
+  if (isUncOrDevicePath(attachmentPath)) return true;
+  if (windows && windowsPathAmbiguity(attachmentPath)) return true;
+  return matchesSensitivePattern(attachmentPath);
 }
 
 // Tools whose `attachments` array may contain string file paths that this
@@ -818,13 +861,22 @@ async function inspectAttachmentPath(filePath) {
   if (typeof filePath !== 'string' || !filePath) {
     throw new Error('Attachment path must be a non-empty string');
   }
+  const windows = process.platform === 'win32';
   // Before ANY filesystem access.
-  if (isUncOrDevicePath(filePath)) {
+  // The resolved form too: a relative path under a UNC working directory.
+  const resolved = path.resolve(filePath);
+  if (isUncOrDevicePath(filePath) || isUncOrDevicePath(resolved)) {
     throw new Error(`UNC or device attachment paths are not allowed: ${filePath}`);
+  }
+  if (windows) {
+    const ambiguity = windowsPathAmbiguity(filePath);
+    if (ambiguity) {
+      throw new Error(`Attachment path ${ambiguity}, not allowed: ${filePath}`);
+    }
   }
   // Check both the supplied path and its lexical normalization before any
   // filesystem access. The latter catches paths such as /tmp/../etc/passwd.
-  if (isSensitiveFilePath(filePath) || isSensitiveFilePath(path.resolve(filePath))) {
+  if (isSensitiveFilePath(filePath, windows) || isSensitiveFilePath(resolved, windows)) {
     throw new Error(`Sensitive attachment path blocked: ${filePath}`);
   }
 
@@ -837,7 +889,26 @@ async function inspectAttachmentPath(filePath) {
     throw attachmentError('lstat', filePath, e);
   }
   validateAttachmentStat(filePath, stat);
-  return { filePath, stat };
+
+  // The deny-list above is lexical. A symlinked or junctioned PARENT
+  // directory, a Windows compatibility junction (Application Data), an 8.3
+  // name or a stripped trailing dot reaches a denied file under an allowed
+  // name, so the REAL path is checked as well.
+  // fs.promises.realpath is the native one (GetFinalPathNameByHandle on
+  // Windows: junctions, symlinks and short names resolved). A real path on a
+  // mapped network drive comes back as \\server\share: that is the user's own
+  // share, reached through the drive letter they gave, so only the deny-list
+  // applies to it.
+  let realPath;
+  try {
+    realPath = await fs.promises.realpath(filePath);
+  } catch (e) {
+    throw attachmentError('realpath', filePath, e);
+  }
+  if (matchesSensitivePattern(realPath)) {
+    throw new Error(`Sensitive attachment path blocked: ${filePath} (resolves to ${realPath})`);
+  }
+  return { filePath, stat, realPath };
 }
 
 function sameFile(left, right) {
@@ -877,10 +948,16 @@ async function readAttachmentFromPath(fileInfo) {
     throw new Error(`Attachment changed after validation: ${filePath}`);
   }
 
+  if (freshInfo.realPath !== fileInfo.realPath) {
+    throw new Error(`Attachment changed after validation: ${filePath}`);
+  }
+
+  // Open the checked REAL path (no symlink left in it at check time), then
+  // require the same file as the lstat snapshot below.
   const noFollow = fs.constants.O_NOFOLLOW || 0;
   let handle;
   try {
-    handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | noFollow);
+    handle = await fs.promises.open(freshInfo.realPath, fs.constants.O_RDONLY | noFollow);
   } catch (e) {
     if (e?.code === 'ELOOP') {
       throw new Error(`Attachment path is a symlink and is not allowed: ${filePath}`, { cause: e });
@@ -1463,6 +1540,7 @@ module.exports = {
   isDirectSendCall,
   isSensitiveFilePath,
   isUncOrDevicePath,
+  windowsPathAmbiguity,
   ATTACHMENT_TOOLS,
   isValidAuthToken,
   readConnectionInfo,

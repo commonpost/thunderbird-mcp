@@ -22,7 +22,9 @@ const {
   isUncOrDevicePath,
   readConnectionFileVerified,
   MAX_CONNECTION_FILE_BYTES,
+  windowsPathAmbiguity,
 } = require('../mcp-bridge.cjs');
+const vm = require('vm');
 
 describe('(a) attachment tools', () => {
   it('saveDraft is inlined like sendMail, replyToMessage and forwardMessage', () => {
@@ -325,5 +327,116 @@ describe('(c) connection.json UNC path on Windows (simulated)', () => {
     });
     assert.equal(result.candidates.length, 0);
     assert.deepEqual(result.attempts.map((a) => a.reason), ['refused: UNC or device path for the connection file']);
+  });
+});
+
+// The attachment deny-list is lexical. Windows resolves
+// some names to another one (alternate data stream, trailing dot/space, 8.3
+// short name, compatibility junctions), and a symlinked parent directory
+// reaches a denied file under an allowed name. The bridge now also checks the
+// REAL path; the Windows forms are refused lexically in both transports.
+const WIN_AMBIGUOUS = [
+  ['ADS ::$DATA', 'C:\\Users\\g\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\x\\logins.json::$DATA', /alternate data stream/],
+  ['ADS named stream', 'C:\\Users\\g\\secrets.kdbx:s', /alternate data stream/],
+  ['ADS Zone.Identifier', 'C:\\Users\\g\\Downloads\\a.pdf:Zone.Identifier', /alternate data stream/],
+  ['trailing dot (directory)', 'C:\\Users\\g\\AppData\\Roaming\\Thunderbird.\\Profiles\\x\\prefs.js', /ending with a dot or a space/],
+  ['trailing dot (file)', 'C:\\Users\\g\\keys\\server.pem.', /ending with a dot or a space/],
+  ['trailing space (file)', 'C:\\Users\\g\\keys\\server.pem ', /ending with a dot or a space/],
+  ['8.3 directory', 'C:\\Users\\g\\AppData\\Roaming\\THUNDE~1\\Profiles\\x\\prefs.js', /8\.3 short-name/],
+  ['8.3 parent', 'C:\\Users\\g\\APPDAT~1\\Roaming\\Thunderbird\\profiles.ini', /8\.3 short-name/],
+  ['8.3 file', 'C:\\Users\\g\\keys\\SERVER~1.PEM', /8\.3 short-name/],
+  ['8.3 forward slashes', 'C:/PROGRA~1/x.pdf', /8\.3 short-name/],
+];
+const WIN_PLAIN = [
+  'C:\\Users\\g\\Documents\\rapport.pdf', 'C:/Users/g/Documents/rapport final (2).pdf', 'C:\\Users\\g\\Documents\\Budget~2.xlsx',
+  'C:\\Users\\g\\Documents\\..\\Documents\\a.pdf', '.\\a.pdf', 'C:a.pdf', 'D:\\', 'relative\\dir\\a.pdf', 'C:\\Users\\g\\~$temp.docx',
+];
+const COMPAT_JUNCTIONS = [
+  'C:\\Users\\g\\Application Data\\Thunderbird\\Profiles\\x.default\\prefs.js',
+  'C:\\Documents and Settings\\g\\Application Data\\Thunderbird\\profiles.ini',
+  'C:\\Users\\g\\Local Settings\\Microsoft\\Credentials\\x',
+  'C:\\Users\\g\\Local Settings\\Application Data\\Microsoft\\Vault\\x',
+  'C:\\Users\\g\\AppData\\Local\\Application Data\\Microsoft\\Protect\\x',
+  'C:\\Users\\All Users\\Microsoft\\Crypto\\RSA\\x',
+  'C:\\ProgramData\\Application Data\\Microsoft\\Crypto\\RSA\\x',
+  '/private/etc/master.passwd',
+  '/private/var/log/system.log',
+];
+
+function loadExtensionSensitivePathHelpers() {
+  const api = fs.readFileSync(path.resolve(__dirname, '../extension/mcp_server/api.js'), 'utf8');
+  const start = api.indexOf('// BEGIN SENSITIVE ATTACHMENT PATH HELPERS');
+  const end = api.indexOf('// END SENSITIVE ATTACHMENT PATH HELPERS');
+  assert.ok(start >= 0 && end > start);
+  const sandbox = {};
+  vm.createContext(sandbox);
+  vm.runInContext(`${api.slice(start, end)}
+this.isSensitiveFilePath = isSensitiveFilePath; this.windowsPathAmbiguity = windowsPathAmbiguity;`, sandbox);
+  return sandbox;
+}
+
+describe('(b2) Windows name forms and compatibility junctions', () => {
+  it('windowsPathAmbiguity names each ambiguous form', () => {
+    for (const [label, p, re] of WIN_AMBIGUOUS) assert.match(windowsPathAmbiguity(p) || '', re, label);
+    for (const p of WIN_PLAIN) assert.equal(windowsPathAmbiguity(p), null, p);
+  });
+
+  it('isSensitiveFilePath refuses them on Windows only (a colon is a legal POSIX file name character)', () => {
+    for (const [label, p] of WIN_AMBIGUOUS) assert.equal(isSensitiveFilePath(p, true), true, label);
+    assert.equal(isSensitiveFilePath('/home/u/Pictures/capture 10:00:00.png', false), false);
+    assert.equal(isSensitiveFilePath('/home/u/notes.', false), false);
+    for (const p of WIN_PLAIN) assert.equal(isSensitiveFilePath(p, true), false, p);
+  });
+
+  it('compatibility junction names reach the same denied directories', () => {
+    for (const p of COMPAT_JUNCTIONS) {
+      assert.equal(isSensitiveFilePath(p, true), true, p);
+      assert.equal(isSensitiveFilePath(p, false), true, p);
+    }
+  });
+
+  it('the extension helper gives the same answers (kept in sync)', () => {
+    const ext = loadExtensionSensitivePathHelpers();
+    const all = [...WIN_AMBIGUOUS.map(([, p]) => p), ...WIN_PLAIN, ...COMPAT_JUNCTIONS,
+      '\\\\host\\share\\a.pdf', '/home/u/.ssh/id_rsa', 'C:\\Users\\g\\AppData\\Roaming\\Thunderbird\\x', '/home/u/a.pdf'];
+    for (const p of all) {
+      for (const windows of [true, false]) {
+        assert.equal(ext.isSensitiveFilePath(p, windows), isSensitiveFilePath(p, windows), `${p} windows=${windows}`);
+      }
+      assert.equal(ext.windowsPathAmbiguity(p), windowsPathAmbiguity(p), p);
+    }
+    // Without Services (test sandbox) the extension defaults to non-Windows rules.
+    assert.equal(ext.isSensitiveFilePath('C:\\Users\\g\\secrets.kdbx:s'), false);
+  });
+});
+
+describe('(b2) the real path of an attachment is checked (POSIX)', { skip: process.platform === 'win32' }, () => {
+  let root;
+  beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-real-')); });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('a symlinked PARENT directory into a denied directory is refused', async () => {
+    fs.mkdirSync(path.join(root, '.ssh'));
+    fs.writeFileSync(path.join(root, '.ssh', 'notes.txt'), 'secret');
+    fs.symlinkSync(path.join(root, '.ssh'), path.join(root, 'docs'));
+    const lexical = path.join(root, 'docs', 'notes.txt');
+    assert.equal(isSensitiveFilePath(lexical), false); // the lexical deny-list alone misses it
+    await assert.rejects(inlineAttachmentPaths({ attachments: [lexical] }),
+      /Sensitive attachment path blocked: .*docs.*notes\.txt \(resolves to .*\.ssh.*notes\.txt\)/);
+  });
+
+  it('a symlinked parent directory to an allowed directory still works, under the given name', async () => {
+    fs.mkdirSync(path.join(root, 'real'));
+    fs.writeFileSync(path.join(root, 'real', 'a.txt'), 'ok');
+    fs.symlinkSync(path.join(root, 'real'), path.join(root, 'alias'));
+    const args = { attachments: [path.join(root, 'alias', 'a.txt')] };
+    await inlineAttachmentPaths(args);
+    assert.deepEqual(args.attachments, [{ name: 'a.txt', contentType: 'text/plain', base64: Buffer.from('ok').toString('base64') }]);
+  });
+
+  it('the final component must still not be a symlink', async () => {
+    fs.writeFileSync(path.join(root, 'target.txt'), 'x');
+    fs.symlinkSync(path.join(root, 'target.txt'), path.join(root, 'link.txt'));
+    await assert.rejects(inlineAttachmentPaths({ attachments: [path.join(root, 'link.txt')] }), /symlink/);
   });
 });
