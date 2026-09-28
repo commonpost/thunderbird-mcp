@@ -482,6 +482,15 @@ describe('Bridge discovery', () => {
     assert.match(buildConnectionDiscoveryErrorMessage(), /file not found/);
   });
 
+  it('discovery failures hint at Experiment add-ons possibly being disabled on Release, without naming an internal pref', () => {
+    const message = buildConnectionDiscoveryErrorMessage();
+    assert.match(message, /check that the add-on is enabled/);
+    assert.match(message, /Experiment add-ons/);
+    assert.match(message, /README section/i);
+    assert.doesNotMatch(message, /about:config/i);
+    assert.doesNotMatch(message, /extensions\.experiments\.suppressed/);
+  });
+
   it('discoverConnectionInfo collects every valid candidate, not just the winner', () => {
     const options = makeTestOptions(root, {
       platform: 'linux',

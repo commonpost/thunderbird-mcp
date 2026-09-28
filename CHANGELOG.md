@@ -4,6 +4,19 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## Unreleased
+
+### Added
+- README: a section on what to do if Thunderbird disables Experiment-API add-ons on the Release channel (switch
+  to Thunderbird ESR, supported since 0.8.2).
+- `mcp-bridge.cjs`: when Thunderbird cannot be reached (no connection file, or the connection is refused), the
+  error now also suggests checking that the add-on is enabled, since Thunderbird Release may disable Experiment
+  add-ons, with a pointer to the new README section.
+
+### Changed
+- `docs/experiment-inventory.md`: the Calendar row now notes Thunderbird's announced (but, as far as we found,
+  not yet shipped or documented) WebExtension calendar API.
+
 ## [0.8.2] - 2026-09-27
 
 ### Added
