@@ -7,6 +7,10 @@ project is kept in this repository.
 ## [Unreleased]
 
 ### Added
+- Test bench on a real Thunderbird: `npm run test:tb` (`scripts/tb-bench.sh`) runs a downloaded Thunderbird headless
+  with a throwaway profile and synthetic mail (`test/fixtures/mail`), and runs `test/bench/*.test.cjs` against it
+  through `mcp-bridge.cjs`, with Marionette for privileged checks. Works with 140 ESR, 153 ESR and 156. See
+  CONTRIBUTING.md.
 - `docs/thunderbird-internals.md`: notes on how Thunderbird itself composes drafts and replies, quotes, threads,
   searches and filters mail, with the Thunderbird source of each rule and what was verified on a real Thunderbird.
 
