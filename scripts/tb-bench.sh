@@ -141,12 +141,31 @@ running() {
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
+# True if $1 is a live PID whose executable or command line points into the bench's own
+# Thunderbird cache ($CACHE/thunderbird/...), i.e. it is safe to kill as "our" Thunderbird.
+pid_is_bench_thunderbird() {
+  local pid="$1"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  local exe="" cmdline=""
+  [ -e "/proc/$pid/exe" ] && exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+  [ -r "/proc/$pid/cmdline" ] && cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+  case "$exe" in "$CACHE"/thunderbird/*) return 0 ;; esac
+  case "$cmdline" in *"$CACHE"/thunderbird/*) return 0 ;; esac
+  return 1
+}
+
 stop() {
   running || { rm -f "$STATE"; return 0; }
   local pid; pid="$(state_pid)"
   node "$ROOT/test/bench/marionette.cjs" "$PORT" -e 'Services.startup.quit(Ci.nsIAppStartup.eForceQuit); return true;' >/dev/null 2>&1 || true
   for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
-  kill -9 "$pid" 2>/dev/null || true
+  if kill -0 "$pid" 2>/dev/null; then
+    if pid_is_bench_thunderbird "$pid"; then
+      kill -9 "$pid" 2>/dev/null || true
+    else
+      log "refusing to kill -9 PID $pid: it no longer looks like the bench's Thunderbird (exe/cmdline mismatch)"
+    fi
+  fi
   rm -f "$STATE"
   log "stopped"
 }
