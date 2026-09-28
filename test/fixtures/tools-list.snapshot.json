@@ -419,10 +419,28 @@
     {
       "name": "saveDraft",
       "title": "Save Draft",
-      "description": "Save a composed message to the identity's Drafts folder without sending or opening a compose window. Useful when a human will review and send the message later from Thunderbird.",
+      "description": "Save a message to the Drafts folder without sending or opening a window; returns messageId + folderPath. With draftId, rewrite that draft: passed fields replace, omitted ones (body, recipients, attachments, reply headers) are kept, and the old version is removed.",
       "inputSchema": {
         "type": "object",
         "properties": {
+          "draftId": {
+            "type": "string",
+            "description": "messageId of an existing draft to edit (from saveDraft, replyToMessage/forwardMessage mode draft, or a search in Drafts)"
+          },
+          "folderPath": {
+            "type": "string",
+            "description": "Drafts folder URI of draftId; searched in all Drafts folders when omitted"
+          },
+          "keepAttachments": {
+            "type": "boolean",
+            "default": true,
+            "description": "With draftId: keep the draft's attachments (new ones are added)"
+          },
+          "keepQuote": {
+            "type": "boolean",
+            "default": true,
+            "description": "With draftId and body: replace only the typed text, keeping cite line, quote, forwarded message and signature"
+          },
           "to": {
             "type": "string",
             "description": "Recipient email address(es), comma-separated. Optional -- a draft can have no recipient."
@@ -1275,25 +1293,38 @@
     {
       "name": "replyToMessage",
       "title": "Reply to Message",
-      "description": "Reply in a compose window with quoted original text for review. The skipReview safety block is on by default; direct sending is honored only when the user explicitly disables that preference.",
+      "description": "Reply laid out like Thunderbird's reply window (cite line, quote, signature placed per the identity's reply position and signature settings) with threading headers. Leave to/cc empty: recipients are computed like Thunderbird (Reply-To, Mail-Followup-To, mailing lists, identity auto Cc/Bcc; a reply to your own message goes to its recipients). mode: window (review window, default), draft (save to Drafts, returns messageId), send (blocked unless the user allows it).",
       "inputSchema": {
         "type": "object",
         "properties": {
           "messageId": {
             "type": "string",
-            "description": "The message ID to reply to (from searchMessages results)"
+            "description": "Message to reply to (from searchMessages)"
           },
           "folderPath": {
             "type": "string",
-            "description": "The folder URI path (from searchMessages results)"
+            "description": "Its folder URI (from searchMessages)"
           },
           "body": {
             "type": "string",
-            "description": "Reply body text"
+            "description": "Reply text only; the cite line, quote and signature are added"
           },
           "replyAll": {
             "type": "boolean",
             "description": "Reply to all recipients (default: false)"
+          },
+          "latestInThread": {
+            "type": "boolean",
+            "description": "Reply to the newest message of this conversation instead (Sent included); result has repliedTo"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "window",
+              "draft",
+              "send"
+            ],
+            "description": "Default window"
           },
           "isHtml": {
             "type": "boolean",
@@ -1301,11 +1332,11 @@
           },
           "to": {
             "type": "string",
-            "description": "Override recipient email (default: original sender)"
+            "description": "Override the computed To"
           },
           "cc": {
             "type": "string",
-            "description": "CC recipients (comma-separated)"
+            "description": "Override the computed Cc (comma-separated)"
           },
           "bcc": {
             "type": "string",
@@ -1313,11 +1344,11 @@
           },
           "from": {
             "type": "string",
-            "description": "Sender identity (email address or identity ID from listAccounts)"
+            "description": "Sender identity (email address or identity ID from listAccounts); default: the identity the message was addressed to, as in Thunderbird"
           },
           "skipReview": {
             "type": "boolean",
-            "description": "Request direct sending without a compose window. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)."
+            "description": "Legacy: true means mode send"
           },
           "attachments": {
             "type": "array",
@@ -1393,25 +1424,34 @@
     {
       "name": "forwardMessage",
       "title": "Forward Message",
-      "description": "Forward in a compose window with original content for review. The skipReview safety block is on by default; direct sending is honored only when the user explicitly disables that preference.",
+      "description": "Forward with the original content and attachments. mode: window (review window, default), draft (save to Drafts, returns messageId; to optional), send (needs to; blocked unless the user allows it).",
       "inputSchema": {
         "type": "object",
         "properties": {
           "messageId": {
             "type": "string",
-            "description": "The message ID to forward (from searchMessages results)"
+            "description": "Message to forward (from searchMessages)"
           },
           "folderPath": {
             "type": "string",
-            "description": "The folder URI path (from searchMessages results)"
+            "description": "Its folder URI (from searchMessages)"
           },
           "to": {
             "type": "string",
-            "description": "Recipient email address"
+            "description": "Recipient email address(es)"
           },
           "body": {
             "type": "string",
-            "description": "Additional text to prepend (optional)"
+            "description": "Text above the forwarded message (optional); the signature is added"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "window",
+              "draft",
+              "send"
+            ],
+            "description": "Default window"
           },
           "isHtml": {
             "type": "boolean",
@@ -1427,11 +1467,11 @@
           },
           "from": {
             "type": "string",
-            "description": "Sender identity (email address or identity ID from listAccounts)"
+            "description": "Sender identity (email address or identity ID from listAccounts); default: the identity the message was addressed to, as in Thunderbird"
           },
           "skipReview": {
             "type": "boolean",
-            "description": "Request direct sending without a compose window. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)."
+            "description": "Legacy: true means mode send"
           },
           "attachments": {
             "type": "array",
@@ -1493,8 +1533,7 @@
         },
         "required": [
           "messageId",
-          "folderPath",
-          "to"
+          "folderPath"
         ]
       },
       "annotations": {

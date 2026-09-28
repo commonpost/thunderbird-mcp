@@ -66,13 +66,15 @@ The Thunderbird extension embeds a local HTTP server with session-scoped auth to
 | Tool | Description |
 |------|-------------|
 | `sendMail` | Compose a new email -- opens a review window; direct sending requires explicitly disabling the `skipReview` safety block |
-| `replyToMessage` | Reply with quoted original and proper threading -- `skipReview` is subject to the same safety block |
-| `forwardMessage` | Forward with all original attachments preserved -- `skipReview` is subject to the same safety block |
-| `saveDraft` | Save a new message to the Drafts folder without opening a window or sending |
+| `saveDraft` | Save a message to Drafts without sending or opening a window; returns `messageId` + `folderPath`. With `draftId`, rewrite that draft: passed fields replace, omitted ones are kept as Thunderbird keeps them when it reopens a draft (sender, recipients, Reply-To, priority, receipt flags, body, attachments, reply headers), and the old version is removed after the new one is saved. A new `body` replaces only the text typed in the draft: cite line, quote, forwarded message and signature stay where they are (`keepQuote: false` replaces everything); `keepAttachments: false` drops the old attachments. |
+| `replyToMessage` | Reply laid out like Thunderbird's reply window (cite line, quote, signature) with `In-Reply-To` / `References`. With empty `to` / `cc`, recipients are computed as in Thunderbird's reply window: Mail-Reply-To / Reply-To first (a Reply-To munged to a mailing list falls back to the author), `replyAll` keeps To in To and Cc in Cc or follows Mail-Followup-To, the identity's auto Cc / Bcc / Reply-To are added, own addresses are removed, and a reply to your own message goes to its original recipients. `latestInThread: true` replies to the newest message of the conversation (Sent included). `mode`: `window` (default), `draft` (saves a reply draft, returns its `messageId`), `send` (subject to the safety block). |
+| `forwardMessage` | Forward with Thunderbird's forward header, the original content, the signature and attachments. `mode`: `window` (default), `draft` (`to` optional), `send` (needs `to`, subject to the safety block). |
 
-All compose tools open a window for you to review and edit before sending by default. The **Block `skipReview`** preference is on by default, so `skipReview: true` is rejected until you explicitly disable the preference; only then can it send directly. Attachments can be file paths or inline base64 objects.
+All compose tools open a window for you to review and edit before sending by default; `mode: "draft"` and `saveDraft` only write to Drafts. Drafts are saved by Thunderbird's own compose engine, as from a compose window: a reply or forward draft stays linked to the original (it is marked replied / forwarded when the draft is sent), and editing a draft replaces it in place. The **Block `skipReview`** preference is on by default, so `skipReview: true` or `mode: "send"` is rejected until you explicitly disable the preference; only then can it send directly. Attachments can be file paths or inline base64 objects.
 
-Compose tools validate the `from` identity strictly -- if the specified sender doesn't match any configured Thunderbird identity, the tool returns an error instead of silently substituting another account.
+Drafts and direct sends (replies, forwards, new messages) get the body Thunderbird's compose window would save with the same text typed: the localized cite line and forward header, the quote of the original (HTML formatting kept), the signature placed by the identity's reply position (above / below the quote) and signature settings, HTML without `&#` entities and UTF-8, plain text as `format=flowed` wrapped at `mailnews.wraplength`. `body` is only your text; do not add a quote or signature yourself.
+
+Compose tools validate the `from` identity strictly -- if the specified sender doesn't match any configured Thunderbird identity, the tool returns an error instead of silently substituting another account. Without `from`, `replyToMessage` and `forwardMessage` use the identity Thunderbird's own Reply / Forward would pick: the one the message was addressed to (To / Cc, then Delivered-To; a catch-all identity replies from the address the message was sent to), and a reply to your own message uses the identity that sent it, with that identity's auto Cc / Bcc / Reply-To.
 
 ### Filters
 
@@ -121,7 +123,7 @@ Filter rules that **forward or reply** send mail without the review window that 
 
 Account and tool access are configured via the extension settings page (Tools > Add-ons > Commonpost MCP for Thunderbird > Options). Access control is not MCP-exposed -- only the user can change it.
 
-The same settings page has a "Send Safety" section. **Block `skipReview`** is enabled by default and rejects `skipReview: true` for `sendMail`, `replyToMessage`, `forwardMessage`, `createEvent`, and `createTask`; their review window or dialog still opens normally. `skipReview` is honored only after you explicitly disable this preference.
+The same settings page has a "Send Safety" section. **Block `skipReview`** is enabled by default and rejects `skipReview: true` for `sendMail`, `replyToMessage`, `forwardMessage`, `createEvent`, and `createTask`, and `mode: "send"` for replies and forwards; review windows, dialogs and drafts still work normally. `skipReview` is honored only after you explicitly disable this preference.
 
 ---
 

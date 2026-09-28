@@ -16,8 +16,7 @@
  * - IMAP folder sync (msgDatabase may be stale)
  */
 
-// Experiment scripts run in a sandbox without these web globals: without the import, DOMParser is undefined and
-// HTML bodies fall back to stripHtml instead of Markdown.
+// Experiment scripts run in a sandbox without these web globals (TextDecoder was silently missing)
 try {
   Cu.importGlobalProperties(["atob", "btoa", "DOMParser", "TextDecoder", "TextEncoder"]);
 } catch (e) {
@@ -54,6 +53,8 @@ const MCP_SERVER_INSTRUCTIONS = [
   "Search: countOnly for counts, format \"table\" for long lists, getMessages to read several messages in one call; long bodies page with bodyOffset.",
   "Company mail: get the domain from its mail (search the name, read sender addresses; contacts only if they list the organization), then searchMessages \"participant:@domain\" (several: \"participant:@a.com,@b.com\"); groupBy sender or thread for an overview.",
   "Conversation: searchMessages threadOf {messageId, folderPath} returns the thread across folders, oldest first.",
+  "Replies: replyToMessage with replyAll and empty to/cc computes recipients like Thunderbird; latestInThread answers the newest message; mode \"draft\" saves a draft without sending.",
+  "Drafts: edit with saveDraft draftId instead of delete + recreate.",
   "Compose and create tools open a review window by default; do not claim a message was sent unless the result says so.",
   "IMAP folders may be stale until opened in Thunderbird.",
 ].join("\n");
@@ -1510,6 +1511,761 @@ function pageTextField(result, field, offset, maxChars) {
   return result;
 }
 // END MESSAGE SEARCH HELPERS
+
+// Reply/forward/draft decisions. Pure: XPCOM glue lives in getAPI().
+// BEGIN COMPOSE HELPERS
+const COMPOSE_MODES = ["window", "draft", "send"];
+const MAX_REFERENCES_CHARS = 900;
+
+// Explicit mode wins; legacy skipReview: true means "send".
+function resolveComposeMode(mode, skipReview) {
+  if (COMPOSE_MODES.includes(mode)) return mode;
+  return skipReview === true ? "send" : "window";
+}
+
+function splitAddressList(header) {
+  return (String(header || "").match(/(?:[^,"]|"[^"]*")+/g) || []).map(s => s.trim()).filter(Boolean);
+}
+
+function addressListEmail(address) {
+  return (String(address).match(/<([^>]+)>/)?.[1] || String(address)).trim().toLowerCase();
+}
+
+const mailboxKey = mailbox => String(mailbox?.email || "").toLowerCase();
+
+// RemoveDuplicateAddresses (MimeJSComponents): drops mailboxes already seen or listed in `remove`.
+function removeDuplicateMailboxes(list, remove = []) {
+  const seen = new Set(remove.map(mailboxKey));
+  return list.filter(mailbox => {
+    const key = mailboxKey(mailbox);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * Reply recipients, ported 1:1 from QuotingOutputStreamListener::OnStopRequest
+ * (nsMsgCompose.cpp, Thunderbird 156). Lists are [{ name, email }].
+ * original: { from, to, cc, bcc, replyTo, mailReplyTo, mailFollowupTo, listPost }
+ *   (listPost: the address inside List-Post's <mailto:...>, or the raw value).
+ * ctx: { ownEmails: identity emails in account order (reply-to-self check),
+ *   senderEmail, autoCc, autoBcc, identityReplyTo, overrideListReplyTo }.
+ * Returns { to, cc, bcc, replyTo, from, replyToSelf, selfEmail }; from is set only for a reply to self.
+ */
+function computeReplyRecipients(original, ctx, replyAll) {
+  const o = { from: [], to: [], cc: [], bcc: [], replyTo: [], mailReplyTo: [], mailFollowupTo: [], listPost: "", ...original };
+  const toEmails = o.to.map(mailboxKey);
+  const ccEmails = o.cc.map(mailboxKey);
+  const ownEmails = (ctx.ownEmails || []).map(email => String(email).toLowerCase());
+  const fromEmail = mailboxKey(o.from[0]);
+
+  // Own message, unless another identity of ours is in To (without Bcc) or Cc
+  let replyToSelf = false;
+  let selfEmail = "";
+  if (fromEmail && ownEmails.includes(fromEmail)) {
+    replyToSelf = true;
+    selfEmail = fromEmail;
+    for (const email of ownEmails) {
+      if (toEmails.includes(email)) {
+        replyToSelf = o.bcc.length > 0;
+        break;
+      }
+      if (ccEmails.includes(email)) {
+        replyToSelf = false;
+        break;
+      }
+    }
+  }
+
+  // Reply-To pointing at the list (Reply-To munging): answer the author instead
+  const listMunged = ctx.overrideListReplyTo !== false && !!o.listPost &&
+    o.replyTo.some(m => `${m.name || ""} <${m.email || ""}>`.includes(o.listPost));
+
+  // Starting point: what CreateMessage put in from the identity
+  let from = [];
+  let to;
+  let cc = [...(ctx.autoCc || [])];
+  let bcc = [...(ctx.autoBcc || [])];
+  let replyTo = [...(ctx.identityReplyTo || [])];
+  let removeDup = false;
+
+  if (!replyAll) {
+    if (replyToSelf) {
+      from = o.from;
+      to = o.to;
+      replyTo = o.replyTo;
+    } else if (o.mailReplyTo.length) {
+      to = o.mailReplyTo;
+      removeDup = true;
+    } else if (o.replyTo.length) {
+      to = listMunged ? o.from : o.replyTo;
+      removeDup = true;
+    } else {
+      to = o.from;
+    }
+  } else if (replyToSelf) {
+    from = o.from;
+    to = o.to;
+    cc = o.cc;
+    if (o.bcc.length) bcc = o.bcc;
+    replyTo = o.replyTo;
+    removeDup = true;
+  } else if (!o.mailFollowupTo.length) {
+    const first = o.replyTo.length ? (listMunged ? [...o.replyTo, ...o.from] : o.replyTo) : o.from;
+    to = [...first, ...o.to];
+    cc = [...cc, ...o.cc];
+    removeDup = true;
+  } else {
+    to = o.mailFollowupTo;
+    removeDup = true;
+  }
+
+  if (removeDup) {
+    const myEmail = from[0]?.email || ctx.senderEmail || "";
+    if (!replyToSelf) to = removeDuplicateMailboxes(to, [{ email: myEmail }]);
+    // Own address stays in Cc only when the identity auto-Ccs itself
+    const keepMeInCc = (ctx.autoCc || []).some(m => m.email === myEmail);
+    cc = removeDuplicateMailboxes(cc, keepMeInCc ? to : [...to, { email: myEmail }]);
+    bcc = removeDuplicateMailboxes(bcc, cc);
+    if (bcc.length) bcc = removeDuplicateMailboxes(bcc, to);
+  }
+  return { to, cc, bcc, replyTo, from, replyToSelf, selfEmail: replyToSelf ? selfEmail : "" };
+}
+
+/**
+ * LoadIdentity (MsgComposeCommands.js) when the compose window switches identity:
+ * the old identity's Reply-To / auto Cc / auto Bcc are removed (first match each),
+ * the new ones added, auto Cc / Bcc only if not already addressed.
+ * fields: { to, cc, bcc, replyTo } lists; prev / next: { replyTo, cc, bcc } header strings
+ * (cc / bcc empty unless enabled); parse: header -> [{ name, email }].
+ */
+function switchIdentityRecipients(fields, prev, next, parse) {
+  const out = { ...fields };
+  const removeFirst = (list, header) => {
+    const result = [...list];
+    for (const m of parse(header)) {
+      const index = result.findIndex(r => r.name === m.name && r.email === m.email);
+      if (index >= 0) result.splice(index, 1);
+    }
+    return result;
+  };
+  if (next.replyTo !== prev.replyTo) {
+    if (prev.replyTo) out.replyTo = removeFirst(out.replyTo, prev.replyTo);
+    if (next.replyTo) out.replyTo = [...out.replyTo, ...parse(next.replyTo)];
+  }
+  const toCc = new Set([...fields.to, ...fields.cc].map(m => m.email));
+  let newCc = [];
+  if (next.cc !== prev.cc) {
+    if (prev.cc) out.cc = removeFirst(out.cc, prev.cc);
+    newCc = parse(next.cc).filter(m => !toCc.has(m.email));
+    out.cc = [...out.cc, ...newCc];
+  }
+  if (next.bcc !== prev.bcc) {
+    const addressed = new Set([...toCc, ...newCc.map(m => m.email), ...fields.bcc.map(m => m.email)]);
+    if (prev.bcc) out.bcc = removeFirst(out.bcc, prev.bcc);
+    out.bcc = [...out.bcc, ...parse(next.bcc).filter(m => !addressed.has(m.email))];
+  }
+  return out;
+}
+
+// References for a reply: the original chain plus the original id (last, In-Reply-To is taken from it), trimmed
+// from the middle.
+function buildReplyReferences(originalReferences, originalMessageId) {
+  const clean = raw => String(raw || "").trim().replace(/^<|>$/g, "");
+  const own = clean(originalMessageId);
+  const ids = [];
+  for (const raw of originalReferences || []) {
+    const id = clean(raw);
+    if (id && id !== own && !ids.includes(id)) ids.push(id);
+  }
+  if (own) ids.push(own);
+  const refs = ids.map(id => `<${id}>`);
+  while (refs.length > 2 && refs.join(" ").length > MAX_REFERENCES_CHARS) refs.splice(1, 1);
+  return refs.join(" ");
+}
+
+// nsAppendEscapedHTML
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+/**
+ * Cite line, as the QuotingOutputStreamListener constructor builds it (nsMsgCompose.cpp):
+ * template by mailnews.reply_header_type, then the first #2 (date), #3 (time), #1 (author) replaced.
+ * strings: { authorWrote, onDateAuthorWrote, authorWroteOnDate, originalMessage }; parts: { date, time, author }.
+ */
+function buildCitePrefix(type, strings, parts) {
+  let prefix;
+  let citing = true;
+  let withDate = false;
+  if (type === 0) {
+    prefix = strings.originalMessage;
+    citing = false;
+  } else if (type === 2 || type === 3) {
+    prefix = type === 2 ? strings.onDateAuthorWrote : strings.authorWroteOnDate;
+    withDate = true;
+  } else {
+    prefix = strings.authorWrote;
+  }
+  prefix = String(prefix || "");
+  if (citing) {
+    if (withDate) prefix = prefix.replace("#2", () => parts.date).replace("#3", () => parts.time);
+    prefix = prefix.replace("#1", () => parts.author);
+  }
+  return prefix || `\n\n${strings.originalMessage || ""}\n`;
+}
+
+// InsertDivWrappedTextAtSelection: every line followed by <br>.
+function divWrappedHtml(text, className) {
+  const lines = String(text).split("\n");
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  return `<div class="${className}">${lines.map(line => `${escapeHtml(line)}<br>`).join("")}</div>`;
+}
+
+// InternetCiter::GetCiteString: ">" before every line, plus a space unless the line is already quoted.
+function citeText(text) {
+  const lines = String(text).split("\n");
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines.map(line => `>${line.startsWith(">") ? "" : " "}${line}\n`).join("");
+}
+
+// remove_plaintext_tag (nsMsgCompose.cpp)
+function removePlaintextTag(html) {
+  return /<plaintext/i.test(html) ? html.replace(/<(\/?)plaintext/gi, "<$1x-plaintext") : html;
+}
+
+// Content of an HTML document without its html / head / body tags, as the editor inserts a quoted document.
+function stripDocumentTags(html) {
+  return String(html || "").replace(/<!DOCTYPE[^>]*>|<\/?(?:html|head|body)\b[^>]*>/gi, "");
+}
+
+// mimedrft.cpp convert_plaintext_body_to_html: escaped text, ">" levels as cite blockquotes, "-- " opens the signature.
+function plainTextToForwardHtml(text) {
+  const escaped = escapeHtml(text || "");
+  const isFlowed = [...escaped.matchAll(/ (?=[\r\n])/g)].some(({ index: i }) =>
+    !(escaped.slice(i - 2, i) === "--" && (i === 2 || /[\r\n]/.test(escaped[i - 3] || ""))));
+  const lines = escaped.split(/\r\n|\r|\n/);
+  const endsWithBreak = lines[lines.length - 1] === "";
+  if (endsWithBreak) lines.pop();
+  const out = [];
+  let prevLevel = 0;
+  let haveSig = false;
+  lines.forEach((line, index) => {
+    const terminated = endsWithBreak || index < lines.length - 1;
+    let p = 0;
+    let level = 0;
+    while (line.startsWith("&gt;", p)) {
+      p += 4;
+      if (!isFlowed && line[p] === " ") p++;
+      level++;
+    }
+    if (level > 0 && isFlowed && line[p] === " ") p++;
+    if (level > 0 && haveSig) {
+      out.push("</pre>");
+      haveSig = false;
+    }
+    for (; prevLevel < level; prevLevel++) out.push(isFlowed ? '<blockquote type="cite">' : '<blockquote type="cite"><pre wrap class="moz-quote-pre">');
+    for (; prevLevel > level; prevLevel--) out.push(isFlowed ? "</blockquote>" : "</pre></blockquote>");
+    const rest = line.slice(p);
+    let forceBR = false;
+    if (level === 0 && terminated && rest === "-- ") {
+      haveSig = true;
+      forceBR = true;
+      out.push('<pre class="moz-signature">');
+    }
+    out.push(rest);
+    if (terminated && (!isFlowed || !rest.endsWith(" ") || forceBR)) out.push("<br>");
+  });
+  for (; prevLevel > 0; prevLevel--) out.push(isFlowed ? "</blockquote>" : "</pre></blockquote>");
+  if (haveSig) out.push("</pre>");
+  return out.join("");
+}
+
+const FORWARD_HEADER_FIELDS = {
+  normal: ["subject", "resentComments", "resentDate", "resentFrom", "resentTo", "resentCc", "date", "from", "replyTo", "organization", "to", "cc", "newsgroups", "followupTo"],
+  micro: ["from", "subject", "resentFrom", "to", "cc", "newsgroups"],
+};
+
+/**
+ * Rows of the forwarded-message header (mimedrft.cpp mime_insert_normal_headers /
+ * mime_insert_micro_headers): [label, value]; Bcc is never shown. values: decoded header
+ * values (null = absent), labels: localized names from mime.properties.
+ */
+const FORWARD_ADDRESS_FIELDS = new Set(["resentFrom", "resentTo", "resentCc", "from", "replyTo", "to", "cc"]);
+function forwardHeaderRows(values, labels, micro) {
+  const fields = [...FORWARD_HEADER_FIELDS[micro ? "micro" : "normal"]];
+  // References only for news
+  if (!micro && values.newsgroups != null) fields.push("references");
+  // An empty address list is skipped, other present headers are shown even when empty
+  return fields.filter(key => values[key] != null && (values[key] !== "" || !FORWARD_ADDRESS_FIELDS.has(key)))
+    .map(key => [labels[key], values[key]]);
+}
+
+// MIME_HEADER_TABLE / HEADER_*_JUNK (mimedrft.cpp)
+function forwardHeaderTableHtml(rows) {
+  const cells = rows.map(([label, value]) => `<TR><TH VALIGN=BASELINE ALIGN=RIGHT NOWRAP>${label}: </TH><TD>${escapeHtml(value)}</TD></TR>`).join("");
+  return `<TABLE CELLPADDING=0 CELLSPACING=0 BORDER=0 class="moz-email-headers-table">${cells}</TABLE>`;
+}
+
+// Plain forward of a plain original (mimedrft.cpp, htmlEdit false).
+function forwardPlainText(delimiter, rows, body) {
+  return `\n\n${delimiter}${rows.map(([label, value]) => `\n${label}: ${value}`).join("")}\n\n${body || ""}`;
+}
+
+/**
+ * BuildBodyMessageAndSignature (nsMsgCompose.cpp), plain text with wrapping on: an unquoted
+ * line ending in a space is joined with the next one. Ported with its quirks.
+ */
+function joinFlowedLines(body) {
+  let out = String(body || "");
+  let quote = false;
+  for (let i = 0; i < out.length; i++) {
+    if (i === 0 || out[i - 1] === "\n") {
+      if (out[i] === ">") {
+        quote = true;
+        continue;
+      }
+      const s = out.substr(i, 10);
+      if (s.startsWith("-- \r") || s.startsWith("-- \n")) {
+        i += 4;
+        continue;
+      }
+      if (s.startsWith("- -- \r") || s.startsWith("- -- \n")) {
+        i += 6;
+        continue;
+      }
+    }
+    if (out[i] === "\n" && i > 1) {
+      if (quote) {
+        quote = false;
+        continue;
+      }
+      let j = i - 1;
+      if (out[j] === "\r") j--;
+      if (out[j] === " ") out = out.slice(0, j + 1) + out.slice(i + 1);
+    }
+  }
+  return out;
+}
+
+/**
+ * nsMsgCompose::ReplaceFileURLs: file:// URLs (quoted, or up to a space / ">") become data: URLs.
+ * toDataURL(fileURL) returns the data: URL or throws.
+ */
+function replaceFileURLs(data, toDataURL) {
+  let out = String(data || "");
+  let offset = 0;
+  for (;;) {
+    const pos = out.toLowerCase().indexOf("file://", offset);
+    if (pos < 0) break;
+    const q = pos > 0 ? out[pos - 1] : "";
+    let end;
+    if (q === '"' || q === "'") {
+      end = out.indexOf(q, pos);
+    } else {
+      const space = out.indexOf(" ", pos);
+      const gt = out.indexOf(">", pos);
+      end = space < 0 ? gt : (gt < 0 ? space : Math.min(space, gt));
+    }
+    if (end < 0) break;
+    let dataURL = null;
+    try { dataURL = toDataURL(out.slice(pos, end)); } catch { /* keep the file URL */ }
+    if (dataURL) {
+      out = out.slice(0, pos) + dataURL + out.slice(end);
+      offset = pos + dataURL.length;
+    } else {
+      offset = end;
+    }
+  }
+  return out;
+}
+
+/**
+ * ProcessSignature (nsMsgCompose.cpp), after the signature text is loaded: framing and "-- " separator.
+ * sig: { data (already in the compose format), htmlSig }; o: { composeHtml, replyOnTop, sigBottom,
+ * quoted, suppressSigSep, paragraphMode, wrapLength }.
+ */
+function frameSignature(sig, o) {
+  let data = String(sig.data || "").replace(/\r\n?/g, "\n");
+  if (!sig.htmlSig && !o.composeHtml && data && !data.endsWith("\n")) data += "\n";
+  if (!data) return "";
+  let out = "";
+  if (o.composeHtml) out += (o.paragraphMode ? "" : "<br>") + (sig.htmlSig ? '<div class="moz-signature">' : `<pre class="moz-signature" cols=${o.wrapLength}>`);
+  if ((o.replyOnTop !== 1 || o.sigBottom || !o.quoted) && !data.includes("\n-- \n") && !o.suppressSigSep && !data.startsWith("-- \n")) {
+    out += `-- ${o.composeHtml && sig.htmlSig ? "<br>" : "\n"}`;
+  }
+  if (!o.composeHtml && o.replyOnTop === 1 && !o.sigBottom && o.quoted) out += "\n";
+  out += data;
+  if (o.composeHtml) out += sig.htmlSig ? "</div>" : "</pre>";
+  return out;
+}
+
+// Image signature file (ProcessSignature imageSig branch), HTML compose only.
+function frameImageSignature(dataURL, o) {
+  const dashes = !o.suppressSigSep && (o.replyOnTop !== 1 || o.sigBottom || !o.quoted) ? "-- " : "";
+  return `${o.paragraphMode ? "" : "<br>"}<div class="moz-signature">${dashes}<br><img src='${dataURL}' border=0></div>`;
+}
+
+// MsgRemoveQueryPart (nsMsgUtils.cpp): the path up to the first "?" or "/;".
+function removeQueryPart(spec) {
+  let out = String(spec || "");
+  const q = out.indexOf("?");
+  if (q >= 0) out = out.slice(0, q);
+  const s = out.indexOf("/;");
+  return s >= 0 ? out.slice(0, s) : out;
+}
+
+/**
+ * nsMsgCompose::TagEmbeddedObjects: every <img> and <a> of the quote / forward gets
+ * moz-do-not-send="true" unless isSafe(url) (a part of the original message), so the compose
+ * window does not attach remote content on send.
+ */
+function tagEmbeddedObjects(html, isSafe) {
+  return String(html || "").replace(/<(a|img)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag, name) => {
+    const attr = name.toLowerCase() === "img" ? "src" : "href";
+    const m = tag.match(new RegExp(`\\s${attr}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+    const url = m ? (m[1] ?? m[2] ?? m[3]).replace(/&amp;/g, "&") : "";
+    if (url && isSafe(url)) return tag;
+    const rest = tag.replace(/\smoz-do-not-send\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)|\smoz-do-not-send(?=[\s>/])/gi, "");
+    return rest.replace(/\s*(\/?)>$/, ' moz-do-not-send="true"$1>');
+  });
+}
+
+// Text the user adds, as typed at the caret: a paragraph in paragraph mode, HTML as given.
+function userBodyHtml(body, isHtml, paragraphMode) {
+  if (isHtml) return stripDocumentTags(body);
+  const text = String(body || "");
+  const html = escapeHtml(text).replace(/\r\n|\r|\n/g, "<br>");
+  if (!paragraphMode) return html;
+  return `<p>${html || "<br>"}</p>`;
+}
+
+// The serializer of a saved compose document writes the document charset into every content-type meta.
+function serializerMetaCharset(html) {
+  return String(html || "").replace(/<meta\b(?=[^>]*\bhttp-equiv\s*=\s*["']?content-type\b)[^>]*>/gi, '<meta http-equiv="content-type" content="text/html; charset=UTF-8">');
+}
+
+function wrapHtmlDocument(inner) {
+  return `<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body>${inner}</body></html>`;
+}
+
+/**
+ * Body as Thunderbird's compose window lays it out (ConvertAndLoadComposeWindow), with the
+ * user's text where the caret ends up. kind: "reply" | "forward" | "new".
+ * parts: { user, prefix, quote, citeRef, forward, signature } (HTML, or text for the plain variant);
+ * prefs: { replyOnTop, sigBottom, paragraphMode, sigAboveQuote } (sigAboveQuote: a reply
+ * signature is configured above the quote, which drops one of the two breaks).
+ * reply_on_top 2 (select the quote) is laid out like 0: typing would replace the selected quote.
+ */
+const BLOCK_START = /^<(?:address|article|aside|blockquote|div|dl|fieldset|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|table|ul)\b/i;
+
+// Text typed (or HTML inserted) in front of a <br> that then only ends its line before a block boundary: the editor
+// deletes that <br> (HTMLEditor::EnsureNoFollowingUnnecessaryLineBreak after HandleInsertText and InsertHTML).
+function typedBefore(user, rest) {
+  const br = rest.match(/^<br\s*\/?>/i);
+  if (user && br) {
+    const after = rest.slice(br[0].length);
+    if (!after || BLOCK_START.test(after)) return user + after;
+  }
+  return user + rest;
+}
+
+function layoutComposeHtml(kind, parts, prefs) {
+  const sigOnTop = prefs.replyOnTop === 1 && !prefs.sigBottom;
+  const user = parts.user || "";
+  const sig = parts.signature || "";
+  const typed = prefs.paragraphMode ? (u, rest) => u + rest : typedBefore;
+  // NotifyComposeBodyReadyForwardInline (MsgComposeCommands.js) puts a <br> (in paragraph mode <p><br></p>,
+  // the user's paragraph) at the top of a forward
+  if (kind === "forward") return typed(user, (prefs.paragraphMode ? "" : "<br>") + (sigOnTop ? `${sig}${parts.forward}` : `${parts.forward}${sig}`));
+  const cite = (parts.prefix ? divWrappedHtml(parts.prefix, "moz-cite-prefix") : "") +
+    (parts.quote ? `<blockquote type="cite"${parts.citeRef ? ` cite="${escapeHtml(parts.citeRef)}"` : ""}>${parts.quote}</blockquote>` : "");
+  if (kind !== "reply" || !cite) return typed(user, sig);
+  // Without a quote the caret stays at the top
+  if (prefs.replyOnTop === 1 || !parts.quote) {
+    const breaks = prefs.replyOnTop === 1 && parts.prefix && !prefs.paragraphMode ? (prefs.sigAboveQuote ? "<br>" : "<br><br>") : "";
+    // The line breaks go in before the editor's padding <br>, which stays at the end
+    const padding = breaks ? "<br>" : "";
+    return typed(user, sigOnTop ? `${sig}${breaks}${cite}${padding}` : `${breaks}${cite}${sig}${padding}`);
+  }
+  // The caret goes back before the break inserted after the quote
+  return cite + typed(user, `${prefs.paragraphMode ? "" : "<br>"}${sig}`);
+}
+
+// Plain body as hunks for plainEditorHtml: `quotes` marks text Thunderbird inserts with InsertTextWithQuotations
+// or InsertAsQuotation (its lines starting with ">" become quotations); the rest is typed text.
+function layoutComposeText(kind, parts, prefs) {
+  const sigOnTop = prefs.replyOnTop === 1 && !prefs.sigBottom;
+  const user = Array.isArray(parts.user) ? parts.user : [parts.user || ""];
+  const sig = parts.signature ? `\n${parts.signature}` : "";
+  const quoted = text => ({ text: text || "", quotes: true });
+  const hunks = (...items) => items.flat().map(h => (typeof h === "string" ? { text: h } : h)).filter(h => h.text);
+  // Plain forward with the signature below: Thunderbird 150-157 drop it (bug 2063939), 140 and 158+ insert it
+  if (kind === "forward") return hunks(user, sigOnTop && sig ? `\n${sig}` : "\n", quoted(parts.forward), sigOnTop ? "" : sig);
+  const prefix = parts.prefix ? `${parts.prefix}\n` : "";
+  const quote = parts.quote ? quoted(citeText(parts.quote)) : "";
+  if (kind !== "reply" || !(prefix || quote)) return hunks(user, sig);
+  if (prefs.replyOnTop === 1 || !parts.quote) {
+    const breaks = prefs.replyOnTop === 1 && parts.prefix ? (prefs.sigAboveQuote ? "\n" : "\n\n") : "";
+    return sigOnTop ? hunks(user, sig, breaks, prefix, quote) : hunks(user, breaks, prefix, quote, sig);
+  }
+  return hunks(prefix, quote, user, `\n${sig}`);
+}
+
+const PLAIN_QUOTE_SPAN = '<span _moz_quote="true" style="white-space: pre-wrap; display: block; width: 98vw;">';
+
+// Document of Thunderbird's plain-text editor holding these hunks: typed text as text and <br>; in `quotes` hunks
+// runs of lines starting with ">" go in a quotation span (HTMLEditor::InsertTextWithQuotationsInternal,
+// InsertAsPlaintextQuotation), the body style is the one HTMLEditor::SetWrapWidth sets.
+function plainEditorHtml(hunks, wrapLength) {
+  const typed = text => escapeHtml(text).replace(/\n/g, "<br>");
+  let body = "";
+  for (const hunk of hunks) {
+    const text = hunk.text.replace(/\r\n?/g, "\n");
+    if (!hunk.quotes) {
+      body += typed(text);
+      continue;
+    }
+    let quoted = text[0] === ">";
+    let start = 0;
+    let pos = 0;
+    for (;;) {
+      const nl = text.indexOf("\n", pos);
+      let next = text.length;
+      let nextQuoted = false;
+      if (nl >= 0) {
+        next = nl;
+        while (text[next] === "\n") next++;
+        nextQuoted = text[next] === ">";
+        if (nextQuoted === quoted) {
+          pos = next;
+          continue;
+        }
+        // Blank lines after a quotation are typed text
+        if (quoted) next = nl + 1;
+      }
+      const part = typed(text.slice(start, next));
+      body += quoted ? `${PLAIN_QUOTE_SPAN}${part}</span>` : part;
+      if (nl < 0) break;
+      quoted = nextQuoted;
+      start = pos = next;
+    }
+  }
+  const style = wrapLength > 0 ? `font-family: -moz-fixed; white-space: pre-wrap; width: ${wrapLength}ch;` : "white-space: pre-wrap;";
+  return `<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body style="${style}">${body}</body></html>`;
+}
+
+function prefixSubject(subject, prefix) {
+  const s = String(subject || "");
+  return new RegExp(`^${prefix}:`, "i").test(s) ? s : `${prefix}: ${s}`;
+}
+
+const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
+const RAW_TEXT_TAGS = new Set(["script", "style", "textarea", "title"]);
+// Forward delimiter of drafts without a container (older ones): "-------- Forwarded Message --------"
+const FORWARD_DELIMITER = /-{5,}[^<\n]{1,60}-{5,}/;
+
+// Kind of a block Thunderbird's compose window inserts, from its start tag, or null.
+function draftBlockKind(tag) {
+  const cls = (tag.match(/\bclass\s*=\s*["']([^"']*)["']/i) || [])[1] || "";
+  if (/\bmoz-signature\b/.test(cls)) return "signature";
+  if (/\bmoz-forward-container\b/.test(cls)) return "forward";
+  if (/\bmoz-cite-prefix\b/.test(cls) || /^<blockquote\b[^>]*\btype\s*=\s*["']?cite\b/i.test(tag)) return "cite";
+  return null;
+}
+
+// Top-level cite / forward / signature blocks of an HTML body between from and to: [{ start, end, kind }].
+function htmlDraftBlocks(html, from, to) {
+  const blocks = [];
+  const stack = [];
+  let open = null;
+  const re = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][\w-]*)\b[^>]*>/g;
+  re.lastIndex = from;
+  let m;
+  while ((m = re.exec(html)) && m.index < to) {
+    if (!m[2]) continue;
+    const name = m[2].toLowerCase();
+    if (m[1]) {
+      const at = stack.lastIndexOf(name);
+      if (at < 0) continue;
+      stack.length = at;
+      if (open && !stack.length) {
+        blocks.push({ ...open, end: re.lastIndex });
+        open = null;
+      }
+      continue;
+    }
+    if (!stack.length && !open) {
+      const kind = draftBlockKind(m[0]);
+      if (kind) open = { start: m.index, kind };
+    }
+    if (VOID_TAGS.has(name) || m[0].endsWith("/>")) continue;
+    if (RAW_TEXT_TAGS.has(name)) {
+      const close = html.toLowerCase().indexOf(`</${name}`, re.lastIndex);
+      if (close >= 0) re.lastIndex = close;
+    }
+    stack.push(name);
+  }
+  if (open) blocks.push({ ...open, end: to });
+  if (!blocks.some(b => b.kind !== "signature")) {
+    const fwd = html.slice(from, to).search(FORWARD_DELIMITER);
+    if (fwd >= 0 && !blocks.some(b => from + fwd >= b.start && from + fwd < b.end)) {
+      const start = from + fwd;
+      return [...blocks.filter(b => b.end <= start), { start, end: to, kind: "forward" }];
+    }
+  }
+  return blocks;
+}
+
+/**
+ * Top-level blocks of a plain body (offsets): a cite line with its "> " lines, a forward from its
+ * delimiter to the end, a signature from "-- " (or the identity signature) to the next block.
+ */
+function plainDraftBlocks(text, knownSignature) {
+  const lines = [];
+  for (let pos = 0; pos < text.length;) {
+    const nl = text.indexOf("\n", pos);
+    const end = nl < 0 ? text.length : nl + 1;
+    lines.push({ start: pos, end, text: text.slice(pos, nl < 0 ? end : nl).replace(/\r$/, "") });
+    pos = end;
+  }
+  const blocks = [];
+  const quoted = i => i < lines.length && lines[i].text.startsWith(">");
+  for (let i = 0; i < lines.length; i++) {
+    if (quoted(i)) {
+      let first = i;
+      // Cite line right above the quote; a delimiter line may stand above it after blank lines
+      if (i > 0 && lines[i - 1].text.trim()) first = i - 1;
+      let k = first - 1;
+      while (k >= 0 && !lines[k].text.trim()) k--;
+      if (k >= 0 && k < first && FORWARD_DELIMITER.test(lines[k].text)) first = k;
+      let last = i;
+      while (quoted(last + 1)) last++;
+      const prev = blocks[blocks.length - 1];
+      if (prev && prev.kind === "signature" && prev.end > lines[first].start) prev.end = lines[first].start;
+      blocks.push({ start: lines[first].start, end: lines[last].end, kind: "cite" });
+      i = last;
+    } else if (FORWARD_DELIMITER.test(lines[i].text)) {
+      let k = i + 1;
+      while (k < lines.length && !lines[k].text.trim()) k++;
+      if (quoted(k)) continue;
+      blocks.push({ start: lines[i].start, end: text.length, kind: "forward" });
+      break;
+    } else if (lines[i].text === "-- " && !blocks.some(b => b.kind === "signature" && b.end > lines[i].start)) {
+      blocks.push({ start: lines[i].start, end: text.length, kind: "signature" });
+    }
+  }
+  const sig = String(knownSignature || "").replace(/\r\n?/g, "\n").trim();
+  // Without "-- " (reply_on_top with the signature above the quote, suppress_signature_separator)
+  if (sig && !blocks.some(b => b.kind === "signature")) {
+    for (let at = text.lastIndexOf(sig); at >= 0; at = at ? text.lastIndexOf(sig, at - 1) : -1) {
+      if ((at === 0 || text[at - 1] === "\n") && !blocks.some(b => at >= b.start && at < b.end)) {
+        const next = blocks.find(b => b.start > at);
+        blocks.push({ start: at, end: next ? next.start : text.length, kind: "signature" });
+        blocks.sort((x, y) => x.start - y.start);
+        break;
+      }
+    }
+  }
+  return blocks;
+}
+
+/**
+ * Draft body around the text the user typed (C8): { head, user, tail, kept } with head + user + tail
+ * === body. Thunderbird's blocks (cite line + quote, forward container, signature) stay in head / tail.
+ * The user's text is the first gap between blocks with content; without one, the caret position of the
+ * compose window: above the first block, or below the quote when the body starts with it (bottom-post).
+ */
+function splitDraftBody(body, isHtml, knownSignature) {
+  const text = String(body || "");
+  let from = 0;
+  let to = text.length;
+  if (isHtml) {
+    const open = text.match(/<body\b[^>]*>/i);
+    if (open) from = open.index + open[0].length;
+    const close = text.toLowerCase().lastIndexOf("</body>");
+    if (close >= from) to = close;
+  }
+  const blocks = isHtml ? htmlDraftBlocks(text, from, to) : plainDraftBlocks(text, knownSignature);
+  if (!blocks.length) return { head: text.slice(0, from), user: text.slice(from, to), tail: text.slice(to), kept: false };
+  const sep = isHtml ? /^(?:\s|<br\b[^>]*>)*/i : /^\s*/;
+  const sepEnd = isHtml ? /(?:\s|<br\b[^>]*>)*$/i : /\s*$/;
+  const gaps = [];
+  let prev = from;
+  for (const b of [...blocks, { start: to, end: to }]) {
+    gaps.push([prev, b.start]);
+    prev = b.end;
+  }
+  const split = (at, end) => ({ head: text.slice(0, at), user: text.slice(at, end), tail: text.slice(end), kept: true });
+  for (const [a, b] of gaps) {
+    const gap = text.slice(a, b);
+    const lead = gap.match(sep)[0].length;
+    if (lead === gap.length) continue;
+    const trail = gap.slice(lead).match(sepEnd)[0].length;
+    return split(a + lead, b - trail);
+  }
+  const [a0, b0] = gaps[0];
+  if (a0 < b0 || blocks[0].kind !== "cite") return split(a0, a0);
+  let i = 0;
+  while (i + 1 < blocks.length && blocks[i + 1].kind === "cite") i++;
+  const [a] = gaps[i + 1];
+  return split(a, a);
+}
+
+/**
+ * Fields of a draft update: passed values win, the rest come from the old draft.
+ * Attachments are appended unless keepAttachments is false.
+ */
+function mergeDraftFields(update, existing) {
+  const pick = key => (update[key] !== undefined ? update[key] : existing[key]);
+  return {
+    to: pick("to") || "",
+    cc: pick("cc") || "",
+    bcc: pick("bcc") || "",
+    subject: pick("subject") || "",
+    body: pick("body") || "",
+    // A new body without isHtml follows the identity default, an unchanged body keeps its format
+    isHtml: update.isHtml !== undefined ? update.isHtml : (update.body !== undefined ? undefined : existing.isHtml),
+    keptAttachments: update.keepAttachments === false ? [] : (existing.attachments || []),
+    references: existing.references || "",
+    inReplyTo: existing.inReplyTo || "",
+    replyTo: existing.replyTo || "",
+    priority: existing.priority || "",
+  };
+}
+
+// X-Priority of a reopened draft (mimedrft.cpp: NS_MsgGetPriorityFromString, NS_MsgGetUntranslatedPriorityName).
+function draftPriorityName(raw) {
+  const value = String(raw || "");
+  const digit = ["1", "2", "3", "4", "5"].find(d => value.includes(d));
+  if (digit) return ["Highest", "High", "Normal", "Low", "Lowest"][digit - 1];
+  if (/highest/i.test(value)) return "Highest";
+  if (/high|urgent/i.test(value)) return "High";
+  if (/normal/i.test(value)) return "Normal";
+  if (/lowest/i.test(value)) return "Lowest";
+  if (/low|non-urgent/i.test(value)) return "Low";
+  return "None";
+}
+
+// Compose fields a reopened draft takes from X-Mozilla-Draft-Info (mimedrft.cpp mime_parse_stream_complete).
+function draftInfoFields(draftInfo) {
+  if (!draftInfo) return {};
+  const param = name => String(draftInfo).match(new RegExp(`(?:^|;)\\s*${name}=([^;\\s]*)`, "i"))?.[1];
+  const receipt = param("receipt");
+  const fields = {
+    attachVCard: param("vcard") === "1",
+    returnReceipt: !!receipt && receipt !== "0",
+    DSN: param("DSN") === "1",
+    attachmentReminder: param("attachmentreminder") === "1",
+  };
+  if (fields.returnReceipt) fields.receiptHeaderType = (parseInt(receipt, 10) || 0) - 1;
+  const deliveryFormat = param("deliveryformat");
+  if (deliveryFormat !== undefined) fields.deliveryFormat = parseInt(deliveryFormat, 10) || 0;
+  return fields;
+}
+// END COMPOSE HELPERS
+
 let _tempFileCounter = 0;
 const PREF_ALLOWED_ACCOUNTS = "extensions.commonpost-mcp.allowedAccounts";
 const PREF_DISABLED_TOOLS = "extensions.commonpost-mcp.disabledTools";
@@ -2637,10 +3393,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "saveDraft",
         group: "messages", crud: "create",
         title: "Save Draft",
-        description: "Save a composed message to the identity's Drafts folder without sending or opening a compose window. Useful when a human will review and send the message later from Thunderbird.",
+        description: "Save a message to the Drafts folder without sending or opening a window; returns messageId + folderPath. With draftId, rewrite that draft: passed fields replace, omitted ones (body, recipients, attachments, reply headers) are kept, and the old version is removed.",
         inputSchema: {
           type: "object",
           properties: {
+            draftId: { type: "string", description: "messageId of an existing draft to edit (from saveDraft, replyToMessage/forwardMessage mode draft, or a search in Drafts)" },
+            folderPath: { type: "string", description: "Drafts folder URI of draftId; searched in all Drafts folders when omitted" },
+            keepAttachments: { type: "boolean", default: true, description: "With draftId: keep the draft's attachments (new ones are added)" },
+            keepQuote: { type: "boolean", default: true, description: "With draftId and body: replace only the typed text, keeping cite line, quote, forwarded message and signature" },
             to: { type: "string", description: "Recipient email address(es), comma-separated. Optional -- a draft can have no recipient." },
             subject: { type: "string", description: "Email subject line (optional)" },
             body: { type: "string", description: "Email body (optional)" },
@@ -2898,20 +3658,22 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "replyToMessage",
         group: "messages", crud: "create",
         title: "Reply to Message",
-        description: "Reply in a compose window with quoted original text for review. The skipReview safety block is on by default; direct sending is honored only when the user explicitly disables that preference.",
+        description: "Reply laid out like Thunderbird's reply window (cite line, quote, signature placed per the identity's reply position and signature settings) with threading headers. Leave to/cc empty: recipients are computed like Thunderbird (Reply-To, Mail-Followup-To, mailing lists, identity auto Cc/Bcc; a reply to your own message goes to its recipients). mode: window (review window, default), draft (save to Drafts, returns messageId), send (blocked unless the user allows it).",
         inputSchema: {
           type: "object",
           properties: {
-            messageId: { type: "string", description: "The message ID to reply to (from searchMessages results)" },
-            folderPath: { type: "string", description: "The folder URI path (from searchMessages results)" },
-            body: { type: "string", description: "Reply body text" },
+            messageId: { type: "string", description: "Message to reply to (from searchMessages)" },
+            folderPath: { type: "string", description: "Its folder URI (from searchMessages)" },
+            body: { type: "string", description: "Reply text only; the cite line, quote and signature are added" },
             replyAll: { type: "boolean", description: "Reply to all recipients (default: false)" },
+            latestInThread: { type: "boolean", description: "Reply to the newest message of this conversation instead (Sent included); result has repliedTo" },
+            mode: { type: "string", enum: ["window", "draft", "send"], description: "Default window" },
             isHtml: { type: "boolean", description: "Set to true if body contains HTML markup (default: false)" },
-            to: { type: "string", description: "Override recipient email (default: original sender)" },
-            cc: { type: "string", description: "CC recipients (comma-separated)" },
+            to: { type: "string", description: "Override the computed To" },
+            cc: { type: "string", description: "Override the computed Cc (comma-separated)" },
             bcc: { type: "string", description: "BCC recipients (comma-separated)" },
-            from: { type: "string", description: "Sender identity (email address or identity ID from listAccounts)" },
-            skipReview: { type: "boolean", description: "Request direct sending without a compose window. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)." },
+            from: { type: "string", description: "Sender identity (email address or identity ID from listAccounts); default: the identity the message was addressed to, as in Thunderbird" },
+            skipReview: { type: "boolean", description: "Legacy: true means mode send" },
             attachments: {
               type: "array",
               maxItems: MAX_ATTACHMENTS_PER_MESSAGE,
@@ -2945,19 +3707,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "forwardMessage",
         group: "messages", crud: "create",
         title: "Forward Message",
-        description: "Forward in a compose window with original content for review. The skipReview safety block is on by default; direct sending is honored only when the user explicitly disables that preference.",
+        description: "Forward with the original content and attachments. mode: window (review window, default), draft (save to Drafts, returns messageId; to optional), send (needs to; blocked unless the user allows it).",
         inputSchema: {
           type: "object",
           properties: {
-            messageId: { type: "string", description: "The message ID to forward (from searchMessages results)" },
-            folderPath: { type: "string", description: "The folder URI path (from searchMessages results)" },
-            to: { type: "string", description: "Recipient email address" },
-            body: { type: "string", description: "Additional text to prepend (optional)" },
+            messageId: { type: "string", description: "Message to forward (from searchMessages)" },
+            folderPath: { type: "string", description: "Its folder URI (from searchMessages)" },
+            to: { type: "string", description: "Recipient email address(es)" },
+            body: { type: "string", description: "Text above the forwarded message (optional); the signature is added" },
+            mode: { type: "string", enum: ["window", "draft", "send"], description: "Default window" },
             isHtml: { type: "boolean", description: "Set to true if body contains HTML markup (default: false)" },
             cc: { type: "string", description: "CC recipients (comma-separated)" },
             bcc: { type: "string", description: "BCC recipients (comma-separated)" },
-            from: { type: "string", description: "Sender identity (email address or identity ID from listAccounts)" },
-            skipReview: { type: "boolean", description: "Request direct sending without a compose window. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)." },
+            from: { type: "string", description: "Sender identity (email address or identity ID from listAccounts); default: the identity the message was addressed to, as in Thunderbird" },
+            skipReview: { type: "boolean", description: "Legacy: true means mode send" },
             attachments: {
               type: "array",
               maxItems: MAX_ATTACHMENTS_PER_MESSAGE,
@@ -2984,7 +3747,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               },
             },
           },
-          required: ["messageId", "folderPath", "to"],
+          required: ["messageId", "folderPath"],
         },
       },
       {
@@ -4221,55 +4984,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
-            function splitAddressHeader(header) {
-              return (header || "").match(/(?:[^,"]|"[^"]*")+/g) || [];
-            }
-
-            function extractAddressEmail(address) {
-              return (address.match(/<([^>]+)>/)?.[1] || address.trim()).toLowerCase();
-            }
-
             function mergeAddressHeaders(...headers) {
               const seen = new Set();
               const merged = [];
               for (const header of headers) {
-                for (const raw of splitAddressHeader(header)) {
+                for (const raw of splitAddressList(header)) {
                   const address = raw.trim();
                   if (!address) continue;
-                  const email = extractAddressEmail(address);
+                  const email = addressListEmail(address);
                   if (seen.has(email)) continue;
                   seen.add(email);
                   merged.push(address);
                 }
               }
               return merged.join(", ");
-            }
-
-            function getReplyAllCcRecipients(msgHdr, folder) {
-              const ownAccount = MailServices.accounts.findAccountForServer(folder.server);
-              const ownEmails = new Set();
-              if (ownAccount) {
-                for (const identity of ownAccount.identities) {
-                  if (identity.email) ownEmails.add(identity.email.toLowerCase());
-                }
-              }
-
-              const allRecipients = [
-                ...splitAddressHeader(msgHdr.recipients),
-                ...splitAddressHeader(msgHdr.ccList)
-              ]
-                .map(r => r.trim())
-                .filter(r => r && (ownEmails.size === 0 || !ownEmails.has(extractAddressEmail(r))));
-
-              const seen = new Set();
-              const uniqueRecipients = allRecipients.filter(r => {
-                const email = extractAddressEmail(r);
-                if (seen.has(email)) return false;
-                seen.add(email);
-                return true;
-              });
-
-              return uniqueRecipients.join(", ");
             }
 
             function getIdentityAutoRecipientHeader(identity, kind) {
@@ -4497,7 +5225,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                           applyComposeRecipientOverrides(composeWin, identity, to, cc, bcc);
                           insertReplyBodyIntoComposeWindow(composeWin, body, isHtml);
                           addAttachmentsToComposeWindow(composeWin, attachDescs);
-                          finish({ success: true });
+                          // Recipients Thunderbird computed (fields are ready before the body)
+                          const fields = composeWin.gMsgCompose?.compFields;
+                          const resolved = { success: true };
+                          const resolvedTo = to || fields?.to || "";
+                          const resolvedCc = cc || fields?.cc || "";
+                          if (resolvedTo) resolved.to = resolvedTo;
+                          if (resolvedCc) resolved.cc = resolvedCc;
+                          finish(resolved);
                         } catch (e) {
                           finish({ error: e.toString() });
                         }
@@ -4571,6 +5306,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return false;
             }
 
+            function accountKeyForIdentity(identity) {
+              try {
+                for (const account of MailServices.accounts.accounts) {
+                  for (const candidate of account.identities) {
+                    if (candidate.key === identity.key) return account.key;
+                  }
+                }
+              } catch { /* no accounts */ }
+              return "";
+            }
+
             /**
              * Sends a message directly via nsIMsgSend without opening a compose window.
              * Used by composeMail, replyToMessage, forwardMessage when skipReview=true.
@@ -4610,8 +5356,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   const msgSend = Cc["@mozilla.org/messengercompose/send;1"]
                     .createInstance(Ci.nsIMsgSend);
 
-                  // Populate sender fields from identity (normally done by compose window)
-                  if (identity.email) {
+                  // Sender from identity (normally done by compose window), unless the caller set it
+                  // (catch-all reply address, From of a reopened draft)
+                  if (identity.email && !composeFields.from) {
                     const name = identity.fullName || "";
                     composeFields.from = name
                       ? `"${name}" <${identity.email}>`
@@ -4629,19 +5376,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   // Extract body -- createAndSendMessage takes it as a separate param
                   const body = composeFields.body || "";
 
-                  // Resolve account key from identity
-                  let accountKey = "";
-                  try {
-                    for (const account of MailServices.accounts.accounts) {
-                      for (let i = 0; i < account.identities.length; i++) {
-                        if (account.identities[i].key === identity.key) {
-                          accountKey = account.key;
-                          break;
-                        }
-                      }
-                      if (accountKey) break;
-                    }
-                  } catch {}
+                  const accountKey = accountKeyForIdentity(identity);
 
                   // SaveAsDraft mode routes through _mimeDoFcc() which does not
                   // call onStopSending. Completion is signaled via the copy
@@ -4744,10 +5479,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   settle({ error: e.toString() });
                 }
               });
-            }
-
-            function escapeHtml(s) {
-              return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
             }
 
             function stripHtml(html) {
@@ -5008,7 +5739,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
 
             /**
-             * Converts body text to HTML for compose fields.
+             * Body HTML for a compose window (drafts and sends without a window use newMessageBody).
              * Handles both HTML input (entity-encodes non-ASCII) and plain text.
              */
             function formatBodyHtml(body, isHtml) {
@@ -8047,18 +8778,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 // editors and recipients.
                 const { useHtml, format } = resolveComposeFormat(msgComposeParams.identity, isHtml, Ci.nsIMsgCompType.New);
                 msgComposeParams.format = format;
-                if (useHtml) {
-                  const formatted = formatBodyHtml(body, isHtml);
-                  composeFields.body = isHtml && formatted.includes('<html')
-                    ? formatted
-                    : `<html><head><meta charset="UTF-8"></head><body>${formatted}</body></html>`;
-                } else {
-                  composeFields.body = body || "";
-                }
 
                 const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(attachments);
 
                 if (skipReview) {
+                  composeFields.body = newMessageBody(body, isHtml, useHtml, msgComposeParams.identity);
                   return sendMessageDirectly(composeFields, msgComposeParams.identity, fileDescs, null, Ci.nsIMsgCompType.New, Ci.nsIMsgCompDeliverMode.Now, useHtml ? "text/html" : "text/plain").then(result => {
                     if (result.success) {
                       let msg = "Message sent";
@@ -8080,6 +8804,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 for (const att of descsToMsgAttachments(fileDescs)) {
                   composeFields.addAttachment(att);
                 }
+                // The window adds the signature itself
+                setComposeBody(composeFields, body, isHtml, useHtml);
 
                 const msgComposeService = Cc["@mozilla.org/messengercompose;1"]
                   .getService(Ci.nsIMsgComposeService);
@@ -8093,6 +8819,18 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
+            // Body for a compose window (New): Thunderbird turns "\n" into <br> there and adds the signature.
+            function setComposeBody(composeFields, body, isHtml, useHtml) {
+              if (useHtml) {
+                const formatted = formatBodyHtml(body, isHtml);
+                composeFields.body = isHtml && formatted.includes('<html')
+                  ? formatted
+                  : `<html><head><meta charset="UTF-8"></head><body>${formatted}</body></html>`;
+              } else {
+                composeFields.body = body || "";
+              }
+            }
+
             function decodeHeaderValue(value) {
               if (!value) return "";
               if (!value.includes("=?")) return value;
@@ -8101,6 +8839,26 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               } catch {
                 return value;
               }
+            }
+
+            function mimeHeaderValue(mimeMsg, name) {
+              try {
+                if (typeof mimeMsg?.get === "function") return mimeMsg.get(name) || "";
+                return mimeMsg?.headers?.[name]?.[0] || "";
+              } catch {
+                return "";
+              }
+            }
+
+            function loadMimeMessage(msgHdr) {
+              const { MsgHdrToMimeMessage } = ChromeUtils.importESModule("resource:///modules/gloda/MimeMessage.sys.mjs");
+              return new Promise((resolve) => {
+                try {
+                  MsgHdrToMimeMessage(msgHdr, null, (aMsgHdr, aMimeMsg) => resolve(aMimeMsg || null), true, { examineEncryptedParts: true });
+                } catch {
+                  resolve(null);
+                }
+              });
             }
 
             function getOwnEmails() {
@@ -8113,399 +8871,1086 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return emails;
             }
 
+            // Raw header (as bytes, RFC 2047) -> [{ name, email }]; raw 8-bit is read as UTF-8, as nsMsgCompose does.
+            function parseMailboxes(header) {
+              const value = String(header || "");
+              try {
+                const list = /[^\x00-\xff]/.test(value)
+                  ? MailServices.headerParser.parseEncodedHeaderW(value)
+                  : MailServices.headerParser.parseEncodedHeader(value, "UTF-8");
+                return list.map(a => ({ name: a.name || "", email: a.email || "" }));
+              } catch {
+                return [];
+              }
+            }
+
+            function formatMailboxes(list) {
+              const parser = MailServices.headerParser;
+              return parser.makeMimeHeader(list.map(m => parser.makeMailboxObject(m.name, m.email)));
+            }
+
+            // Identities checked for a reply to an own message (nsMsgCompose.cpp OnStopRequest).
+            function replySelfIdentities(msgHdr) {
+              let identities = [];
+              try {
+                if (Services.prefs.getBoolPref("mailnews.reply_to_self_check_all_ident", true)) {
+                  identities = MailServices.accounts.allIdentities;
+                } else if (msgHdr.accountKey) {
+                  identities = MailServices.accounts.getAccount(msgHdr.accountKey)?.identities || [];
+                } else {
+                  identities = MailServices.accounts.getIdentitiesForServer(msgHdr.folder.server);
+                }
+              } catch { /* no identities */ }
+              return [...identities].filter(identity => identity.email);
+            }
+
+            function isIdentityAllowed(identity) {
+              const key = identity ? accountKeyForIdentity(identity) : "";
+              return !!key && isAccountAllowed(key);
+            }
+
+            // mailCommands.js findDeliveredToIdentityEmail: the earliest Delivered-To naming an identity.
+            function deliveredToIdentityEmail(mimeMsg) {
+              const values = (mimeMsg?.headers?.["delivered-to"] || []).map(v => decodeHeaderValue(v).toLowerCase().trim()).reverse();
+              for (const value of values) {
+                for (const identity of MailServices.accounts.allIdentities) {
+                  const email = (identity.email || "").toLowerCase();
+                  if (email && (value === email || value.includes(`<${email}>`))) return identity.email;
+                }
+              }
+              return "";
+            }
+
+            /**
+             * Identity for a reply / forward as mailCommands.js ComposeMessage picks it:
+             * MailUtils.getIdentityForHeader with the Delivered-To hint, or with the
+             * catch-all headers when an identity uses catch-all. from is the catch-all
+             * address to send as ("" otherwise). Restricted accounts are skipped.
+             */
+            function identityForMessage(msgHdr, compType, mimeMsg) {
+              const { MailUtils } = ChromeUtils.importESModule("resource:///modules/MailUtils.sys.mjs");
+              const parser = MailServices.headerParser;
+              const folder = msgHdr.folder;
+              const useCatchAll = !!folder && folder.server.type !== "nntp" && !folder.customIdentity &&
+                [...MailServices.accounts.allIdentities].some(identity => identity.catchAll);
+              let hint = "";
+              if (useCatchAll) {
+                const names = Services.prefs.getStringPref("mail.compose.catchAllHeaders", "").split(",").map(h => h.toLowerCase().trim());
+                for (const name of names) {
+                  for (const value of mimeMsg?.headers?.[name] || []) hint += parser.parseEncodedHeaderW(value).toString() + ",";
+                }
+              } else {
+                hint = deliveredToIdentityEmail(mimeMsg);
+              }
+              let [identity, matchingHint] = MailUtils.getIdentityForHeader(msgHdr, compType, hint);
+              if (!isIdentityAllowed(identity)) {
+                const allowed = getAccessibleAccounts().flatMap(account => [...account.identities]);
+                [identity, matchingHint] = MailUtils.getBestIdentity(allowed, `${msgHdr.recipients},${msgHdr.ccList},${hint}`);
+              }
+              if (!identity) return { error: "No accessible identity found -- all accounts are restricted" };
+              let from = "";
+              if (useCatchAll && identity.catchAll && matchingHint) {
+                let mailbox = matchingHint;
+                if (mailbox.email && !mailbox.name) {
+                  const named = parser.makeFromDisplayAddress(`${msgHdr.recipients},${msgHdr.ccList},${hint}`)
+                    .find(h => h.name && h.email.toLowerCase() === mailbox.email.toLowerCase());
+                  if (named) mailbox = parser.makeMailboxObject(named.name, mailbox.email);
+                }
+                from = mailbox.toString();
+              }
+              return { identity, from };
+            }
+
+            /**
+             * computeReplyRecipients for a message, with the identity's auto Cc / Bcc / Reply-To.
+             * A reply to an own message switches to the identity that wrote it, as the reply
+             * window does, unless keepIdentity (explicit from). Returns the fields plus identity
+             * and from ("" = the identity's address).
+             */
+            function replyRecipientsFor(msgHdr, mimeMsg, identity, replyAll, senderFrom, keepIdentity) {
+              const header = (name, all) => {
+                const values = mimeMsg?.headers?.[name] || [];
+                return all ? values.join(", ") : (values[0] || "");
+              };
+              let listPost = decodeHeaderValue(header("list-post", true));
+              const start = listPost.indexOf("<mailto:");
+              const end = start >= 0 ? listPost.indexOf(">", start) : -1;
+              if (end > start) listPost = listPost.slice(start + "<mailto:".length, end);
+              const autoHeaders = id => ({
+                replyTo: id?.replyTo || "",
+                cc: id?.doCc && id?.doCcList ? id.doCcList : "",
+                bcc: id?.doBcc && id?.doBccList ? id.doBccList : "",
+              });
+              const auto = autoHeaders(identity);
+              const selfIdentities = replySelfIdentities(msgHdr);
+              const recipients = computeReplyRecipients({
+                from: parseMailboxes(header("from", true) || msgHdr.author),
+                to: parseMailboxes(header("to", true) || msgHdr.recipients),
+                cc: parseMailboxes(header("cc", true) || msgHdr.ccList),
+                bcc: parseMailboxes(header("bcc", true) || msgHdr.bccList),
+                replyTo: parseMailboxes(header("reply-to", false)),
+                mailReplyTo: parseMailboxes(header("mail-reply-to", true)),
+                mailFollowupTo: parseMailboxes(header("mail-followup-to", true)),
+                listPost,
+              }, {
+                ownEmails: selfIdentities.map(id => id.email),
+                senderEmail: parseMailboxes(senderFrom)[0]?.email || identity?.email || "",
+                autoCc: parseMailboxes(auto.cc),
+                autoBcc: parseMailboxes(auto.bcc),
+                identityReplyTo: parseMailboxes(auto.replyTo),
+                overrideListReplyTo: Services.prefs.getBoolPref("mail.override_list_reply_to", true),
+              }, replyAll);
+              let fields = { to: recipients.to, cc: recipients.cc, bcc: recipients.bcc, replyTo: recipients.replyTo };
+              let from = senderFrom || "";
+              if (recipients.replyToSelf) {
+                const self = selfIdentities.find(id => id.email.toLowerCase() === recipients.selfEmail);
+                if (self && self !== identity && !keepIdentity && isIdentityAllowed(self)) {
+                  fields = switchIdentityRecipients(fields, auto, autoHeaders(self), parseMailboxes);
+                  identity = self;
+                  from = "";
+                }
+              }
+              return { ...fields, identity, from };
+            }
+
+            function getDraftsFolder(identity) {
+              let uri = "";
+              try { uri = identity?.draftsFolderURI || identity?.draftFolder || ""; } catch { /* no pref */ }
+              if (!uri) return null;
+              try { return MailServices.folderLookup.getFolderForURL(uri); } catch { return null; }
+            }
+
+            function generateMessageId(identity) {
+              const domain = String(identity?.email || "").split("@")[1] || "localhost";
+              return `<${Services.uuid.generateUUID().toString().replace(/[{}]/g, "")}@${domain}>`;
+            }
+
+            function originalAttachmentDescs(mimeMsg) {
+              const descs = [];
+              for (const att of mimeMsg?.allUserAttachments || []) {
+                try {
+                  descs.push({ url: att.url, name: att.name, contentType: att.contentType });
+                } catch { /* unreadable part */ }
+              }
+              return descs;
+            }
+
+            function attachFailureNote(message, failedPaths) {
+              return failedPaths.length > 0 ? `${message} (failed to attach: ${failedPaths.join(", ")})` : message;
+            }
+
+            const DRAFT_SAVE_TIMEOUT_MS = 120000;
+
+            // Window-less nsIMsgCompose save (plan S1). Throws when the API is unusable.
+            function startComposeDraftSave(composeFields, identity, useHtml, originalMsgURI, compType, replaceURI) {
+              const params = Cc["@mozilla.org/messengercompose/composeparams;1"]
+                .createInstance(Ci.nsIMsgComposeParams);
+              params.type = replaceURI ? Ci.nsIMsgCompType.Draft : Ci.nsIMsgCompType.New;
+              params.format = useHtml ? Ci.nsIMsgCompFormat.HTML : Ci.nsIMsgCompFormat.PlainText;
+              params.identity = identity;
+              params.composeFields = composeFields;
+              params.originalMsgURI = replaceURI ? "" : (originalMsgURI || "");
+              const isReply = !replaceURI && (compType === Ci.nsIMsgCompType.Reply || compType === Ci.nsIMsgCompType.ReplyAll);
+              const replyFields = isReply
+                ? { from: composeFields.from, to: composeFields.to, cc: composeFields.cc, bcc: composeFields.bcc, replyTo: composeFields.replyTo }
+                : null;
+              const msgCompose = MailServices.compose.initCompose(params);
+              // Reply / forward type only after init, otherwise CreateMessage rewrites subject and References
+              if (!replaceURI && compType != null) msgCompose.type = compType;
+              // Reply recipients already hold the identity's auto Cc / Bcc / Reply-To (computeReplyRecipients)
+              if (replyFields) Object.assign(msgCompose.compFields, replyFields);
+
+              let stateListener;
+              const done = new Promise(resolve => {
+                stateListener = {
+                  QueryInterface: ChromeUtils.generateQI(["nsIMsgComposeStateListener"]),
+                  NotifyComposeFieldsReady() {},
+                  NotifyComposeBodyReady() {},
+                  ComposeProcessDone(status) { resolve(status); },
+                  SaveInFolderDone() {},
+                };
+              });
+              msgCompose.RegisterStateListener(stateListener);
+
+              // No progress object: it would open sendProgress.xhtml (mailnews.show_send_progress).
+              // TB 102-12x take an extra msgWindow argument before progress.
+              const send = (msgCompose.sendMsg || msgCompose.SendMsg).bind(msgCompose);
+              const sendArgs = [Ci.nsIMsgCompDeliverMode.SaveAsDraft, identity, accountKeyForIdentity(identity), null];
+              let sent;
+              try {
+                sent = send(...sendArgs);
+              } catch (e) {
+                if (!(e?.result === 0x80570001 || String(e).includes("Not enough arguments"))) throw e;
+                sent = send(...sendArgs, null);
+              }
+              return { msgCompose, done, sent };
+            }
+
+            // nsresult of the save, or null on timeout.
+            async function waitComposeDraftSave(job) {
+              const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+              const timeout = new Promise(resolve => {
+                timer.initWithCallback({ notify() { resolve(null); } }, DRAFT_SAVE_TIMEOUT_MS, Ci.nsITimer.TYPE_ONE_SHOT);
+              });
+              // A rejected send promise produces no ComposeProcessDone
+              const sent = Promise.resolve(job.sent).then(() => job.done, e => (typeof e?.result === "number" ? e.result : 0x80004005));
+              try {
+                return await Promise.race([job.done, sent, timeout]);
+              } finally {
+                timer.cancel();
+              }
+            }
+
+            /**
+             * Saves composeFields as a draft of identity like the compose window
+             * does: nsIMsgCompose + SaveAsDraft. replaceHdr is the draft being
+             * edited; Thunderbird deletes it after the save and carries its
+             * origURIs / queuedDisposition over. Returns the new messageId + folderPath.
+             */
+            async function saveComposeFieldsAsDraft(composeFields, identity, attachDescs, useHtml, originalMsgURI, compType, replaceHdr) {
+              const replaceURI = replaceHdr ? replaceHdr.folder.getUriForMsg(replaceHdr) : "";
+              try {
+                if (composeFields.deliveryFormat === Ci.nsIMsgCompSendFormat.Unset) {
+                  composeFields.deliveryFormat = Services.prefs.getIntPref("mail.default_send_format", Ci.nsIMsgCompSendFormat.Auto);
+                }
+              } catch { /* TB without nsIMsgCompSendFormat */ }
+              for (const att of descsToMsgAttachments(attachDescs)) composeFields.addAttachment(att);
+              if (replaceURI) composeFields.draftId = replaceURI;
+
+              let job;
+              try {
+                job = startComposeDraftSave(composeFields, identity, useHtml, originalMsgURI, compType, replaceURI);
+              } catch (e) {
+                console.warn("commonpost-mcp: nsIMsgCompose draft save failed, using nsIMsgSend:", e);
+                composeFields.removeAttachments();
+                composeFields.draftId = "";
+                return saveDraftViaSend(composeFields, identity, attachDescs, useHtml, originalMsgURI, compType, replaceHdr);
+              }
+
+              const status = await waitComposeDraftSave(job);
+              if (status === null) return { error: `Draft save timed out after ${DRAFT_SAVE_TIMEOUT_MS / 1000}s` };
+              if (!Components.isSuccessCode(status)) return { error: `Draft save failed (status: 0x${(status >>> 0).toString(16)})` };
+              // RemoveCurrentDraftMessage sets draftId to the new draft right after ComposeProcessDone
+              await new Promise(resolve => Services.tm.dispatchToMainThread(resolve));
+
+              const fields = job.msgCompose.compFields;
+              let hdr = null;
+              if (fields.draftId && fields.draftId !== replaceURI) {
+                try { hdr = MailServices.messageServiceFromURI(fields.draftId).messageURIToMsgHdr(fields.draftId); } catch { /* not in the db yet */ }
+              }
+              const saved = { success: true, messageId: String(hdr?.messageId || fields.messageId || "").replace(/^<|>$/g, "") };
+              const folder = hdr?.folder || getDraftsFolder(identity);
+              if (folder) saved.folderPath = folder.URI;
+              return saved;
+            }
+
+            // Fallback when window-less nsIMsgCompose fails: nsIMsgSend, then delete the replaced draft by hand.
+            async function saveDraftViaSend(composeFields, identity, attachDescs, useHtml, originalMsgURI, compType, replaceHdr) {
+              composeFields.messageId = generateMessageId(identity);
+              const result = await sendMessageDirectly(
+                composeFields,
+                identity,
+                attachDescs,
+                replaceHdr ? null : (originalMsgURI || null),
+                replaceHdr ? Ci.nsIMsgCompType.New : (compType ?? Ci.nsIMsgCompType.New),
+                Ci.nsIMsgCompDeliverMode.SaveAsDraft,
+                useHtml ? "text/html" : "text/plain"
+              );
+              if (!result.success) return result;
+              const saved = { success: true, messageId: composeFields.messageId.replace(/^<|>$/g, "") };
+              const draftsFolder = getDraftsFolder(identity);
+              if (draftsFolder) saved.folderPath = draftsFolder.URI;
+              if (replaceHdr) {
+                try {
+                  replaceHdr.folder.deleteMessages([replaceHdr], null, true, false, null, false);
+                } catch (e) {
+                  saved.warning = `New draft saved, but the old version could not be removed: ${e}`;
+                }
+              }
+              return saved;
+            }
+
+            // A message in a Drafts folder: explicit folderPath, else every accessible Drafts folder.
+            function locateDraft(draftId, folderPath) {
+              const id = normalizeMessageIdForDedup(draftId);
+              if (folderPath) {
+                const result = getAccessibleFolder(folderPath);
+                if (result.error) return result;
+                if (!result.folder.isSpecialFolder(Ci.nsMsgFolderFlags.Drafts, true)) {
+                  return { error: "folderPath is not a Drafts folder. draftId must be a draft (saveDraft result or a message in Drafts)." };
+                }
+                return findMessage(id, folderPath);
+              }
+              for (const account of getAccessibleAccounts()) {
+                let folders;
+                try { folders = account.incomingServer.rootFolder.getFoldersWithFlags(Ci.nsMsgFolderFlags.Drafts); } catch { continue; }
+                for (const folder of folders) {
+                  const found = findMessage(id, folder.URI);
+                  if (!found.error) return found;
+                }
+              }
+              return { error: `Draft not found: ${draftId}. Pass the messageId returned by saveDraft (and its folderPath).` };
+            }
+
             /**
              * Saves a composed message to the identity's Drafts folder without
-             * sending or opening a compose window. The destination folder is
-             * resolved by Thunderbird from the identity's draft-folder pref.
+             * sending or opening a compose window. With draftId the existing
+             * draft is rewritten: passed fields replace, the rest is kept.
              */
-            function saveDraft(to, subject, body, cc, bcc, isHtml, from, attachments) {
+            async function saveDraft(args) {
               try {
+                if (args.draftId) return await updateDraft(args);
+
                 const msgComposeParams = Cc["@mozilla.org/messengercompose/composeparams;1"]
                   .createInstance(Ci.nsIMsgComposeParams);
-
                 const composeFields = Cc["@mozilla.org/messengercompose/composefields;1"]
                   .createInstance(Ci.nsIMsgCompFields);
 
-                composeFields.to = to || "";
-                composeFields.cc = cc || "";
-                composeFields.bcc = bcc || "";
-                composeFields.subject = subject || "";
+                composeFields.to = args.to || "";
+                composeFields.cc = args.cc || "";
+                composeFields.bcc = args.bcc || "";
+                composeFields.subject = args.subject || "";
 
                 msgComposeParams.type = Ci.nsIMsgCompType.New;
                 msgComposeParams.composeFields = composeFields;
 
-                const identityResult = setComposeIdentity(msgComposeParams, from, null);
+                const identityResult = setComposeIdentity(msgComposeParams, args.from, null);
                 if (identityResult && identityResult.error) return identityResult;
 
-                const { useHtml, format } = resolveComposeFormat(msgComposeParams.identity, isHtml, Ci.nsIMsgCompType.New);
+                const { useHtml, format } = resolveComposeFormat(msgComposeParams.identity, args.isHtml, Ci.nsIMsgCompType.New);
                 msgComposeParams.format = format;
-                if (useHtml) {
-                  const formatted = formatBodyHtml(body, isHtml);
-                  composeFields.body = isHtml && formatted.includes('<html')
-                    ? formatted
-                    : `<html><head><meta charset="UTF-8"></head><body>${formatted}</body></html>`;
+                composeFields.body = newMessageBody(args.body, args.isHtml, useHtml, msgComposeParams.identity);
+
+                const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(args.attachments);
+                const result = await saveComposeFieldsAsDraft(composeFields, msgComposeParams.identity, fileDescs, useHtml);
+                if (result.success) result.message = attachFailureNote("Draft saved", failedPaths);
+                return result;
+              } catch (e) {
+                return { error: e.toString() };
+              }
+            }
+
+            async function updateDraft(args) {
+              const located = locateDraft(args.draftId, args.folderPath);
+              if (located.error) return located;
+              const { msgHdr, folder } = located;
+
+              const mimeMsg = await loadMimeMessage(msgHdr);
+              if (!mimeMsg) return { error: "Could not read the existing draft; nothing was changed" };
+              // HTML part of multipart/alternative drafts keeps the formatting
+              const content = extractBodyContent(mimeMsg, true);
+              const existingIsHtml = !!(content.text && content.isHtml);
+              let existingBody = content.text || extractPlainTextBody(mimeMsg);
+              // BuildBodyMessageAndSignature restores flowed wrapping of plain drafts
+              if (!existingIsHtml && Services.prefs.getIntPref("mailnews.wraplength", 72)) existingBody = joinFlowedLines(existingBody);
+              const merged = mergeDraftFields(args, {
+                // Raw (still encoded) address headers: decoded names with commas would split
+                to: msgHdr.recipients || "",
+                cc: msgHdr.ccList || "",
+                bcc: msgHdr.bccList || "",
+                subject: displaySubject(msgHdr),
+                body: existingBody,
+                isHtml: existingIsHtml,
+                attachments: originalAttachmentDescs(mimeMsg),
+                references: messageReferences(msgHdr).map(r => `<${r}>`).join(" "),
+                inReplyTo: mimeHeaderValue(mimeMsg, "in-reply-to"),
+                replyTo: formatMailboxes(parseMailboxes(mimeMsg.headers?.["reply-to"]?.[0])),
+                priority: mimeHeaderValue(mimeMsg, "x-priority") ? draftPriorityName(mimeHeaderValue(mimeMsg, "x-priority")) : "",
+              });
+
+              const msgComposeParams = Cc["@mozilla.org/messengercompose/composeparams;1"]
+                .createInstance(Ci.nsIMsgComposeParams);
+              const composeFields = Cc["@mozilla.org/messengercompose/composefields;1"]
+                .createInstance(Ci.nsIMsgCompFields);
+              msgComposeParams.type = Ci.nsIMsgCompType.New;
+              msgComposeParams.composeFields = composeFields;
+
+              // A reopened draft keeps its From and takes the identity of X-Identity-Key (mimedrft.cpp),
+              // unless the caller picks another identity
+              let from = args.from;
+              const keyed = from ? null : MailServices.accounts.allIdentities
+                .find(id => id.key === mimeHeaderValue(mimeMsg, "x-identity-key").trim());
+              if (keyed && isIdentityAllowed(keyed)) {
+                msgComposeParams.identity = keyed;
+              } else {
+                if (!from) {
+                  const authorEmail = addressListEmail(msgHdr.mime2DecodedAuthor || msgHdr.author || "");
+                  if (authorEmail && findIdentity(authorEmail)) from = authorEmail;
+                }
+                const identityResult = setComposeIdentity(msgComposeParams, from, folder.server);
+                if (identityResult && identityResult.error) return identityResult;
+              }
+              if (!args.from && msgHdr.author) composeFields.from = msgHdr.author;
+
+              composeFields.to = merged.to;
+              composeFields.cc = merged.cc;
+              composeFields.bcc = merged.bcc;
+              composeFields.subject = merged.subject;
+              // Headers and flags Thunderbird restores when it reopens a draft (mimedrft.cpp CreateCompositionFields)
+              if (merged.replyTo) composeFields.replyTo = merged.replyTo;
+              if (merged.priority) composeFields.priority = merged.priority;
+              if (merged.references) composeFields.references = merged.references;
+              if (merged.inReplyTo) composeFields.setHeader("In-Reply-To", merged.inReplyTo);
+              try {
+                Object.assign(composeFields, draftInfoFields(mimeHeaderValue(mimeMsg, "x-mozilla-draft-info")));
+              } catch { /* TB without one of the fields */ }
+
+              // A new body replaces only the user's text: quote, forwarded message and signature stay (C8).
+              // A reopened plain draft goes in with InsertTextWithQuotations, the new text is typed.
+              let { body, isHtml } = merged;
+              let plainHunks = args.body === undefined && !existingIsHtml ? [{ text: body, quotes: true }] : null;
+              if (args.body !== undefined && args.keepQuote !== false) {
+                const identity = msgComposeParams.identity;
+                const prefs = composeLayoutPrefs(identity);
+                const knownSig = existingIsHtml ? "" : signatureFor(identity, Ci.nsIMsgCompType.New, false, true, { ...prefs, suppressSigSep: true });
+                const parts = splitDraftBody(existingBody, existingIsHtml, knownSig);
+                if (parts.kept) {
+                  let user;
+                  if (existingIsHtml) user = userBodyHtml(args.body, args.isHtml, prefs.paragraphMode);
+                  else user = args.isHtml ? htmlToPlainText(args.body, false, true, false).replace(/\n+$/, "") : String(args.body || "");
+                  body = parts.head + user + parts.tail;
+                  isHtml = existingIsHtml;
+                  if (!existingIsHtml) plainHunks = [{ text: parts.head, quotes: true }, user, { text: parts.tail, quotes: true }];
+                }
+              }
+
+              const { useHtml, format } = resolveComposeFormat(msgComposeParams.identity, isHtml, Ci.nsIMsgCompType.New);
+              msgComposeParams.format = format;
+              composeFields.body = newMessageBody(body, isHtml, useHtml, msgComposeParams.identity, false, plainHunks);
+
+              const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(args.attachments);
+              const replacedDraftId = msgHdr.messageId;
+              // Thunderbird removes the old version only after the new one is stored
+              const result = await saveComposeFieldsAsDraft(
+                composeFields, msgComposeParams.identity, [...merged.keptAttachments, ...fileDescs], useHtml, null, null, msgHdr
+              );
+              if (!result.success) return result;
+              result.message = attachFailureNote("Draft updated", failedPaths);
+              result.replacedDraftId = replacedDraftId;
+              return result;
+            }
+
+            // Newest message of the conversation outside Drafts/Templates/Outbox.
+            function findLatestInThread(messageId, folderPath) {
+              const res = searchMessages({ query: "", threadOf: { messageId, folderPath }, sortOrder: "desc", maxResults: MAX_SEARCH_RESULTS_CAP });
+              if (res.error) return res;
+              const skipFlags = Ci.nsMsgFolderFlags.Drafts | Ci.nsMsgFolderFlags.Templates | Ci.nsMsgFolderFlags.Queue;
+              for (const row of res.messages || []) {
+                let folder = null;
+                try { folder = MailServices.folderLookup.getFolderForURL(row.folderPath); } catch { /* skip */ }
+                if (!folder || folder.isSpecialFolder(skipFlags, true)) continue;
+                return { messageId: row.id, folderPath: row.folderPath };
+              }
+              return { messageId, folderPath };
+            }
+
+            // NS_GetLocalizedUnicharPreference: the user value, else the string its default points to.
+            function localizedPref(name, fallback = "") {
+              try {
+                return Services.prefs.getComplexValue(name, Ci.nsIPrefLocalizedString).data;
+              } catch {
+                return fallback;
+              }
+            }
+
+            function mimeString(id) {
+              try {
+                return Services.strings.createBundle("chrome://messenger/locale/mime.properties").GetStringFromName(String(id));
+              } catch {
+                return "";
+              }
+            }
+
+            // MIME_MHTML_* ids in mime.properties
+            const FORWARD_HEADER_LABEL_IDS = {
+              subject: 1000, resentComments: 1001, resentDate: 1002, resentFrom: 1004, resentTo: 1005, resentCc: 1006, date: 1007,
+              from: 1009, replyTo: 1010, organization: 1011, to: 1012, cc: 1013, newsgroups: 1014, followupTo: 1015, references: 1016,
+            };
+
+            // Identity and editor prefs that place the quote and the signature.
+            function composeLayoutPrefs(identity) {
+              const read = (fn, fallback) => {
+                try { return fn() ?? fallback; } catch { return fallback; }
+              };
+              const sigBottom = read(() => identity.sigBottom, true);
+              const sigConfigured = read(() => identity.attachSignature, false) || !!read(() => identity.htmlSigText, "");
+              return {
+                replyOnTop: read(() => identity.replyOnTop, 0),
+                sigBottom,
+                sigAboveQuote: read(() => identity.sigOnReply, true) && !sigBottom && sigConfigured,
+                suppressSigSep: read(() => identity.suppressSigSep, false),
+                paragraphMode: Services.prefs.getBoolPref("mail.compose.default_to_paragraph", false),
+                wrapLength: Services.prefs.getIntPref("mailnews.wraplength", 72),
+              };
+            }
+
+            // QuotingOutputStreamListener constructor: cite line from the localized reply header prefs.
+            function citePrefixFor(msgHdr) {
+              const date = new Date(msgHdr.date / 1000);
+              const format = style => {
+                try { return new Services.intl.DateTimeFormat(undefined, style).format(date); } catch { return date.toLocaleString(); }
+              };
+              let author = "";
+              try {
+                const [first] = MailServices.headerParser.parseEncodedHeader(msgHdr.author || "", null);
+                author = first ? (first.name || first.email || "") : "";
+              } catch { /* no author */ }
+              return buildCitePrefix(Services.prefs.getIntPref("mailnews.reply_header_type", 0), {
+                authorWrote: localizedPref("mailnews.reply_header_authorwrotesingle"),
+                onDateAuthorWrote: localizedPref("mailnews.reply_header_ondateauthorwrote"),
+                authorWroteOnDate: localizedPref("mailnews.reply_header_authorwroteondate"),
+                originalMessage: localizedPref("mailnews.reply_header_originalmessage"),
+              }, { date: format({ dateStyle: "short" }), time: format({ timeStyle: "short" }), author });
+            }
+
+            function citeReferenceFor(msgHdr) {
+              if (!msgHdr.messageId) return "";
+              const flags = Ci.nsINetUtil.ESCAPE_URL_FILE_BASENAME | Ci.nsINetUtil.ESCAPE_URL_FORCED;
+              return `mid:${Services.io.QueryInterface(Ci.nsINetUtil).escapeURL(msgHdr.messageId, flags)}`;
+            }
+
+            // IsEmbeddedObjectSafe (nsMsgCompose.cpp): same scheme and path (query removed) as the original message URL.
+            function embeddedObjectFilter(msgURI) {
+              let scheme = "";
+              let path = "";
+              try {
+                const url = MailServices.messageServiceFromURI(msgURI).getUrlForUri(msgURI);
+                scheme = url.scheme.toLowerCase();
+                path = removeQueryPart(url.pathQueryRef).toLowerCase();
+              } catch { /* nothing is safe */ }
+              return spec => {
+                if (!scheme) return false;
+                try {
+                  const uri = Services.io.newURI(spec);
+                  return uri.scheme.toLowerCase() === scheme && removeQueryPart(uri.pathQueryRef).toLowerCase() === path;
+                } catch {
+                  return false;
+                }
+              };
+            }
+
+            const QUOTE_TIMEOUT_MS = 15000;
+            // nsMsgQuote holds its listener weakly: keep it alive until the quote is done
+            const pendingQuotes = new Set();
+
+            // Thunderbird's own quote of a message (nsIMsgQuote, plan S2) as HTML, or null.
+            function quoteMessageHtml(msgURI, msgHdr) {
+              return new Promise(resolve => {
+                let bytes = "";
+                const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+                const job = {};
+                const finish = (value, why) => {
+                  if (!pendingQuotes.has(job)) return;
+                  if (value === null) console.warn("commonpost-mcp: quote not available, plain fallback:", why);
+                  pendingQuotes.delete(job);
+                  timer.cancel();
+                  resolve(value);
+                };
+                job.listener = {
+                  QueryInterface: ChromeUtils.generateQI(["nsIMsgQuotingOutputStreamListener", "nsIStreamListener", "nsIRequestObserver", "nsISupportsWeakReference"]),
+                  onStartRequest() {},
+                  onDataAvailable(request, stream, offset, count) {
+                    const bis = Cc["@mozilla.org/binaryinputstream;1"].createInstance(Ci.nsIBinaryInputStream);
+                    bis.setInputStream(stream);
+                    bytes += bis.readBytes(count);
+                  },
+                  onStopRequest(request, status) {
+                    if (!Components.isSuccessCode(status)) return finish(null, status);
+                    try {
+                      finish(new TextDecoder().decode(Uint8Array.from(bytes, c => c.charCodeAt(0))));
+                    } catch (e) {
+                      finish(null, e);
+                    }
+                  },
+                  setMimeHeaders() {},
+                };
+                pendingQuotes.add(job);
+                timer.initWithCallback({ notify() { finish(null, "timeout"); } }, QUOTE_TIMEOUT_MS, Ci.nsITimer.TYPE_ONE_SHOT);
+                try {
+                  job.quote = Cc["@mozilla.org/messengercompose/quoting;1"].createInstance(Ci.nsIMsgQuote);
+                  // 157 dropped headersOnly; extra arguments are ignored, so try the short form first
+                  try {
+                    job.quote.quoteMessage(msgURI, false, job.listener, false, msgHdr);
+                  } catch (e) {
+                    if (e?.result !== 0x80570001) throw e;
+                    job.quote.quoteMessage(msgURI, false, job.listener, false, false, msgHdr);
+                  }
+                } catch (e) {
+                  finish(null, e);
+                }
+              });
+            }
+
+            // What MessageSend._getBodyFromEditor makes of the editor's HTML: meta charset, then URLs linked (scanHTML).
+            function composeHtmlOutput(html) {
+              let flags = Ci.mozITXTToHTMLConv.kURLs;
+              if (Services.prefs.getBoolPref("mail.send_struct", false)) flags |= Ci.mozITXTToHTMLConv.kStructPhrase;
+              return Cc["@mozilla.org/txttohtmlconv;1"].getService(Ci.mozITXTToHTMLConv).scanHTML(serializerMetaCharset(html), flags);
+            }
+
+            // ConvertBufToPlainText (nsMsgUtils.cpp)
+            function htmlToPlainText(html, formatFlowed, formatOutput, disallowBreaks) {
+              if (!html) return "";
+              let wrap = Services.prefs.getIntPref("mailnews.wraplength", 72);
+              if (wrap === 0 || wrap > 990) wrap = 990;
+              else if (wrap < 10) wrap = 10;
+              let flags = Ci.nsIDocumentEncoder.OutputPersistNBSP;
+              if (formatFlowed) flags |= Ci.nsIDocumentEncoder.OutputFormatFlowed;
+              if (formatOutput) flags |= Ci.nsIDocumentEncoder.OutputFormatted;
+              if (disallowBreaks) flags |= Ci.nsIDocumentEncoder.OutputDisallowLineBreaking;
+              const text = Cc["@mozilla.org/parserutils;1"].getService(Ci.nsIParserUtils).convertToPlainText(html, flags, wrap);
+              return text.replace(/\r\n?/g, "\n");
+            }
+
+            // Plain body as the plain-text editor saves and sends it (nsMsgCompose::SendMsg): format=flowed with
+            // space-stuffing and soft breaks at mailnews.wraplength, quotations as they are
+            function plainEditorOutput(hunks) {
+              const wrap = Services.prefs.getIntPref("mailnews.wraplength", 72);
+              let flags = Ci.nsIDocumentEncoder.OutputFormatted | Ci.nsIDocumentEncoder.OutputDisallowLineBreaking |
+                Ci.nsIDocumentEncoder.OutputPersistNBSP | Ci.nsIDocumentEncoder.OutputLFLineBreak;
+              if (Services.prefs.getBoolPref("mailnews.send_plaintext_flowed", true)) flags |= Ci.nsIDocumentEncoder.OutputFormatFlowed;
+              return Cc["@mozilla.org/parserutils;1"].getService(Ci.nsIParserUtils)
+                .convertToPlainText(plainEditorHtml(hunks, wrap), flags, Math.max(wrap, 0));
+            }
+
+            function readFileBytes(file) {
+              const fis = Cc["@mozilla.org/network/file-input-stream;1"].createInstance(Ci.nsIFileInputStream);
+              fis.init(file, 0x01, 0, 0);
+              const bis = Cc["@mozilla.org/binaryinputstream;1"].createInstance(Ci.nsIBinaryInputStream);
+              bis.setInputStream(fis);
+              try {
+                return bis.readBytes(bis.available());
+              } finally {
+                bis.close();
+              }
+            }
+
+            function fileMimeType(file) {
+              try {
+                return Cc["@mozilla.org/mime;1"].getService(Ci.nsIMIMEService).getTypeFromFile(file);
+              } catch {
+                return "";
+              }
+            }
+
+            // nsMsgCompose::DataURLForFileURL
+            function fileDataURL(file) {
+              const type = Cc["@mozilla.org/mime;1"].getService(Ci.nsIMIMEService).getTypeFromFile(file);
+              const bytes = readFileBytes(file);
+              const { MailStringUtils } = ChromeUtils.importESModule("resource:///modules/MailStringUtils.sys.mjs");
+              const flags = Ci.nsINetUtil.ESCAPE_URL_FILE_BASENAME | Ci.nsINetUtil.ESCAPE_URL_FORCED;
+              const name = Services.io.QueryInterface(Ci.nsINetUtil).escapeURL(MailStringUtils.stringToByteString(file.leafName), flags);
+              return `data:${type}${name ? `;filename=${name}` : ""};base64,${btoa(bytes)}`;
+            }
+
+            function fileURLToDataURL(fileURL) {
+              return fileDataURL(Services.io.newURI(fileURL).QueryInterface(Ci.nsIFileURL).file);
+            }
+
+            // nsMsgCompose::LoadDataFromFile: meta charset, else UTF-8, else UTF-16 BOM, else detected.
+            function readSignatureFile(file, composeHtml) {
+              const bytes = readFileBytes(file);
+              const array = Uint8Array.from(bytes, c => c.charCodeAt(0));
+              const meta = bytes.slice(0, 4096).match(/<meta\b[^>]*charset=["']?([\w.:-]+)/i)?.[1] || "";
+              const decode = label => {
+                try { return new TextDecoder(label, { fatal: label === "utf-8" }).decode(array); } catch { return null; }
+              };
+              let text = meta ? decode(meta) : null;
+              if (text === null) text = decode("utf-8");
+              if (text === null && bytes.length % 2 === 0 && /^(\xfe\xff|\xff\xfe)/.test(bytes)) text = decode(bytes[0] === "\xfe" ? "utf-16be" : "utf-16le");
+              if (text === null) {
+                const { MailStringUtils } = ChromeUtils.importESModule("resource:///modules/MailStringUtils.sys.mjs");
+                text = decode(MailStringUtils.detectCharset(bytes)) ?? bytes;
+              }
+              // The editor may re-encode an HTML signature, so its meta charset is dropped
+              if (meta && composeHtml) {
+                const at = text.toLowerCase().indexOf(`charset=${meta.toLowerCase()}`);
+                if (at >= 0) text = text.slice(0, at) + text.slice(at + "charset=".length + meta.length);
+              }
+              return text;
+            }
+
+            /**
+             * Identity signature as ProcessSignature (nsMsgCompose.cpp) inserts it: sig_on_reply /
+             * sig_on_fwd, signature file (image, HTML or text) or htmlSigText, converted to the
+             * compose format and framed with the "-- " separator. "" when there is none.
+             */
+            function signatureFor(identity, compType, composeHtml, quoted, prefs) {
+              if (!identity) return "";
+              try {
+                const T = Ci.nsIMsgCompType;
+                if (compType === T.ForwardInline || compType === T.ForwardAsAttachment) {
+                  if (!identity.sigOnForward) return "";
+                } else if ([T.Reply, T.ReplyAll, T.ReplyToList, T.ReplyToGroup, T.ReplyToSender, T.ReplyToSenderAndGroup].includes(compType)) {
+                  if (!identity.sigOnReply) return "";
+                }
+                const frame = { ...prefs, composeHtml, quoted };
+                let data;
+                let htmlSig;
+                if (identity.attachSignature) {
+                  let file = null;
+                  try { file = identity.signature; } catch { /* no sig_file */ }
+                  if (!file || !file.path || !file.exists() || file.isDirectory()) return "";
+                  const type = fileMimeType(file).toLowerCase();
+                  if (type.startsWith("image/")) return composeHtml ? frameImageSignature(fileDataURL(file), frame) : "";
+                  htmlSig = type === "text/html";
+                  const text = readSignatureFile(file, composeHtml);
+                  if (composeHtml && !htmlSig) data = escapeHtml(text);
+                  else if (!composeHtml && htmlSig) data = htmlToPlainText(text, false, true, true);
+                  else data = replaceFileURLs(text, fileURLToDataURL);
                 } else {
-                  composeFields.body = body || "";
+                  const text = identity.htmlSigText || "";
+                  if (!text) return "";
+                  htmlSig = !!identity.htmlSigFormat;
+                  if (!composeHtml) data = htmlSig ? htmlToPlainText(text, false, true, true) : text;
+                  else data = htmlSig ? replaceFileURLs(text, fileURLToDataURL) : escapeHtml(text);
+                }
+                return frameSignature({ data, htmlSig }, frame);
+              } catch (e) {
+                console.warn("commonpost-mcp: signature not added:", e);
+                return "";
+              }
+            }
+
+            // Raw header value decoded as MIME_DecodeMimeHeader does (RFC 2047, 8-bit in the message charset).
+            function decodeRawHeader(value, charset) {
+              const v = String(value ?? "");
+              if (!v) return v;
+              try {
+                return /[^\x00-\xff]/.test(v)
+                  ? MailServices.mimeConverter.decodeMimeHeader(v, charset, false, true)
+                  : MailServices.mimeConverter.decodeMimeHeaderToUTF8(v, charset, false, true);
+              } catch {
+                return v;
+              }
+            }
+
+            // Header values mime_insert_normal_headers reads (null = absent), addresses in display form.
+            function forwardHeaderValues(mimeMsg, msgHdr) {
+              const charset = msgHdr.charset || "UTF-8";
+              const raw = (name, all) => {
+                const values = mimeMsg?.headers?.[name];
+                if (!values?.length) return null;
+                return all ? values.join(", ") : values[0];
+              };
+              const text = (name, all) => {
+                const v = raw(name, all);
+                return v == null ? null : (decodeRawHeader(v, charset) || v);
+              };
+              const addresses = (name, fallback) => {
+                const v = raw(name, true) || (fallback ? raw(fallback, true) : null);
+                if (v == null) return null;
+                try {
+                  const list = /[^\x00-\xff]/.test(v)
+                    ? MailServices.headerParser.parseEncodedHeaderW(v)
+                    : MailServices.headerParser.parseEncodedHeader(v, charset);
+                  return list.map(a => a.toString()).join(", ");
+                } catch {
+                  return v;
+                }
+              };
+              if (!mimeMsg?.headers) {
+                return {
+                  subject: msgHdr.mime2DecodedSubject || "", date: new Date(msgHdr.date / 1000).toUTCString(),
+                  from: msgHdr.mime2DecodedAuthor || "", to: msgHdr.mime2DecodedRecipients || "", cc: msgHdr.ccList || "",
+                };
+              }
+              return {
+                subject: text("subject"), resentComments: text("resent-comments"), resentDate: text("resent-date", true),
+                resentFrom: addresses("resent-from", "resent-sender"), resentTo: addresses("resent-to"), resentCc: addresses("resent-cc"),
+                date: text("date", true), from: addresses("from", "sender"), replyTo: addresses("reply-to"),
+                organization: text("organization"), to: addresses("to"), cc: addresses("cc"),
+                newsgroups: text("newsgroups", true), followupTo: text("followup-to", true), references: text("references", true),
+              };
+            }
+
+            /**
+             * Forwarded message as mimedrft.cpp builds it for ForwardInline: delimiter, header rows
+             * and the original body (HTML part preferred), in the compose format; HTML wrapped in
+             * moz-forward-container (ConvertAndLoadComposeWindow).
+             */
+            function forwardBodyFor(mimeMsg, msgHdr, useHtml) {
+              const labels = Object.fromEntries(Object.entries(FORWARD_HEADER_LABEL_IDS).map(([k, id]) => [k, mimeString(id)]));
+              const rows = forwardHeaderRows(forwardHeaderValues(mimeMsg, msgHdr), labels, Services.prefs.getIntPref("mail.show_headers", 1) === 0);
+              const delimiter = localizedPref("mailnews.forward_header_originalmessage", mimeString(1041));
+              let original = extractBodyContent(mimeMsg, true);
+              if (!original.text) original = { text: extractPlainTextBody(mimeMsg), isHtml: false };
+              const wrapping = Services.prefs.getIntPref("mailnews.wraplength", 72) !== 0;
+              if (!useHtml && !original.isHtml) {
+                const text = forwardPlainText(delimiter, rows, original.text.replace(/\r\n?/g, "\n"));
+                return wrapping ? joinFlowedLines(text) : text;
+              }
+              const html = `${delimiter}${forwardHeaderTableHtml(rows)}\n<BR><BR>` +
+                (original.isHtml ? stripDocumentTags(original.text) : plainTextToForwardHtml(original.text));
+              if (!useHtml) {
+                // Headers go in as HTML, then the whole body is converted like nsMsgCompFields::ConvertBodyToPlainText
+                const flowed = Services.prefs.getBoolPref("mailnews.send_plaintext_flowed", true);
+                const text = htmlToPlainText(`<HTML><BODY><BR><BR>${html}`, flowed, true, true);
+                return wrapping ? joinFlowedLines(text) : text;
+              }
+              let container = removePlaintextTag(`<div class="moz-forward-container"><BR><BR>${html}</div>`);
+              if (Services.prefs.getBoolPref("mail.html_sanitize.drop_conditional_css", true)) {
+                container = stripDocumentTags(Cc["@mozilla.org/parserutils;1"].getService(Ci.nsIParserUtils).removeConditionalCSS(container));
+              }
+              return tagEmbeddedObjects(container, embeddedObjectFilter(msgHdr.folder.getUriForMsg(msgHdr)));
+            }
+
+            /**
+             * Reply body as Thunderbird's reply window builds it: localized cite line, Thunderbird's
+             * own quote (nsIMsgQuote; plain text of the original as fallback), the identity signature
+             * and the layout of reply_on_top / sig_bottom, with the new text where the caret starts.
+             */
+            async function buildReplyBody(args, useHtml, { msgHdr, msgURI, mimeMsg, identity, compType }) {
+              const prefs = composeLayoutPrefs(identity);
+              const parts = { user: useHtml ? userBodyHtml(args.body, args.isHtml, prefs.paragraphMode) : String(args.body || "") };
+              let autoQuote = true;
+              try { autoQuote = identity.autoQuote !== false; } catch { /* default on */ }
+              if (autoQuote) {
+                parts.prefix = citePrefixFor(msgHdr);
+                parts.citeRef = citeReferenceFor(msgHdr);
+                const html = await quoteMessageHtml(msgURI, msgHdr);
+                if (html === null) {
+                  const text = extractPlainTextBody(mimeMsg);
+                  parts.quote = useHtml ? (text ? `<pre wrap class="moz-quote-pre">${escapeHtml(text)}</pre>` : "") : text;
+                } else if (useHtml) {
+                  parts.quote = tagEmbeddedObjects(removePlaintextTag(stripDocumentTags(html)), embeddedObjectFilter(msgURI));
+                } else {
+                  parts.quote = htmlToPlainText(`${html}</html>`, Services.prefs.getBoolPref("mailnews.send_plaintext_flowed", true), true, false);
+                }
+              }
+              parts.signature = signatureFor(identity, compType, useHtml, true, prefs);
+              return useHtml ? composeHtmlOutput(wrapHtmlDocument(layoutComposeHtml("reply", parts, prefs))) : plainEditorOutput(layoutComposeText("reply", parts, prefs));
+            }
+
+            // Body saved or sent without a window: as given (UTF-8, no entity encoding), plus the identity signature for New.
+            // plainHunks: the plain body as layoutComposeText hunks when not all of it is typed text
+            function newMessageBody(body, isHtml, useHtml, identity, withSignature = true, plainHunks = null) {
+              const prefs = composeLayoutPrefs(identity);
+              const signature = withSignature ? signatureFor(identity, Ci.nsIMsgCompType.New, useHtml, false, prefs) : "";
+              const text = String(body || "");
+              if (!useHtml) return plainEditorOutput(layoutComposeText("new", { user: plainHunks || text, signature }, prefs));
+              if (isHtml && /<html[\s>]/i.test(text)) {
+                const end = text.toLowerCase().lastIndexOf("</body>");
+                return composeHtmlOutput(end >= 0 ? text.slice(0, end) + signature + text.slice(end) : text + signature);
+              }
+              const user = isHtml ? text : userBodyHtml(text, false, prefs.paragraphMode);
+              return composeHtmlOutput(wrapHtmlDocument(layoutComposeHtml("new", { user, signature }, prefs)));
+            }
+
+            // Inline forward body as Thunderbird's forward window builds it (see forwardBodyFor).
+            function buildForwardBody(args, useHtml, { msgHdr, mimeMsg, identity }) {
+              const prefs = composeLayoutPrefs(identity);
+              const parts = {
+                user: useHtml ? userBodyHtml(args.body, args.isHtml, prefs.paragraphMode) : String(args.body || ""),
+                forward: forwardBodyFor(mimeMsg, msgHdr, useHtml),
+                signature: signatureFor(identity, Ci.nsIMsgCompType.ForwardInline, useHtml, true, prefs),
+              };
+              return useHtml ? composeHtmlOutput(wrapHtmlDocument(layoutComposeHtml("forward", parts, prefs))) : plainEditorOutput(layoutComposeText("forward", parts, prefs));
+            }
+
+            const SEND_BLOCKED_ERROR = "User preference blocks direct sending. Use mode \"draft\" to save a draft or \"window\" (default) to open a review window.";
+
+            /**
+             * Replies to a message. mode "window" (default) uses Thunderbird's
+             * native reply compose flow (quote, signature, recipients, threading
+             * headers). "draft" and "send" build the reply here with the same
+             * recipient rules and body layout (buildReplyBody); only "send" is gated
+             * by the skipReview block.
+             */
+            async function replyToMessage(args) {
+              try {
+                const mode = resolveComposeMode(args.mode, args.skipReview);
+                if (mode === "send" && isSkipReviewBlocked()) return { error: SEND_BLOCKED_ERROR };
+
+                let { messageId, folderPath } = args;
+                let repliedTo = null;
+                if (args.latestInThread) {
+                  const latest = findLatestInThread(messageId, folderPath);
+                  if (latest.error) return latest;
+                  if (normalizeMessageIdForDedup(latest.messageId) !== normalizeMessageIdForDedup(messageId) || latest.folderPath !== folderPath) {
+                    ({ messageId, folderPath } = latest);
+                    repliedTo = latest;
+                  }
                 }
 
-                const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(attachments);
+                const found = findMessage(messageId, folderPath);
+                if (found.error) return { error: found.error };
+                const { msgHdr, folder } = found;
+                const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(args.attachments);
+                const msgURI = folder.getUriForMsg(msgHdr);
+                const compType = args.replyAll ? Ci.nsIMsgCompType.ReplyAll : Ci.nsIMsgCompType.Reply;
 
-                return sendMessageDirectly(
-                  composeFields,
-                  msgComposeParams.identity,
-                  fileDescs,
-                  null,
-                  Ci.nsIMsgCompType.New,
-                  Ci.nsIMsgCompDeliverMode.SaveAsDraft,
-                  useHtml ? "text/html" : "text/plain"
-                ).then(result => {
-                  if (result.success) {
-                    let msg = "Draft saved";
-                    if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
-                    result.message = msg;
-                  }
+                const msgComposeParams = Cc["@mozilla.org/messengercompose/composeparams;1"]
+                  .createInstance(Ci.nsIMsgComposeParams);
+                const composeFields = Cc["@mozilla.org/messengercompose/composefields;1"]
+                  .createInstance(Ci.nsIMsgCompFields);
+                msgComposeParams.type = compType;
+                msgComposeParams.originalMsgURI = msgURI;
+                msgComposeParams.composeFields = composeFields;
+                try { msgComposeParams.origMsgHdr = msgHdr; } catch { /* older TB */ }
+
+                const mimeMsg = await loadMimeMessage(msgHdr);
+                let senderFrom = "";
+                if (args.from) {
+                  const identityResult = setComposeIdentity(msgComposeParams, args.from, folder.server);
+                  if (identityResult && identityResult.error) return identityResult;
+                } else {
+                  const picked = identityForMessage(msgHdr, compType, mimeMsg);
+                  if (picked.error) return picked;
+                  msgComposeParams.identity = picked.identity;
+                  senderFrom = picked.from;
+                  composeFields.from = senderFrom;
+                }
+                let identity = msgComposeParams.identity;
+                let { useHtml, format } = resolveComposeFormat(identity, args.isHtml, compType);
+                msgComposeParams.format = format;
+
+                const withContext = result => {
+                  if (result.success && repliedTo) result.repliedTo = repliedTo;
                   return result;
-                });
+                };
+
+                if (mode === "window") {
+                  // Fields left undefined are filled by Thunderbird's native reply
+                  // machinery (Reply-To, Mail-Followup-To, lists, own identities).
+                  const result = await openComposeWindowWithCustomizations(
+                    msgComposeParams, msgURI, compType, identity, args.body, args.isHtml,
+                    args.to, args.cc, args.bcc, fileDescs
+                  );
+                  if (result.success) result.message = attachFailureNote("Reply window opened", failedPaths);
+                  return withContext(result);
+                }
+
+                const recipients = replyRecipientsFor(msgHdr, mimeMsg, identity, !!args.replyAll, senderFrom, !!args.from);
+                if (recipients.identity !== identity) {
+                  // Reply to an own message: the identity that wrote it
+                  identity = recipients.identity;
+                  ({ useHtml } = resolveComposeFormat(identity, args.isHtml, compType));
+                }
+                composeFields.from = recipients.from;
+                composeFields.to = args.to || formatMailboxes(recipients.to);
+                composeFields.cc = args.cc ? mergeAddressHeaders(getIdentityAutoRecipientHeader(identity, "cc"), args.cc) : formatMailboxes(recipients.cc);
+                composeFields.bcc = args.bcc ? mergeAddressHeaders(getIdentityAutoRecipientHeader(identity, "bcc"), args.bcc) : formatMailboxes(recipients.bcc);
+                composeFields.replyTo = formatMailboxes(recipients.replyTo);
+                composeFields.subject = prefixSubject(displaySubject(msgHdr), "Re");
+                // QuotingOutputStreamListener::OnStopRequest: the original's References and Message-ID headers (a message
+                // without Message-ID has only a generated "md5:" id and gets no References); MimeMessage derives In-Reply-To.
+                composeFields.references = mimeMsg
+                  ? buildReplyReferences(mimeHeaderValue(mimeMsg, "references").match(/<[^>]*>/g), mimeHeaderValue(mimeMsg, "message-id"))
+                  : buildReplyReferences(messageReferences(msgHdr), msgHdr.messageId.startsWith("md5:") ? "" : msgHdr.messageId);
+                composeFields.body = await buildReplyBody(args, useHtml, { msgHdr, msgURI, mimeMsg, identity, compType });
+                const resolved = { to: decodeHeaderValue(composeFields.to), cc: decodeHeaderValue(composeFields.cc) };
+
+                if (mode === "draft") {
+                  const result = await saveComposeFieldsAsDraft(composeFields, identity, fileDescs, useHtml, msgURI, compType);
+                  if (result.success) {
+                    Object.assign(result, resolved, { subject: composeFields.subject });
+                    result.message = attachFailureNote("Reply draft saved", failedPaths);
+                  }
+                  return withContext(result);
+                }
+
+                const result = await sendMessageDirectly(
+                  composeFields, identity, fileDescs, msgURI, compType, Ci.nsIMsgCompDeliverMode.Now, useHtml ? "text/html" : "text/plain"
+                );
+                if (result.success) {
+                  let repliedDisposition = null;
+                  try { repliedDisposition = Ci.nsIMsgFolder.nsMsgDispositionState_Replied; } catch { /* older TB */ }
+                  markMessageDispositionState(msgHdr, repliedDisposition);
+                  Object.assign(result, resolved);
+                  result.message = attachFailureNote("Reply sent", failedPaths);
+                }
+                return withContext(result);
               } catch (e) {
                 return { error: e.toString() };
               }
             }
 
             /**
-             * Replies to a message with quoted original. Opens a compose window
-             * for review, or sends directly when skipReview is true.
-             *
-             * Review path uses Thunderbird's native reply compose flow so it can
-             * build the quoted original, place the identity signature according
-             * to user preferences, and set threading headers/disposition flags.
-             * skipReview still uses direct send, so it keeps a manual quoted body
-             * and manually marks the original as replied after a successful send.
-             */
-	            function replyToMessage(messageId, folderPath, body, replyAll, isHtml, to, cc, bcc, from, attachments, skipReview) {
-	              return new Promise((resolve) => {
-	                try {
-	                  if (skipReview && isSkipReviewBlocked()) {
-	                    resolve({ error: "User preference blocks skipReview. Retry with skipReview: false (or omitted) to open the review window instead." });
-	                    return;
-	                  }
-	                  const found = findMessage(messageId, folderPath);
-	                  if (found.error) {
-	                    resolve({ error: found.error });
-	                    return;
-	                  }
-	                  const { msgHdr, folder } = found;
-	                  const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(attachments);
-	                  const msgURI = folder.getUriForMsg(msgHdr);
-	                  const compType = replyAll ? Ci.nsIMsgCompType.ReplyAll : Ci.nsIMsgCompType.Reply;
-
-	                  const msgComposeParams = Cc["@mozilla.org/messengercompose/composeparams;1"]
-	                    .createInstance(Ci.nsIMsgComposeParams);
-
-	                  const composeFields = Cc["@mozilla.org/messengercompose/composefields;1"]
-	                    .createInstance(Ci.nsIMsgCompFields);
-
-	                  msgComposeParams.type = compType;
-	                  msgComposeParams.originalMsgURI = msgURI;
-	                  msgComposeParams.composeFields = composeFields;
-
-	                  try {
-	                    msgComposeParams.origMsgHdr = msgHdr;
-	                  } catch {}
-
-	                  const identityResult = setComposeIdentity(msgComposeParams, from, folder.server);
-	                  if (identityResult && identityResult.error) {
-	                    resolve(identityResult);
-	                    return;
-	                  }
-
-	                  // Resolve compose mode against caller intent + identity pref.
-	                  // The skipReview branch reads useHtml below to shape the body.
-	                  const { useHtml: replyUseHtml, format: replyFormat } =
-	                    resolveComposeFormat(msgComposeParams.identity, isHtml, compType);
-	                  msgComposeParams.format = replyFormat;
-
-	                  // Pass through only the fields the caller explicitly provided.
-	                  // Any field left undefined is filled in by Thunderbird's native
-	                  // reply/reply-all machinery (including proper Reply-To,
-	                  // Mail-Followup-To, mailing-list handling, and self-filtering
-	                  // against the selected identity). Our old custom
-	                  // getReplyAllCcRecipients path bypassed all of that.
-	                  const reviewTo = to;
-	                  const reviewCc = cc;
-
-	                  if (skipReview) {
-	                    const { MsgHdrToMimeMessage } = ChromeUtils.importESModule(
-	                      "resource:///modules/gloda/MimeMessage.sys.mjs"
-                      );
-
-	                    MsgHdrToMimeMessage(msgHdr, null, (aMsgHdr, aMimeMsg) => {
-	                      try {
-	                        const originalBody = extractPlainTextBody(aMimeMsg);
-
-	                        if (replyAll) {
-	                          composeFields.to = to || msgHdr.author;
-	                          if (cc) {
-	                            composeFields.cc = cc;
-	                          } else {
-	                            const replyAllCc = getReplyAllCcRecipients(msgHdr, folder);
-	                            if (replyAllCc) composeFields.cc = replyAllCc;
-	                          }
-	                        } else {
-	                          composeFields.to = to || msgHdr.author;
-	                          if (cc) composeFields.cc = cc;
-	                        }
-
-	                        composeFields.bcc = bcc || "";
-
-	                        const origSubject = msgHdr.mime2DecodedSubject || msgHdr.subject || "";
-	                        composeFields.subject = /^re:/i.test(origSubject) ? origSubject : `Re: ${origSubject}`;
-	                        composeFields.references = `<${messageId}>`;
-	                        composeFields.setHeader("In-Reply-To", `<${messageId}>`);
-
-	                        const dateStr = msgHdr.date ? new Date(msgHdr.date / 1000).toLocaleString() : "";
-	                        const author = msgHdr.mime2DecodedAuthor || msgHdr.author || "";
-
-	                        // Direct send goes through nsIMsgSend, not nsIMsgCompose, so
-	                        // it still uses a hand-built quoted body and cannot place the
-	                        // identity signature according to reply preferences. The shape
-	                        // matches the resolved compose mode -- shipping an HTML envelope
-	                        // for a plain-format send would otherwise render as literal
-	                        // markup in the recipient's mail client.
-	                        if (replyUseHtml) {
-	                          const quotedLines = originalBody.split('\n').map(line =>
-	                            `&gt; ${escapeHtml(line)}`
-	                          ).join('<br>');
-	                          const quotedHtml = escapeHtml(originalBody).replace(/\n/g, '<br>');
-	                          const quoteBlock = isHtml
-	                            ? `<br><br>On ${dateStr}, ${escapeHtml(author)} wrote:<blockquote type="cite">${quotedHtml}</blockquote>`
-	                            : `<br><br>On ${dateStr}, ${escapeHtml(author)} wrote:<br>${quotedLines}`;
-	                          composeFields.body = `<html><head><meta charset="UTF-8"></head><body>${formatBodyHtml(body, isHtml)}${quoteBlock}</body></html>`;
-	                        } else {
-	                          const quotedLines = originalBody.split('\n').map(line => `> ${line}`).join('\n');
-	                          composeFields.body = `${body || ""}\n\nOn ${dateStr}, ${author} wrote:\n${quotedLines}`;
-	                        }
-
-	                        sendMessageDirectly(composeFields, msgComposeParams.identity, fileDescs, msgURI, compType, Ci.nsIMsgCompDeliverMode.Now, replyUseHtml ? "text/html" : "text/plain").then(result => {
-	                          if (result.success) {
-	                            let repliedDisposition = null;
-	                            try {
-	                              repliedDisposition = Ci.nsIMsgFolder.nsMsgDispositionState_Replied;
-	                            } catch {}
-	                            markMessageDispositionState(msgHdr, repliedDisposition);
-
-	                            let msg = "Reply sent";
-	                            if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
-	                            result.message = msg;
-	                          }
-	                          resolve(result);
-	                        }).catch(e => resolve({ error: e.toString() }));
-	                      } catch (e) {
-	                        resolve({ error: e.toString() });
-	                      }
-	                    }, true, { examineEncryptedParts: true });
-	                    return;
-	                  }
-
-	                  openComposeWindowWithCustomizations(
-	                    msgComposeParams,
-	                    msgURI,
-	                    compType,
-	                    msgComposeParams.identity,
-	                    body,
-	                    isHtml,
-	                    reviewTo,
-	                    reviewCc,
-	                    bcc,
-	                    fileDescs
-	                  ).then(result => {
-	                    if (result.success) {
-	                      let msg = "Reply window opened";
-	                      if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
-	                      result.message = msg;
-	                    }
-	                    resolve(result);
-	                  }).catch(e => resolve({ error: e.toString() }));
-
-	                } catch (e) {
-	                  resolve({ error: e.toString() });
-	                }
-	              });
-            }
-
-            /**
              * Forwards a message with original content and attachments.
-             *
-             * Review path uses Thunderbird's native ForwardInline compose flow so
-             * TB builds the forward body with a proper <blockquote type="cite">
-             * quote, auto-attaches the original message's attachments, places the
-             * identity signature per user preferences, and sets the $Forwarded
-             * disposition on the original after a successful send. The caller's
-             * intro body is injected via NotifyComposeBodyReady, mirroring how
-             * replyToMessage handles intro injection.
-             *
-             * skipReview still uses direct send, so it keeps a manual forward
-             * block + auto-attaches originals from MsgHdrToMimeMessage + manually
-             * marks the original as forwarded after a successful send.
+             * mode "window" (default) uses Thunderbird's native ForwardInline
+             * flow; "draft" and "send" build the forward here and re-attach the
+             * original attachments. Only "send" is gated by the skipReview block.
              */
-            function forwardMessage(messageId, folderPath, to, body, isHtml, cc, bcc, from, attachments, skipReview) {
-              return new Promise((resolve) => {
-                try {
-                  if (skipReview && isSkipReviewBlocked()) {
-                    resolve({ error: "User preference blocks skipReview. Retry with skipReview: false (or omitted) to open the review window instead." });
-                    return;
-                  }
-                  const found = findMessage(messageId, folderPath);
-                  if (found.error) {
-                    resolve({ error: found.error });
-                    return;
-                  }
-                  const { msgHdr, folder } = found;
-                  const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(attachments);
-                  const msgURI = folder.getUriForMsg(msgHdr);
-                  const compType = Ci.nsIMsgCompType.ForwardInline;
+            async function forwardMessage(args) {
+              try {
+                const mode = resolveComposeMode(args.mode, args.skipReview);
+                if (mode === "send" && isSkipReviewBlocked()) return { error: SEND_BLOCKED_ERROR };
+                if (mode === "send" && !args.to) return { error: "to is required to send a forward" };
 
-                  const msgComposeParams = Cc["@mozilla.org/messengercompose/composeparams;1"]
-                    .createInstance(Ci.nsIMsgComposeParams);
+                const found = findMessage(args.messageId, args.folderPath);
+                if (found.error) return { error: found.error };
+                const { msgHdr, folder } = found;
+                const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(args.attachments);
+                const msgURI = folder.getUriForMsg(msgHdr);
+                const compType = Ci.nsIMsgCompType.ForwardInline;
 
-                  const composeFields = Cc["@mozilla.org/messengercompose/composefields;1"]
-                    .createInstance(Ci.nsIMsgCompFields);
+                const msgComposeParams = Cc["@mozilla.org/messengercompose/composeparams;1"]
+                  .createInstance(Ci.nsIMsgComposeParams);
+                const composeFields = Cc["@mozilla.org/messengercompose/composefields;1"]
+                  .createInstance(Ci.nsIMsgCompFields);
+                msgComposeParams.type = compType;
+                msgComposeParams.originalMsgURI = msgURI;
+                msgComposeParams.composeFields = composeFields;
+                try { msgComposeParams.origMsgHdr = msgHdr; } catch { /* older TB */ }
 
-                  msgComposeParams.type = compType;
-                  msgComposeParams.originalMsgURI = msgURI;
-                  msgComposeParams.composeFields = composeFields;
-
-                  try {
-                    msgComposeParams.origMsgHdr = msgHdr;
-                  } catch {}
-
-                  const identityResult = setComposeIdentity(msgComposeParams, from, folder.server);
-                  if (identityResult && identityResult.error) {
-                    resolve(identityResult);
-                    return;
-                  }
-
-                  // ForwardInline only passes the format flag through when it is
-                  // Default or OppositeOfDefault -- HTML/PlainText are ignored and
-                  // the identity's compose pref always wins. resolveComposeFormat
-                  // returns OppositeOfDefault when the caller's explicit isHtml
-                  // conflicts with the identity pref so we can still force the
-                  // intended editor mode.
-                  const { useHtml: fwdUseHtml, format: fwdFormat } =
-                    resolveComposeFormat(msgComposeParams.identity, isHtml, compType);
-                  msgComposeParams.format = fwdFormat;
-
-                  if (skipReview) {
-                    const { MsgHdrToMimeMessage } = ChromeUtils.importESModule(
-                      "resource:///modules/gloda/MimeMessage.sys.mjs"
-                    );
-
-                    MsgHdrToMimeMessage(msgHdr, null, (aMsgHdr, aMimeMsg) => {
-                      try {
-                        const originalBody = extractPlainTextBody(aMimeMsg);
-
-                        composeFields.to = to;
-                        composeFields.cc = cc || "";
-                        composeFields.bcc = bcc || "";
-
-                        const origSubject = msgHdr.mime2DecodedSubject || msgHdr.subject || "";
-                        composeFields.subject = /^fwd:/i.test(origSubject) ? origSubject : `Fwd: ${origSubject}`;
-
-                        const dateStr = msgHdr.date ? new Date(msgHdr.date / 1000).toLocaleString() : "";
-                        const fwdAuthor = msgHdr.mime2DecodedAuthor || msgHdr.author || "";
-                        const fwdRecipients = msgHdr.mime2DecodedRecipients || msgHdr.recipients || "";
-
-                        // Direct send goes through nsIMsgSend, not nsIMsgCompose,
-                        // so we hand-build the forward block. The shape matches the
-                        // resolved compose mode -- shipping an HTML envelope for a
-                        // plain-format send would render as literal markup in the
-                        // recipient's mail client.
-                        if (fwdUseHtml) {
-                          const fwdHeaderHtml =
-                            `-------- Forwarded Message --------<br>` +
-                            `Subject: ${escapeHtml(origSubject)}<br>` +
-                            `Date: ${dateStr}<br>` +
-                            `From: ${escapeHtml(fwdAuthor)}<br>` +
-                            `To: ${escapeHtml(fwdRecipients)}<br><br>`;
-                          const quotedHtml = escapeHtml(originalBody).replace(/\n/g, '<br>');
-                          const quotedLinesHtml = originalBody.split('\n').map(line =>
-                            `&gt; ${escapeHtml(line)}`
-                          ).join('<br>');
-                          const forwardBlock = isHtml
-                            ? `<blockquote type="cite">${fwdHeaderHtml}${quotedHtml}</blockquote>`
-                            : `${fwdHeaderHtml}${quotedLinesHtml}`;
-                          const introHtml = body ? formatBodyHtml(body, isHtml) + '<br><br>' : "";
-                          composeFields.body = `<html><head><meta charset="UTF-8"></head><body>${introHtml}${forwardBlock}</body></html>`;
-                        } else {
-                          const fwdHeader =
-                            `-------- Forwarded Message --------\n` +
-                            `Subject: ${origSubject}\n` +
-                            `Date: ${dateStr}\n` +
-                            `From: ${fwdAuthor}\n` +
-                            `To: ${fwdRecipients}\n\n`;
-                          composeFields.body = `${body ? body + '\n\n' : ''}${fwdHeader}${originalBody}`;
-                        }
-
-                        const origDescs = [];
-                        if (aMimeMsg && aMimeMsg.allUserAttachments) {
-                          for (const att of aMimeMsg.allUserAttachments) {
-                            try {
-                              origDescs.push({ url: att.url, name: att.name, contentType: att.contentType });
-                            } catch {
-                              // Skip unreadable original attachments
-                            }
-                          }
-                        }
-                        const allDescs = [...origDescs, ...fileDescs];
-
-                        sendMessageDirectly(composeFields, msgComposeParams.identity, allDescs, msgURI, compType, Ci.nsIMsgCompDeliverMode.Now, fwdUseHtml ? "text/html" : "text/plain").then(result => {
-                          if (result.success) {
-                            let forwardedDisposition = null;
-                            try {
-                              forwardedDisposition = Ci.nsIMsgFolder.nsMsgDispositionState_Forwarded;
-                            } catch {}
-                            markMessageDispositionState(msgHdr, forwardedDisposition);
-
-                            let msg = `Forward sent with ${allDescs.length} attachment(s)`;
-                            if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
-                            result.message = msg;
-                          }
-                          resolve(result);
-                        }).catch(e => resolve({ error: e.toString() }));
-                      } catch (e) {
-                        resolve({ error: e.toString() });
-                      }
-                    }, true, { examineEncryptedParts: true });
-                    return;
-                  }
-
-                  // Review path: TB builds the forward body and auto-attaches the
-                  // original's attachments via ForwardInline. The intro body and
-                  // user-specified extra attachments are injected once the compose
-                  // window's editor signals NotifyComposeBodyReady. Subject is set
-                  // by TB from origMsgHdr.
-                  openComposeWindowWithCustomizations(
-                    msgComposeParams,
-                    msgURI,
-                    compType,
-                    msgComposeParams.identity,
-                    body,
-                    isHtml,
-                    to,
-                    cc,
-                    bcc,
-                    fileDescs
-                  ).then(result => {
-                    if (result.success) {
-                      let msg = "Forward window opened";
-                      if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
-                      result.message = msg;
-                    }
-                    resolve(result);
-                  }).catch(e => resolve({ error: e.toString() }));
-                } catch (e) {
-                  resolve({ error: e.toString() });
+                const mimeMsg = await loadMimeMessage(msgHdr);
+                if (args.from) {
+                  const identityResult = setComposeIdentity(msgComposeParams, args.from, folder.server);
+                  if (identityResult && identityResult.error) return identityResult;
+                } else {
+                  const picked = identityForMessage(msgHdr, compType, mimeMsg);
+                  if (picked.error) return picked;
+                  msgComposeParams.identity = picked.identity;
                 }
-              });
+                const identity = msgComposeParams.identity;
+
+                // ForwardInline honors only Default / OppositeOfDefault; see resolveComposeFormat.
+                const { useHtml, format } = resolveComposeFormat(identity, args.isHtml, compType);
+                msgComposeParams.format = format;
+
+                if (mode === "window") {
+                  // TB builds the forward body, subject and original attachments;
+                  // intro body and extra attachments are injected on body-ready.
+                  const result = await openComposeWindowWithCustomizations(
+                    msgComposeParams, msgURI, compType, identity, args.body, args.isHtml,
+                    args.to, args.cc, args.bcc, fileDescs
+                  );
+                  if (result.success) result.message = attachFailureNote("Forward window opened", failedPaths);
+                  return result;
+                }
+
+                composeFields.to = args.to || "";
+                composeFields.cc = args.cc || "";
+                composeFields.bcc = args.bcc || "";
+                composeFields.subject = prefixSubject(displaySubject(msgHdr), "Fwd");
+                // Thunderbird references only the forwarded message
+                composeFields.references = `<${normalizeMessageIdForDedup(msgHdr.messageId)}>`;
+                composeFields.body = buildForwardBody(args, useHtml, { msgHdr, mimeMsg, identity });
+                const allDescs = [...originalAttachmentDescs(mimeMsg), ...fileDescs];
+
+                if (mode === "draft") {
+                  const result = await saveComposeFieldsAsDraft(composeFields, identity, allDescs, useHtml, msgURI, compType);
+                  if (result.success) {
+                    Object.assign(result, { to: composeFields.to, cc: composeFields.cc, subject: composeFields.subject });
+                    result.message = attachFailureNote(`Forward draft saved with ${allDescs.length} attachment(s)`, failedPaths);
+                  }
+                  return result;
+                }
+
+                const result = await sendMessageDirectly(
+                  composeFields, identity, allDescs, msgURI, compType, Ci.nsIMsgCompDeliverMode.Now, useHtml ? "text/html" : "text/plain"
+                );
+                if (result.success) {
+                  let forwardedDisposition = null;
+                  try { forwardedDisposition = Ci.nsIMsgFolder.nsMsgDispositionState_Forwarded; } catch { /* older TB */ }
+                  markMessageDispositionState(msgHdr, forwardedDisposition);
+                  result.message = attachFailureNote(`Forward sent with ${allDescs.length} attachment(s)`, failedPaths);
+                }
+                return result;
+              } catch (e) {
+                return { error: e.toString() };
+              }
             }
 
             function displayMessage(messageId, folderPath, displayMode) {
@@ -9702,11 +11147,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "sendMail":
                   return await composeMail(args.to, args.subject, args.body, args.cc, args.bcc, args.isHtml, args.from, args.attachments, args.skipReview);
                 case "saveDraft":
-                  return await saveDraft(args.to, args.subject, args.body, args.cc, args.bcc, args.isHtml, args.from, args.attachments);
+                  return await saveDraft(args);
                 case "replyToMessage":
-                  return await replyToMessage(args.messageId, args.folderPath, args.body, args.replyAll, args.isHtml, args.to, args.cc, args.bcc, args.from, args.attachments, args.skipReview);
+                  return await replyToMessage(args);
                 case "forwardMessage":
-                  return await forwardMessage(args.messageId, args.folderPath, args.to, args.body, args.isHtml, args.cc, args.bcc, args.from, args.attachments, args.skipReview);
+                  return await forwardMessage(args);
                 case "getRecentMessages":
                   return getRecentMessages(args);
                 case "displayMessage":

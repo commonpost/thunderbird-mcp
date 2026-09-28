@@ -12,6 +12,34 @@ project is kept in this repository.
   through `mcp-bridge.cjs`, with Marionette for privileged checks. Works with 140 ESR, 153 ESR and 156. See
   CONTRIBUTING.md.
 
+### Added (compose)
+- `saveDraft` `draftId`: rewrite an existing draft. Passed fields replace, omitted ones are kept as Thunderbird
+  keeps them when it reopens a draft (sender, recipients, Reply-To, priority, receipt flags, body, attachments,
+  reply headers); a new `body` replaces only the typed text, the cite line, quote, forwarded message and signature
+  stay (`keepQuote: false`, `keepAttachments: false` to drop them). The old version is removed only after the new
+  one is saved.
+- `replyToMessage` / `forwardMessage` `mode: "window" | "draft" | "send"`. `draft` saves through Thunderbird's own
+  compose engine, so a reply or forward draft stays linked to the original (marked replied / forwarded when the
+  draft is sent). `send` is subject to the `skipReview` block, like `skipReview: true`.
+- `replyToMessage` `latestInThread: true` replies to the newest message of the conversation (Sent included).
+
+### Changed (compose)
+- With empty `to` / `cc`, reply recipients are computed as in Thunderbird's reply window: Mail-Reply-To /
+  Reply-To first (a Reply-To munged to a mailing list falls back to the author), `replyAll` keeps To in To and Cc
+  in Cc or follows Mail-Followup-To, the identity's auto Cc / Bcc / Reply-To are added, own addresses are removed,
+  and a reply to your own message goes to its original recipients.
+- Without `from`, replies and forwards use the identity Thunderbird would pick: the one the message was addressed
+  to (To / Cc, then Delivered-To; a catch-all identity replies from the address the message was sent to); a reply
+  to your own message uses the identity that sent it.
+- Drafts and direct sends get the body Thunderbird's compose window would save with the same text typed: the
+  localized cite line and forward header, the quote of the original with its HTML formatting, the signature placed
+  by the identity's reply position and signature settings, HTML without `&#` entities in UTF-8, plain text as
+  `format=flowed` wrapped at `mailnews.wraplength`. Before, direct sends built the quote by hand from the plain-text
+  body with an English cite line and could not place the signature by the reply preferences.
+- The `skipReview` block also rejects `mode: "send"`.
+- A plain-text forward keeps the signature below the forwarded message, as Thunderbird 140 and 158+ do.
+  Thunderbird 150-157 drop it (bug 2063939, a regression from Gecko bug 2019689); the tool does not copy that bug.
+
 ### Added (search and reading)
 - `searchMessages`: `participant:` (From/To/Cc/Bcc); `participant:@example.com` matches the domain of each address
   exactly, as Gloda's `LIKE '%@domain'` does (`@example.com` no longer matches `example.community`), commas list
