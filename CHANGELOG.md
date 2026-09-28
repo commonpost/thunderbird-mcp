@@ -15,13 +15,17 @@ project is kept in this repository.
   compose window) now waits up to 150 s for Thunderbird's answer instead of 30 s, so the bridge no longer gives up
   before Thunderbird's own 120 s send timeout. Every other call keeps the 30 s limit. If the wait still runs out,
   the error says the outcome is unknown and asks to check the Sent folder and the Outbox before retrying, so the
-  message is not sent twice.
+  message is not sent twice. The same goes for a direct send whose connection to Thunderbird is lost after it was
+  opened (reset, closed socket, interrupted response); a connection that could never be opened is still an
+  ordinary, retryable error. Note that an MCP client may have its own time limit for a tool call: if it is shorter
+  than 150 s, the client can give up while Thunderbird goes on sending, so check the Sent folder before retrying.
 - Message bodies converted to Markdown (`bodyFormat: "markdown"`, the default) keep only `http:`, `https:` and
-  `mailto:` links and `http:`/`https:` images. A link with any other scheme (`javascript:`, `file:`, `data:`,
-  `vbscript:`, `cid:`, ...) or without an absolute URL becomes its plain text, without the URL; an image with
-  another source becomes its alt text. Schemes are compared case-insensitively, ignoring leading control
-  characters and spaces and any tab or newline inside the URL. `bodyFormat: "html"` still returns the sender's
-  HTML unchanged.
+  `mailto:` links. A link with any other scheme (`javascript:`, `file:`, `data:`, `vbscript:`, `cid:`, ...) or
+  without an absolute URL becomes its plain text, without the URL. Schemes are compared case-insensitively,
+  ignoring leading control characters and spaces and any tab or newline inside the URL. Images become their
+  alternative text (or nothing when it is empty), and their addresses are no longer returned, so that a client
+  which displays the Markdown does not load tracking images or other remote content; this supersedes the 0.8.2
+  behavior that returned remote image URLs. `bodyFormat: "html"` still returns the sender's HTML unchanged.
 - HTML bodies larger than 2 MiB are no longer given to the DOM parser: they go through the existing tag-stripping
   path instead, which prints no link or image URL.
 
