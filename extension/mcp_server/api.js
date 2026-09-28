@@ -1054,6 +1054,17 @@ const SENSITIVE_ATTACHMENT_PATTERNS = [
   /\/\.(?:thunderbird|icedove)(\/|$)/,
   /\/library\/thunderbird(\/|$)/,
   /\/appdata\/roaming\/thunderbird(\/|$)/,
+  // Windows compatibility junctions reach the same directories under another
+  // name: <profile>\Application Data ->
+  // AppData\Roaming, Local Settings -> AppData\Local (and its Application
+  // Data), AppData\Local\Application Data -> AppData\Local, All Users ->
+  // ProgramData, ProgramData\Application Data -> ProgramData, Documents and
+  // Settings -> Users. macOS: /etc and /var are symlinks into /private.
+  /\/application data\/thunderbird(\/|$)/,
+  /\/(application data|local settings)\/microsoft\/(credentials|crypto|protect|vault)(\/|$)/,
+  /\/all users\/(application data\/)?microsoft\/(crypto|protect)\//,
+  /^[a-z]:\/programdata\/application data\/microsoft\/(crypto|protect)\//,
+  /^\/private\/(etc|var\/log|var\/root)\//,
 ];
 
 /**
@@ -1062,12 +1073,54 @@ const SENSITIVE_ATTACHMENT_PATTERNS = [
  * Path is normalized (backslashes → forward slashes, lower-cased) before
  * matching so the same pattern set works on POSIX and Windows.
  */
-function isSensitiveFilePath(attachmentPath) {
+function isSensitiveFilePath(attachmentPath, windows = isWindowsHost()) {
   if (typeof attachmentPath !== "string" || !attachmentPath) return false;
   // UNC and device paths are refused too, before any nsIFile access.
   if (isUncOrDevicePath(attachmentPath)) return true;
+  // ...and, on Windows, forms Windows resolves to another name than the text
+  // this lexical deny-list sees (no real-path resolution is available here).
+  if (windows && windowsPathAmbiguity(attachmentPath)) return true;
+  return matchesSensitivePattern(attachmentPath);
+}
+
+function matchesSensitivePattern(attachmentPath) {
   const normalized = attachmentPath.replace(/\\/g, "/").toLowerCase();
   return SENSITIVE_ATTACHMENT_PATTERNS.some(re => re.test(normalized));
+}
+
+function isWindowsHost() {
+  try {
+    return typeof Services !== "undefined" && Services.appinfo.OS === "WINNT";
+  } catch {
+    // No Services (unit-test sandbox): not Windows.
+    return false;
+  }
+}
+
+// Windows path forms that Windows resolves to ANOTHER name than the one the
+// lexical deny-list sees:
+//   - an alternate data stream (logins.json::$DATA, a.kdbx:s) reads a file or
+//     stream whose name does not end the path;
+//   - a trailing dot or space in a component is stripped (Thunderbird. is
+//     Thunderbird, a.pem. is a.pem);
+//   - an 8.3 short name (THUNDE~1, APPDAT~1) hides the long name.
+// Returns the reason, or null. Keep in sync with mcp-bridge.cjs.
+function windowsPathAmbiguity(attachmentPath) {
+  if (typeof attachmentPath !== "string") return null;
+  const rest = attachmentPath.replace(/^[A-Za-z]:/, "");
+  if (rest.includes(":")) {
+    return "names an alternate data stream (':' after the drive)";
+  }
+  for (const part of rest.split(/[\\/]+/)) {
+    if (part === "" || part === "." || part === "..") continue;
+    if (/[. ]$/.test(part)) {
+      return `has a component ending with a dot or a space (${JSON.stringify(part)})`;
+    }
+    if (/^[^.~\s]{1,6}~[0-9]{1,6}(\.[^.\s]{1,3})?$/.test(part) && part.split(".")[0].length <= 8) {
+      return `has an 8.3 short-name component (${JSON.stringify(part)})`;
+    }
+  }
+  return null;
 }
 
 // UNC and device-namespace paths: \\server\share, \\?\..., \\.\..., \??\...,
