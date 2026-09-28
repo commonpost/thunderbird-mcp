@@ -1332,6 +1332,10 @@
             "type": "boolean",
             "description": "Reply to all recipients (default: false)"
           },
+          "latestInThread": {
+            "type": "boolean",
+            "description": "Reply to the newest message of this conversation instead (Sent included); result has repliedTo"
+          },
           "isHtml": {
             "type": "boolean",
             "description": "Set to true if body contains HTML markup (default: false)"

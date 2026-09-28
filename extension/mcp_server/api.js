@@ -54,6 +54,8 @@ const MCP_SERVER_INSTRUCTIONS = [
   "Search: countOnly for counts, format \"table\" for long lists, getMessages to read several messages in one call; long bodies page with bodyOffset.",
   "Company mail: get the domain from its mail (search the name, read sender addresses; contacts only if they list the organization), then searchMessages \"participant:@domain\" (several: \"participant:@a.com,@b.com\"); groupBy sender or thread for an overview.",
   "Conversation: searchMessages threadOf {messageId, folderPath} returns the thread across folders, oldest first.",
+  "Replies: replyToMessage with replyAll and empty to/cc computes recipients like Thunderbird; latestInThread answers the newest message; mode \"draft\" saves a draft without sending.",
+  "Drafts: edit with saveDraft draftId instead of delete + recreate.",
   "Compose and create tools open a review window by default; do not claim a message was sent unless the result says so.",
   "IMAP folders may be stale until opened in Thunderbird.",
 ].join("\n");
@@ -5921,6 +5923,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             folderPath: { type: "string", description: "The folder URI path (from searchMessages results)" },
             body: { type: "string", description: "Reply body text" },
             replyAll: { type: "boolean", description: "Reply to all recipients (default: false)" },
+            latestInThread: { type: "boolean", description: "Reply to the newest message of this conversation instead (Sent included); result has repliedTo" },
             isHtml: { type: "boolean", description: "Set to true if body contains HTML markup (default: false)" },
             mode: { type: "string", enum: ["window", "draft", "send"], description: "window (default), draft or send" },
             to: { type: "string", description: "Override the recipients Thunderbird computes (required with mode send)" },
@@ -12877,6 +12880,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
+            // Newest message of the conversation outside Drafts/Templates/Outbox.
+            function findLatestInThread(messageId, folderPath) {
+              const res = searchMessages({ query: "", threadOf: { messageId, folderPath }, sortOrder: "desc", maxResults: MAX_SEARCH_RESULTS_CAP });
+              if (res.error) return res;
+              const skipFlags = Ci.nsMsgFolderFlags.Drafts | Ci.nsMsgFolderFlags.Templates | Ci.nsMsgFolderFlags.Queue;
+              for (const row of res.messages || []) {
+                let folder = null;
+                try { folder = MailServices.folderLookup.getFolderForURL(row.folderPath); } catch { /* skip */ }
+                if (!folder || folder.isSpecialFolder(skipFlags, true)) continue;
+                return { messageId: row.id, folderPath: row.folderPath };
+              }
+              return { messageId, folderPath };
+            }
+
             /**
              * Replies to a message with quoted original. mode "window" (default)
              * opens a compose window for review, "draft" saves the reply to Drafts,
@@ -12891,7 +12908,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * only: the original message, which anyone can write, never picks them.
              * A draft gets the recipients Thunderbird computes, for the user to review.
              */
-            async function replyToMessage(messageId, folderPath, body, replyAll, isHtml, to, cc, bcc, from, attachments, skipReview, mode) {
+            async function replyToMessage(messageId, folderPath, body, replyAll, isHtml, to, cc, bcc, from, attachments, skipReview, mode, latestInThread) {
               try {
                 const composeMode = resolveComposeMode(mode, skipReview);
                 const refusal = composeModeRefusal(composeMode, { skipReviewBlocked: isSkipReviewBlocked(), saveDraftEnabled: isToolEnabled("saveDraft") });
@@ -12901,6 +12918,19 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (composeMode === "send" && (!to || !from)) {
                   return { error: "mode \"send\" (or skipReview) needs explicit to and from: a direct reply takes no address from the original message. Pass them, or use mode \"draft\" or \"window\" to review the reply first." };
                 }
+                let repliedTo = null;
+                if (latestInThread) {
+                  const latest = findLatestInThread(messageId, folderPath);
+                  if (latest.error) return latest;
+                  if (normalizeMessageIdForDedup(latest.messageId) !== normalizeMessageIdForDedup(messageId) || latest.folderPath !== folderPath) {
+                    ({ messageId, folderPath } = latest);
+                    repliedTo = latest;
+                  }
+                }
+                const withContext = result => {
+                  if (result.success && repliedTo) result.repliedTo = repliedTo;
+                  return result;
+                };
                 const found = findMessage(messageId, folderPath);
                 if (found.error) {
                   return { error: found.error };
@@ -12982,7 +13012,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       result.message = "Reply draft saved";
                       Object.assign(result, composeAddresses(composeFields), { subject: composeFields.subject });
                     }
-                    return result;
+                    return withContext(result);
                   }
 
                   const result = await sendMessageDirectly(composeFields, msgComposeParams.identity, fileDescs, msgURI, compType, Ci.nsIMsgCompDeliverMode.Now, replyUseHtml ? "text/html" : "text/plain");
@@ -12997,7 +13027,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     result.message = msg;
                     Object.assign(result, composeAddresses(composeFields));
                   }
-                  return result;
+                  return withContext(result);
                 }
 
                 const result = await openComposeWindowWithCustomizations(
@@ -13016,7 +13046,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   const msg = "Reply window opened";
                   result.message = msg;
                 }
-                return result;
+                return withContext(result);
               } catch (e) {
                 return { error: e.toString() };
               }
@@ -14969,7 +14999,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (args.draftId) return await updateDraft(args);
                   return await saveDraft(args.to, args.subject, args.body, args.cc, args.bcc, args.isHtml, args.from, args.attachments);
                 case "replyToMessage":
-                  return await replyToMessage(args.messageId, args.folderPath, args.body, args.replyAll, args.isHtml, args.to, args.cc, args.bcc, args.from, args.attachments, args.skipReview, args.mode);
+                  return await replyToMessage(args.messageId, args.folderPath, args.body, args.replyAll, args.isHtml, args.to, args.cc, args.bcc, args.from, args.attachments, args.skipReview, args.mode, args.latestInThread);
                 case "forwardMessage":
                   return await forwardMessage(args.messageId, args.folderPath, args.to, args.body, args.isHtml, args.cc, args.bcc, args.from, args.attachments, args.skipReview, args.mode);
                 case "getRecentMessages":
