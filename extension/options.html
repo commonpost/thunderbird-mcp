@@ -226,8 +226,16 @@
       </label>
     </li>
   </ul>
+  <p class="mode-note">
+    By default the server only answers to this computer. Listening on all interfaces
+    opens it to your network.
+  </p>
   <p class="mode-note" id="listenAllWarning" style="display:none; color: #d70022;">
-    Warning: this exposes the MCP server to every device on your local network. Enable only on trusted networks.
+    Warning: this exposes the MCP server to every device on your local network.
+    The connection is plain HTTP, not encrypted: the access token travels in clear
+    text and anyone on the network can read it, and the check of the Host header
+    is turned off in this mode. Enable it only on a network you fully trust, and
+    turn it off when you no longer need it.
   </p>
   <div class="save-row">
     <button id="saveListenAllBtn" disabled>Save</button>
@@ -273,8 +281,9 @@
     <span id="copyAuthTokenStatus" class="save-status"></span>
   </div>
   <p class="mode-note warning-note">
-    Stable token mode keeps the same token across restarts. If the connection file leaks,
-    the token stays valid until you regenerate or clear it. Changes apply next time the MCP server starts.
+    Stable token mode keeps the same token across restarts, stored in your Thunderbird profile.
+    If the token becomes known to someone else it stays valid until you regenerate or clear it.
+    Removing the add-on clears it. Changes apply next time the MCP server starts.
   </p>
   <ul class="account-list">
     <li>
