@@ -5328,6 +5328,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * We try the modern 16-arg call first; if TB throws
              * NS_ERROR_XPC_NOT_ENOUGH_ARGS, fall back to the legacy 18-arg call.
              */
+            // BEGIN DIRECT SEND
             function sendMessageDirectly(composeFields, identity, attachDescs, originalMsgURI, compType, deliverMode, bodyType) {
               if (!identity) {
                 return Promise.resolve({ error: "No identity available for direct send" });
@@ -5461,12 +5462,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     }
                   }
                   // Modern TB (128+) returns a Promise from createAndSendMessage.
-                  // Handle both fulfillment and rejection -- belt-and-suspenders
-                  // with the listener (settle is idempotent). For SaveAsDraft on
-                  // older TB without the copy listener, the Promise fulfillment
-                  // can be the only completion signal we get.
+                  // For drafts and queued mail it resolves once the copy is done and
+                  // can be the only completion signal on older TB. For Now it resolves
+                  // as soon as SMTP starts (MessageSend._deliverAsMail), so only
+                  // onStopSending reports the outcome.
                   if (sendResult && typeof sendResult.then === "function") {
                     sendResult.then(() => {
+                      if (mode === Ci.nsIMsgCompDeliverMode.Now) return;
                       timer.cancel();
                       settle({ success: true });
                     }).catch(e => {
@@ -5480,6 +5482,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
               });
             }
+            // END DIRECT SEND
 
             function stripHtml(html) {
               if (!html) return "";

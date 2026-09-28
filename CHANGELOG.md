@@ -91,6 +91,11 @@ project is kept in this repository.
 - README lists `saveDraft` and `listCategories`, which were missing from the tool tables.
 
 ### Fixed
+- Direct sends (`sendMail`, `replyToMessage`, `forwardMessage` with `skipReview`) reported "sent" as soon as the
+  SMTP connection started: on Thunderbird 128+ the promise of `createAndSendMessage` resolves when delivery begins
+  (`MessageSend._deliverAsMail` awaits only the request), not when it ends. A rejected recipient, failed
+  authentication or unreachable server came back as success, and on 140 ESR an identity without an outgoing server
+  did too. A send now waits for `onStopSending`; drafts still complete on the promise.
 - The Experiment now imports `atob`, `btoa`, `DOMParser`, `TextDecoder` and `TextEncoder`
   (`Cu.importGlobalProperties`). Experiment scripts do not get these web globals, so inside Thunderbird:
   - `getMessage`/`getMessages` returned HTML bodies as flat text instead of Markdown (no links, bold or lists:
