@@ -4,6 +4,12 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Added
+- `docs/thunderbird-internals.md`: notes on how Thunderbird itself composes drafts and replies, quotes, threads,
+  searches and filters mail, with the Thunderbird source of each rule and what was verified on a real Thunderbird.
+
 ## [0.8.3] - 2026-09-27
 
 ### Added
