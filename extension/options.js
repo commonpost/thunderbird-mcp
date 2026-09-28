@@ -584,8 +584,45 @@ saveFilterSendRulePolicyBtn.addEventListener("click", async () => {
   saveFilterSendRulePolicyBtn.disabled = false;
 });
 
+// --- Encrypted messages ---
+const allowEncryptedContentCheckbox = document.getElementById("allowEncryptedContent");
+const saveEncryptedContentBtn = document.getElementById("saveEncryptedContentBtn");
+const saveEncryptedContentStatus = document.getElementById("saveEncryptedContentStatus");
+
+async function loadEncryptedContentPref() {
+  try {
+    const { allowEncryptedContent } = await browser.commonpostMcp.getAllowEncryptedContent();
+    allowEncryptedContentCheckbox.checked = allowEncryptedContent === true;
+    saveEncryptedContentBtn.disabled = false;
+    saveEncryptedContentStatus.textContent = "";
+  } catch (e) {
+    saveEncryptedContentStatus.textContent = "Error loading setting: " + e.message;
+    saveEncryptedContentStatus.className = "save-status error";
+  }
+}
+
+saveEncryptedContentBtn.addEventListener("click", async () => {
+  saveEncryptedContentBtn.disabled = true;
+  saveEncryptedContentStatus.textContent = "Saving...";
+  saveEncryptedContentStatus.className = "save-status";
+  try {
+    const result = await browser.commonpostMcp.setAllowEncryptedContent(allowEncryptedContentCheckbox.checked);
+    if (result.error) {
+      saveEncryptedContentStatus.textContent = result.error;
+      saveEncryptedContentStatus.className = "save-status error";
+    } else {
+      saveEncryptedContentStatus.textContent = "Saved.";
+    }
+  } catch (e) {
+    saveEncryptedContentStatus.textContent = "Error: " + e.message;
+    saveEncryptedContentStatus.className = "save-status error";
+  }
+  saveEncryptedContentBtn.disabled = false;
+});
+
 loadServerInfo().catch(e => console.error("commonpost-mcp options:", "loadServerInfo failed:", e));
 loadFilterSendRulePolicy().catch(e => console.error("commonpost-mcp options:", "loadFilterSendRulePolicy failed:", e));
+loadEncryptedContentPref().catch(e => console.error("commonpost-mcp options:", "loadEncryptedContentPref failed:", e));
 loadAuthenticationConfig().catch(e => console.error("commonpost-mcp options:", "loadAuthenticationConfig failed:", e));
 loadAccountAccess().catch(e => console.error("commonpost-mcp options:", "loadAccountAccess failed:", e));
 loadToolAccess().catch(e => console.error("commonpost-mcp options:", "loadToolAccess failed:", e));
