@@ -1,7 +1,8 @@
 "use strict";
 
-// getRecentMessages omitted ccList from its result rows; searchMessages includes it.
-// One line restores field parity (upstream TKasperczyk/thunderbird-mcp#174 by Gunther Schulz).
+// getRecentMessages omitted ccList from its result rows; searchMessages includes it
+// (upstream TKasperczyk/thunderbird-mcp#174 by Gunther Schulz). getRecentMessages now
+// runs through searchMessages, so both share one row format.
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
@@ -16,9 +17,10 @@ const apiSource = fs.readFileSync(
 describe("getRecentMessages result rows", () => {
   it("carries ccList, like searchMessages does", () => {
     const start = apiSource.indexOf("function getRecentMessages(");
-    const end = apiSource.indexOf("\n            }", apiSource.indexOf("function ", start + 1));
     assert.ok(start >= 0, "getRecentMessages not found in api.js");
-    const body = apiSource.slice(start, end > start ? end : start + 4000);
-    assert.match(body, /ccList:\s*msgHdr\.ccList/, "getRecentMessages does not carry ccList");
+    const body = apiSource.slice(start, apiSource.indexOf("\n            }", start));
+    assert.match(body, /return searchMessages\(/, "getRecentMessages no longer delegates to searchMessages");
+    assert.match(apiSource, /const SEARCH_ROW_COLUMNS = \[[^\]]*"ccList"/, "search rows do not carry ccList");
+    assert.match(apiSource, /ccList: [^,\n]*msgHdr\.ccList/, "search rows do not fill ccList");
   });
 });

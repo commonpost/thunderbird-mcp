@@ -17,7 +17,8 @@ function matchesContactQuery(card, query) {
   const displayName = (card.displayName || "").toLowerCase();
   const firstName = (card.firstName || "").toLowerCase();
   const lastName = (card.lastName || "").toLowerCase();
-  const fields = [email, displayName, firstName, lastName];
+  const organization = (card.organization || "").toLowerCase();
+  const fields = [email, displayName, firstName, lastName, organization];
 
   if (failedQuery) return false;
   return !hasQuery || queryTokens.every(token =>
@@ -61,6 +62,13 @@ describe("searchContacts tokenization", () => {
     assert.equal(matchesContactQuery(klocok, "   "), false);
     assert.equal(matchesContactQuery(klocok, ",,,"), false);
     assert.equal(matchesContactQuery(klocok, " , "), false);
+  });
+
+  it("matches organization and email domain", () => {
+    const card = { displayName: "Jane Roe", email: "jane@acme.example", organization: "Acme Corp" };
+    assert.equal(matchesContactQuery(card, "acme corp"), true);
+    assert.equal(matchesContactQuery(card, "@acme.example"), true);
+    assert.equal(matchesContactQuery(card, "globex"), false);
   });
 
   it("remains case-insensitive", () => {

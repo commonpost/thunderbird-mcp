@@ -594,7 +594,7 @@ describe("contact tool wiring", () => {
   });
 
   it("uses the shared full-contact formatter in searchContacts", () => {
-    assert.match(apiSource, /results\.push\(formatContact\(card, book\)\)/);
+    assert.match(apiSource, /const contact = formatContact\(card, book\);/);
     assert.match(apiSource, /if \(card\.isMailList\) continue;\s*if \(card\.UID === contactId\)/);
   });
 });

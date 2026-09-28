@@ -25,7 +25,7 @@ const sandbox = { btoa: globalThis.btoa, getConfiguredGetMessagesLimit: () => 20
 vm.createContext(sandbox);
 vm.runInContext(`${[
   'INLINE ATTACHMENT BASE64 HELPERS', 'OUTBOUND ATTACHMENT LIMITS', 'CONTACT FIELD CONSTANTS', 'FILTER SEARCH TERM HELPERS',
-  'INLINE IMAGE CONTENT HELPERS', 'MCP TOOL PROTOCOL HELPERS', 'TOOL SCHEMA BUILDER',
+  'MESSAGE SEARCH HELPERS', 'INLINE IMAGE CONTENT HELPERS', 'MCP TOOL PROTOCOL HELPERS', 'TOOL SCHEMA BUILDER',
 ].map(snippet).join('\n')}
 this.toolsList = JSON.stringify({ tools: buildTools().map(toolListEntry) });`, sandbox);
 
