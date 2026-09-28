@@ -27,7 +27,10 @@ function cleanupTempRoot(root) {
 
 function writeConnectionFile(filePath, { port, token, pid = process.pid }) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify({ port, token, pid }), 'utf8');
+  fs.writeFileSync(filePath, JSON.stringify({ port, token, pid }), { encoding: 'utf8', mode: 0o600 });
+  // The bridge only trusts a 0600 file of the current user, as the
+  // extension writes it.
+  fs.chmodSync(filePath, 0o600);
 }
 
 function makeTestOptions(root, overrides = {}) {
@@ -63,9 +66,10 @@ function makeTestOptions(root, overrides = {}) {
 function makeFsWithStatOverrides(overrides) {
   return new Proxy(fs, {
     get(target, prop) {
-      if (prop === 'statSync') {
+      // lstatSync too: the connection-file safety check reads the owner with it.
+      if (prop === 'statSync' || prop === 'lstatSync') {
         return (filePath, ...args) => {
-          const stat = target.statSync(filePath, ...args);
+          const stat = target[prop](filePath, ...args);
           const override = overrides.get(filePath);
           if (!override) {
             return stat;

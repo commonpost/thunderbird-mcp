@@ -1064,8 +1064,18 @@ const SENSITIVE_ATTACHMENT_PATTERNS = [
  */
 function isSensitiveFilePath(attachmentPath) {
   if (typeof attachmentPath !== "string" || !attachmentPath) return false;
+  // UNC and device paths are refused too, before any nsIFile access.
+  if (isUncOrDevicePath(attachmentPath)) return true;
   const normalized = attachmentPath.replace(/\\/g, "/").toLowerCase();
   return SENSITIVE_ATTACHMENT_PATTERNS.some(re => re.test(normalized));
+}
+
+// UNC and device-namespace paths: \\server\share, \\?\..., \\.\..., \??\...,
+// //server/share. Keep in sync with mcp-bridge.cjs isUncOrDevicePath.
+function isUncOrDevicePath(attachmentPath) {
+  if (typeof attachmentPath !== "string" || !attachmentPath) return false;
+  const normalized = attachmentPath.replace(/\\/g, "/");
+  return normalized.startsWith("//") || normalized.startsWith("/??/");
 }
 // END SENSITIVE ATTACHMENT PATH HELPERS
 
