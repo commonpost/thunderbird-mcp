@@ -1,0 +1,28 @@
+From: Uma Upsilon <uma@upsilon.test>
+To: Bench User <me@bench.test>
+Subject: Files for review
+Date: Wed, 18 Mar 2026 09:00:00 +0000
+Message-ID: <attachment@upsilon.test>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mix-boundary"
+
+--mix-boundary
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+Two files attached.
+
+--mix-boundary
+Content-Type: text/plain; charset=UTF-8; name="notes.txt"
+Content-Disposition: attachment; filename="notes.txt"
+Content-Transfer-Encoding: 7bit
+
+Line one of the notes.
+
+--mix-boundary
+Content-Type: image/png; name="dot.png"
+Content-Disposition: attachment; filename="dot.png"
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP4//8/AAX+Av6n1KDBAAAAAElFTkSuQmCC
+--mix-boundary--

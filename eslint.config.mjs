@@ -51,6 +51,9 @@ export default [
       "extension/buildinfo.json",
       "extension/httpd.sys.mjs",  // vendored Mozilla httpd, not ours
       ".claude/",
+      ".cache/",                // bench Thunderbird + profile (scripts/tb-bench.sh)
+      "test/bench/user.js",     // prefs file, not JS
+      "test/bench/ready.js",    // Marionette script body (top-level return)
     ],
   },
 

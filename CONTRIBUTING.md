@@ -29,6 +29,25 @@ npm run lint                   # ESLint
 node scripts/build-xpi-reproducible.cjs   # builds dist/commonpost-mcp-v<version>.xpi from the committed tree
 ```
 
+### Tests on a real Thunderbird
+
+The unit tests run the code of `api.js` in Node with stubbed XPCOM; they cannot prove how Thunderbird behaves.
+`npm run test:tb` (Linux x86-64, needs `curl`, `tar` and `node`) downloads a Thunderbird release into `.cache/`,
+starts it headless with a throwaway profile under `.cache/tb-bench` (its own `HOME` and `TMPDIR`, so your own
+Thunderbird and its `connection.json` are never touched), loads the synthetic mail in `test/fixtures/mail`, runs
+`test/bench/*.test.cjs` through `mcp-bridge.cjs` and stops it again.
+
+```sh
+npm run test:tb                          # Thunderbird 156.0.1
+TB_CHANNEL=esr npm run test:tb           # latest ESR (also esr-next, stable, beta); or TB_VERSION=140.16.0esr
+scripts/tb-bench.sh start                # keep it running, then: node --test test/bench/reading.test.cjs
+scripts/tb-bench.sh stop
+```
+
+Bench tests can also run privileged JavaScript in that Thunderbird through Marionette (`tb()` in
+`test/bench/helpers.cjs`), for example to compare a tool's result with what Thunderbird's own compose window
+produces. Without a running bench they are skipped.
+
 To try the extension in Thunderbird, install the XPI from a release (Tools > Add-ons > Install Add-on From File).
 
 ## Reporting bugs and requesting features

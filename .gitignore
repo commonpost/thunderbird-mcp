@@ -25,6 +25,9 @@ Thumbs.db
 # Local dev notes (agent/developer orientation, not for upstream)
 DEV_NOTES.md
 
+# Test bench: downloaded Thunderbird and throwaway profile (scripts/tb-bench.sh)
+.cache/
+
 # Local installer state
 scripts/default-profile
 

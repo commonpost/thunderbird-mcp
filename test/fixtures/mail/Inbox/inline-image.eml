@@ -1,0 +1,23 @@
+From: Petra Phi <petra@phi.test>
+To: Bench User <me@bench.test>
+Subject: Logo draft
+Date: Mon, 16 Mar 2026 09:00:00 +0000
+Message-ID: <inline-image@phi.test>
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="rel-boundary"
+
+--rel-boundary
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+<html><body><p>The new logo:</p><img src="cid:logo@phi.test" width="4" height="4"></body></html>
+
+--rel-boundary
+Content-Type: image/png; name="logo.png"
+Content-Transfer-Encoding: base64
+Content-ID: <logo@phi.test>
+Content-Disposition: inline; filename="logo.png"
+
+iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4nGP4z8AARwzEcQCukw/x0F8jngAAAABJRU5ErkJggg==
+
+--rel-boundary--
