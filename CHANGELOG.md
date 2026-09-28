@@ -4,6 +4,14 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Added
+
+- `replyToMessage` `latestInThread: true` replies to the newest message of the conversation (Sent included); the
+  result names it in `repliedTo`. The server instructions gain a line on replies and one on editing drafts with
+  `saveDraft` `draftId`. Thanks to Konstantin (@mazixs), last piece of #18.
+
 ## [0.13.0] - 2026-10-02
 
 - **New:** `saveDraft` can edit an existing draft (`draftId`) instead of creating another one. A reply or a forward
