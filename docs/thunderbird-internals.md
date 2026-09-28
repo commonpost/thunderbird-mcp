@@ -72,8 +72,13 @@ Details that matter:
 ```js
 Cc["@mozilla.org/messengercompose/quoting;1"]
   .createInstance(Ci.nsIMsgQuote)
-  .quoteMessage(uri, false, listener, false, false, hdr);
+  .quoteMessage(uri, false, listener, false, hdr);          // 157+
+  // .quoteMessage(uri, false, listener, false, false, hdr); // up to 156 (headersOnly)
 ```
+
+- 157 removed the `headersOnly` argument. XPConnect ignores extra arguments, so the six-argument call on 157 passes
+  `false` as the header and drops the real one: the quote then comes from the text/plain part. Call the five-argument
+  form first and fall back on `NS_ERROR_XPC_NOT_ENOUGH_ARGS` (`0x80570001`).
 
 - `nsMsgQuote` keeps only a **weak** reference to the listener. The listener must QI to
   `nsIMsgQuotingOutputStreamListener`, `nsIStreamListener` and `nsISupportsWeakReference`, and the caller must hold
@@ -149,8 +154,12 @@ Only the editor inserts the signature; `nsIMsgSend` and window-less `nsIMsgCompo
   leading `<br>` when paragraph mode is off.
 - Layout by `reply_on_top` x `sig_bottom` (`ConvertAndLoadComposeWindow` and
   `MsgComposeCommands.js` `NotifyComposeBodyReady*`), including where the caret (the user's text) goes.
-- Thunderbird quirk: a plain-text forward has no bottom signature (removing the placeholder `<br>` fails and
-  `ConvertAndLoadComposeWindow` returns early).
+- Thunderbird bug: in Thunderbird 150-157 a plain-text forward has no bottom signature. Gecko bug 2019689 (150)
+  made the editor delete the line break after the insertion point, which is the placeholder `<br>` of
+  `moz-forward-container`, so the `DeleteNode` on it fails and `ConvertAndLoadComposeWindow` returns before the
+  signature. 140 ESR is unaffected; bug 2063939 fixes it in 158 by deleting the div's last `<br>` instead. A tool
+  should insert the signature (`InsertLineBreak` + signature block after the forward container) rather than copy
+  the bug.
 
 ### Plain-text bodies
 
@@ -238,6 +247,11 @@ whole body.
 - `folder.addMessage` must use the mbox's own line endings. CRLF messages in an LF mbox made Thunderbird 156's mbox
   reader reject the preceding message (`0x80550023`).
 - A compose window's `compose-window-init` event does not bubble; listen on the window itself.
+- `nsIMsgSend.createAndSendMessage` returns a promise on 128+ (`MessageSend.sys.mjs`). For `SaveAsDraft` and the
+  queue modes it resolves after the copy; for `Now` it resolves as soon as SMTP delivery **starts**
+  (`_deliverAsMail` awaits only the request). The outcome of a send is `onStopSending` on the listener; treating
+  the promise as success reports rejected recipients or failed authentication as sent. On 140 an identity without
+  an outgoing server also resolves the promise without any listener call.
 - Thunderbird caches extension code aggressively. After changing the source, remove the add-on, restart, install
   the new XPI and restart again.
 - Snap: a Snap Thunderbird has its own `TMPDIR`, which a bridge finds by reading `/proc/<pid>/environ` of the
@@ -249,6 +263,9 @@ whole body.
 
 - Download the release tarball, create a fresh profile from a `user.js`, run with `--headless` and `HOME` /
   `TMPDIR` pointing into a cache directory, so the user's own profile and `connection.json` are never touched.
+- Set `network.proxy.type` to 0: on Linux the default (system proxy) takes `HTTP(S)_PROXY` from the environment,
+  so a developer's proxy catches even the local SMTP sink, and a proxy asking for credentials opens a dialog that
+  blocks Marionette.
 - Local Folders alone is not a realistic profile: its server type `none` cannot be the default account, so
   `MailServices.accounts.defaultAccount` is null. A POP3 account on `127.0.0.1` with login and checks disabled
   gives an identity, Inbox, Drafts and Sent without any network.
