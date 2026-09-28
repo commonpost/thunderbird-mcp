@@ -20,6 +20,10 @@ ADDON_ID="$(node -p "require('$ROOT/extension/manifest.json').browser_specific_s
 log() { echo "[tb-bench] $*" >&2; }
 die() { log "error: $*"; exit 1; }
 
+validate_version() {
+  [[ "$1" =~ ^[0-9]+(\.[0-9]+){0,2}(esr|b[0-9]+)?$ ]] || die "invalid Thunderbird version: $1"
+}
+
 resolve_version() {
   if [ -n "${TB_VERSION:-}" ]; then echo "$TB_VERSION"; return; fi
   case "${TB_CHANNEL:-}" in
@@ -37,6 +41,7 @@ resolve_version() {
 
 setup() {
   VERSION="$(resolve_version)"
+  validate_version "$VERSION"
   TB_DIR="$CACHE/thunderbird/$VERSION"
   TB_BIN="$TB_DIR/thunderbird"
   [ -x "$TB_BIN" ] && return
