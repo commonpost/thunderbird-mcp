@@ -6,6 +6,10 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+Security hardening in filters, attachments, the bridge's connection file, encrypted messages, account restrictions
+and message content handed to the assistant. Details will be published on November 10, 2026. Updating is
+recommended.
+
 ### Added
 - Test bench on a real Thunderbird: `npm run test:tb` (`scripts/tb-bench.sh`) runs a downloaded Thunderbird headless
   with a throwaway profile and synthetic mail (`test/fixtures/mail`), and runs `test/bench/*.test.cjs` against it
@@ -13,8 +17,40 @@ project is kept in this repository.
   CONTRIBUTING.md.
 - `docs/thunderbird-internals.md`: notes on how Thunderbird itself composes drafts and replies, quotes, threads,
   searches and filters mail, with the Thunderbird source of each rule and what was verified on a real Thunderbird.
+- Options: "Let the assistant read encrypted messages", off by default. While it is off, `getMessage` returns the
+  headers of an OpenPGP or S/MIME message and a short notice instead of its content ("message chiffré : contenu non
+  transmis (option à activer)", with an English rendering), and `replyToMessage` / `forwardMessage` with
+  `skipReview` do not quote it and send nothing. Turning the option on lets Thunderbird decrypt such messages for
+  the tools; their decrypted content is then handed to the assistant.
+- Filter rules that send mail: when "Block filter forward/reply" is switched off (it is on by default and keeps
+  refusing such rules), a request to create or change a rule that forwards or replies, or to change or run a filter
+  list holding one, no longer goes through silently. The call returns `pending_user_confirmation` and Thunderbird
+  shows its own dialog with the account, the rule, its conditions and the full destination; nothing is written
+  unless the user confirms, and refusing, closing the dialog or waiting ten minutes writes nothing. The options
+  page presents the two choices as "Always block" (default) and "Ask me each time". New read-only tool
+  `getFilterConfirmation` reports the state of a request.
+- The message tools (`getMessage`, `getMessages`, `searchMessages`, `getRecentMessages`) wrap `body`, `rawSource`
+  and `preview` in `<email-content id="...">` markers with a random identifier for each call, and add a text block
+  saying that the message text comes from third parties and is to be read as data. Hidden characters (zero-width,
+  bidirectional controls, tag characters and similar) are removed from the returned text and counted in that
+  notice.
 
 ### Changed
+- Attachments: a `sendMail`, `saveDraft`, `replyToMessage` or `forwardMessage` call whose attachment is refused
+  (missing, too large, on the deny-list, a network or device path, ...) now fails as a whole and names the
+  attachment, instead of sending or saving the message without it. `saveDraft` attachments go through the same
+  checks as the other tools. The bridge also checks the resolved real path of an attachment.
+- Account restrictions now apply to calendars and address books (including CardDAV) as well: one that names a
+  restricted account is no longer reachable, and a remote one that names no account is refused while a restriction
+  is active. An unreadable restriction refuses everything, on the options page as on the server, and the options
+  page no longer treats an empty selection as "allow all".
+- Filter names, condition values and action values are validated: control characters, backslashes and overlong
+  values are rejected before they reach Thunderbird's filter file.
+- The bridge only accepts a connection file that belongs to the current user (no group or other access on POSIX,
+  the user's temporary directory on Windows) and reads it in one step.
+- Options: the "Listen on all interfaces" warning now says that the token travels in clear text and that the check
+  of the Host header is off in that mode. The stable token and that setting are cleared from the profile when the
+  add-on is removed.
 - `mcp-bridge.cjs`: a `sendMail`, `replyToMessage` or `forwardMessage` call made with `skipReview` (direct send, no
   compose window) now waits up to 150 s for Thunderbird's answer instead of 30 s, so the bridge no longer gives up
   before Thunderbird's own 120 s send timeout. Every other call keeps the 30 s limit. If the wait still runs out,
