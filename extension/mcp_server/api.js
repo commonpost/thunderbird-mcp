@@ -19,7 +19,7 @@
 // Experiment scripts run in a sandbox without these web globals: without the import, DOMParser is undefined and
 // HTML bodies fall back to stripHtml instead of Markdown.
 try {
-  Cu.importGlobalProperties(["atob", "btoa", "DOMParser", "TextDecoder", "TextEncoder"]);
+  Cu.importGlobalProperties(["atob", "btoa", "DOMParser", "TextDecoder"]);
 } catch (e) {
   console.warn("commonpost-mcp: web globals not imported:", e);
 }

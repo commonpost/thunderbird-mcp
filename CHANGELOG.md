@@ -7,7 +7,7 @@ project is kept in this repository.
 ## [Unreleased]
 
 ### Fixed
-- The Experiment now imports `atob`, `btoa`, `DOMParser`, `TextDecoder` and `TextEncoder`
+- The Experiment now imports `atob`, `btoa`, `DOMParser` and `TextDecoder`
   (`Cu.importGlobalProperties`). Experiment scripts do not get these web globals, so inside Thunderbird:
   - `getMessage`/`getMessages` returned HTML bodies as flat text instead of Markdown (no links, bold or lists:
     `htmlToMarkdown` fell back to `stripHtml`);
@@ -17,7 +17,7 @@ project is kept in this repository.
     percent-encoded;
   - HTML compose bodies with a full document or a `moz-signature` were not cleaned up.
   The unit tests did not catch this because their sandboxes provide Node's globals. A new test fails when
-  `api.js` uses one of these globals without importing it.
+  `api.js` uses one of these globals without importing it, or imports one it does not use.
 
 ## [0.8.3] - 2026-09-27
 
