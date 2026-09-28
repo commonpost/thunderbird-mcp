@@ -6,6 +6,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const net = require('node:net');
 
 const {
   isDirectSendCall,
@@ -89,6 +90,104 @@ describe('timeout error', () => {
     } finally {
       server.closeAllConnections();
       server.close();
+    }
+  });
+});
+
+describe('connection lost during a direct send', () => {
+  const TOKEN = 'a'.repeat(64);
+  const direct = { timeoutMs: 5000, directSend: true };
+  const plain = { timeoutMs: 5000, directSend: false };
+
+  function listen(server) {
+    return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+  }
+
+  function isUnknownOutcome(err) {
+    return /UNKNOWN/.test(err.message)
+      && /Sent folder and the Outbox/.test(err.message)
+      && /before retrying/.test(err.message);
+  }
+
+  // Answers with the given status line and headers, then cuts the connection.
+  function rawServer(onRequest) {
+    return listen(net.createServer((socket) => {
+      socket.on('error', () => {});
+      let received = '';
+      socket.on('data', (chunk) => {
+        received += chunk.toString('latin1');
+        if (received.includes('\r\n\r\n') && received.endsWith('}')) onRequest(socket);
+      });
+    }));
+  }
+
+  it('reports an unknown outcome when the socket is closed after the request was written', async () => {
+    const server = await rawServer((socket) => socket.destroy());
+    try {
+      await assert.rejects(
+        tryRequest('127.0.0.1', '{"a":1}', server.address().port, TOKEN, direct),
+        (err) => isUnknownOutcome(err) && /lost/.test(err.message) && err.cause instanceof Error
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  it('reports an unknown outcome when the connection drops in the middle of the response', async () => {
+    const server = await rawServer((socket) => {
+      socket.write('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{"jsonrpc":');
+      setTimeout(() => socket.destroy(), 20);
+    });
+    try {
+      await assert.rejects(
+        tryRequest('127.0.0.1', '{"a":1}', server.address().port, TOKEN, direct),
+        (err) => isUnknownOutcome(err) && err.cause instanceof Error
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  it('does not change the error of a call that is not a direct send', async () => {
+    const server = await rawServer((socket) => socket.destroy());
+    try {
+      await assert.rejects(
+        tryRequest('127.0.0.1', '{"a":1}', server.address().port, TOKEN, plain),
+        (err) => !isUnknownOutcome(err) && /socket hang up|ECONNRESET/.test(`${err.code} ${err.message}`)
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  it('keeps the connection-refused error unchanged, so it stays retryable', async () => {
+    const probe = await listen(net.createServer());
+    const { port } = probe.address();
+    await new Promise((resolve) => probe.close(resolve));
+    await assert.rejects(
+      tryRequest('127.0.0.1', '{}', port, TOKEN, direct),
+      (err) => err.code === 'ECONNREFUSED' && !isUnknownOutcome(err)
+    );
+  });
+
+  it('keeps the 403 error unchanged, and a complete answer still resolves', async () => {
+    const forbidden = await listen(http.createServer((req, res) => { res.statusCode = 403; res.end('no'); }));
+    try {
+      await assert.rejects(
+        tryRequest('127.0.0.1', '{}', forbidden.address().port, TOKEN, direct),
+        (err) => err.statusCode === 403 && !isUnknownOutcome(err)
+      );
+    } finally {
+      forbidden.close();
+    }
+    const ok = await listen(http.createServer((req, res) => { res.end('{"jsonrpc":"2.0","id":1,"result":{}}'); }));
+    try {
+      assert.deepEqual(
+        await tryRequest('127.0.0.1', '{}', ok.address().port, TOKEN, direct),
+        { jsonrpc: '2.0', id: 1, result: {} }
+      );
+    } finally {
+      ok.close();
     }
   });
 });

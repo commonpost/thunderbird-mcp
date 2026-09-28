@@ -4397,19 +4397,18 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
 
             /**
-             * Returns the URL to emit for a link or image found in email HTML, or ""
+             * Returns the URL to emit for a link found in email HTML, or ""
              * when it must become plain text. Only absolute http:, https: and mailto:
-             * URLs survive (images: http/https only); javascript:, data:, file:,
-             * vbscript:, cid:, other schemes and scheme-less/relative URLs do not.
+             * URLs survive; javascript:, data:, file:, vbscript:, cid:, other
+             * schemes and scheme-less/relative URLs do not.
              * The scheme is compared the way a browser reads it: case-insensitively,
              * after dropping leading control characters and spaces and any tab or
              * newline inside the URL.
              */
-            function safeEmailUrl(url, isImage) {
+            function safeEmailUrl(url) {
               if (typeof url !== "string") return "";
               const cleaned = url.replace(/[\t\n\r]/g, "").replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "");
-              const allowed = isImage ? /^https?:/i : /^(?:https?|mailto):/i;
-              if (!allowed.test(cleaned)) return "";
+              if (!/^(?:https?|mailto):/i.test(cleaned)) return "";
               // Keep the URL from closing the Markdown link/image early.
               return cleaned.replace(/[ ()<>]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
             }
@@ -4419,8 +4418,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * body extraction. Handles headings, links, bold/italic, lists,
              * blockquotes, code blocks, images, and horizontal rules. Email
              * tables (usually layout, not data) are flattened to text.
-             * Only http(s) and mailto links and http(s) images are kept; any other
-             * link or image becomes plain text without its URL.
+             * Only http(s) and mailto links are kept; any other link becomes plain
+             * text without its URL. An image becomes its alt text, never a URL.
              * Falls back to stripHtml if DOMParser is unavailable or the HTML
              * is too large to parse.
              */
@@ -4463,7 +4462,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       return t ? "*" + t + "*" : "";
                     }
                     case "a": {
-                      const href = safeEmailUrl(node.getAttribute("href") || "", false);
+                      const href = safeEmailUrl(node.getAttribute("href") || "");
                       const text = inner().trim();
                       // A link with an unsafe or missing URL is just its text
                       if (!href) return text;
@@ -4471,14 +4470,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       return text || href;
                     }
                     case "img": {
+                      // Never emit an image URL: a client that renders the
+                      // Markdown would load it (tracking pixels, remote content).
+                      // The alt text stands in for the image.
                       const alt = node.getAttribute("alt") || "";
-                      const src = safeEmailUrl(node.getAttribute("src") || "", true);
                       // Skip tracking pixels (1x1, tiny)
                       const w = parseInt(node.getAttribute("width")) || 0;
                       const h = parseInt(node.getAttribute("height")) || 0;
                       if ((w > 0 && w <= 3) || (h > 0 && h <= 3)) return "";
-                      // Only http(s) images are kept; the rest is its alt text
-                      if (src) return `![${alt}](${src})`;
                       return alt;
                     }
                     case "code": return "`" + node.textContent + "`";

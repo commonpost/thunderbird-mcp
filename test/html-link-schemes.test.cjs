@@ -1,7 +1,8 @@
 'use strict';
 
-// Links and images in email HTML: only http(s)/mailto links and http(s) images
-// survive the conversion to Markdown; oversized HTML never reaches the DOM.
+// Links and images in email HTML: only http(s)/mailto links survive the
+// conversion to Markdown, an image is never more than its alt text; oversized
+// HTML never reaches the DOM.
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
@@ -69,8 +70,7 @@ const withDom = load({ withDom: true });
 const noDom = load({ withDom: false });
 
 describe('safeEmailUrl', () => {
-  const link = (u) => withDom.safeEmailUrl(u, false);
-  const image = (u) => withDom.safeEmailUrl(u, true);
+  const link = (u) => withDom.safeEmailUrl(u);
 
   it('keeps http, https and mailto links, whatever their case', () => {
     assert.equal(link('http://example.org/a'), 'http://example.org/a');
@@ -103,14 +103,6 @@ describe('safeEmailUrl', () => {
     assert.equal(link('  ht\ttps://example.org/  '), 'https://example.org/');
   });
 
-  it('accepts http(s) images only', () => {
-    assert.equal(image('https://example.org/a.png'), 'https://example.org/a.png');
-    assert.equal(image('HTTP://example.org/a.png'), 'HTTP://example.org/a.png');
-    for (const u of ['mailto:a@example.org', 'data:image/png;base64,AAAA', 'cid:x', 'file:///a.png', 'javascript:1', '//x/y.png', 'a.png']) {
-      assert.equal(image(u), '', u);
-    }
-  });
-
   it('keeps a URL from closing the Markdown link early', () => {
     assert.equal(link('https://example.org/a b(c)d<e>'), 'https://example.org/a%20b%28c%29d%3Ce%3E');
   });
@@ -119,10 +111,9 @@ describe('safeEmailUrl', () => {
 describe('htmlToMarkdown with a DOM parser', () => {
   const md = (html) => withDom.htmlToMarkdown(html);
 
-  it('keeps safe links and images', () => {
+  it('keeps safe links', () => {
     assert.equal(md('<p><a href="https://example.org/x">site</a> <a href="mailto:a@example.org">mail</a></p>'),
       '[site](https://example.org/x) [mail](mailto:a@example.org)');
-    assert.equal(md('<p><img src="https://example.org/a.png" alt="logo"></p>'), '![logo](https://example.org/a.png)');
     assert.equal(md('<a href="https://example.org/">https://example.org/</a>'), 'https://example.org/');
   });
 
@@ -139,17 +130,22 @@ describe('htmlToMarkdown with a DOM parser', () => {
     assert.equal(md('<p>a<a></a>b</p>'), 'ab');
   });
 
-  it('keeps an image with an unsafe source as its alt text only', () => {
-    for (const src of ['data:image/png;base64,AAAA', 'cid:logo@example', 'file:///a.png', 'javascript:1', 'mailto:a@b.c', '/a.png']) {
+  it('turns every image into its alt text, whatever its source', () => {
+    for (const src of ['https://example.org/a.png', 'HTTP://example.org/a.png', 'data:image/png;base64,AAAA',
+      'cid:logo@example', 'file:///a.png', 'javascript:1', 'mailto:a@b.c', '/a.png', '//example.org/a.png']) {
       assert.equal(md(`<p><img src="${src}" alt="logo"></p>`), 'logo', src);
     }
-    assert.equal(md('<p>x<img src="data:image/png;base64,AAAA">y</p>'), 'xy');
+    assert.equal(md('<p>x<img src="https://example.org/a.png">y</p>'), 'xy');
+    assert.equal(md('<p>x<img alt="">y</p>'), 'xy');
+    assert.equal(md('<p>x<img src="https://example.org/a.png" alt="a" width="1" height="1">y</p>'), 'xy');
     assert.equal(md('<p><img src="https://example.org/t.gif" width="1" height="1" alt="t"></p>'), '');
+    assert.equal(md('<p><a href="https://example.org/">go <img src="https://example.org/a.png" alt="now"></a></p>'),
+      '[go now](https://example.org/)');
   });
 
   it('never lets an unsafe scheme reach the output', () => {
-    const out = md('<a href="javascript:a()">1</a><a href="data:x">2</a><a href="file:///x">3</a><img src="data:x" alt="4"><img src="cid:y" alt="5">');
-    assert.ok(!/javascript:|data:|file:|cid:/i.test(out), out);
+    const out = md('<a href="javascript:a()">1</a><a href="data:x">2</a><a href="file:///x">3</a><img src="data:x" alt="4"><img src="cid:y" alt="5"><img src="https://example.org/i.png" alt="6">');
+    assert.ok(!/javascript:|data:|file:|cid:|https?:/i.test(out), out);
   });
 });
 
