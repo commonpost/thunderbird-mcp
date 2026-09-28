@@ -56,13 +56,13 @@ const {
 } = loadInlineImageContentHelpers();
 
 describe("inline image MCP content helpers", () => {
-  it("keeps the default single text block byte-identical", () => {
+  it("returns a single compact JSON text block by default", () => {
     const toolResult = {
       id: "message-1",
       body: "![diagram](cid:diagram@example.test)",
       attachments: [],
     };
-    const expectedText = JSON.stringify(toolResult, null, 2);
+    const expectedText = JSON.stringify(toolResult);
 
     const content = buildToolResultContent(toolResult);
 

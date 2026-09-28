@@ -4,6 +4,26 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Changed (MCP protocol)
+- Tool failures are tool results with `isError: true` and `{ "error": "..." }`, as the MCP spec asks for errors
+  the model can act on: invalid arguments, a disabled tool (with a hint where to enable it), a handler that throws
+  or returns `{ error }`, an attachment path the bridge refuses, Thunderbird not reachable or a timeout (with a note
+  that the operation may still complete). JSON-RPC errors remain for protocol problems only: unknown tool or
+  missing name `-32602`, internal errors `-32603` (was `-32000`), unparsable input `-32700` (the bridge used
+  `-32700` for every failure).
+- `initialize` returns short server `instructions` (IDs, untrusted mail content, review windows, stale IMAP
+  folders), identical in the bridge and the extension.
+- `tools/list` entries carry `title` and all four annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`,
+  `openWorldHint`) set explicitly, since the spec defaults assume a destructive open-world tool.
+- Tool results are compact JSON (no indentation).
+- Argument handling: `minimum` / `maximum` are validated, integers given as floats are floored, a limit above the
+  documented maximum is clamped, enum values match case-insensitively, object parameters passed as JSON strings
+  are parsed. Calendar and contact tools declare their bounds (`maxResults`, `priority`, `percentComplete`) and
+  `createEvent.status` is an enum; their descriptions say which ids they take and what they return.
+- README lists `saveDraft` and `listCategories`, which were missing from the tool tables.
+
 ## [0.10.1] - 2026-09-30
 
 ### Changed
