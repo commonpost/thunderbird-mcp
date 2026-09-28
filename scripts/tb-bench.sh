@@ -3,6 +3,13 @@
 # driven through mcp-bridge.cjs and Marionette. Never touches the user's profile:
 # HOME, TMPDIR (connection.json) and the profile live under .cache/tb-bench.
 #
+# WARNING: this bench is NOT a sandbox. It runs with the invoking user's own OS permissions.
+# While it is running, any local process that can reach the Marionette port
+# (TB_BENCH_MARIONETTE_PORT, default 2830) can execute privileged JavaScript inside it. Never
+# run this against a real profile. Its synthetic accounts have no mail server or SMTP, but
+# Thunderbird itself still reaches Mozilla services over the network (e.g. Remote Settings);
+# this is not an offline/no-network setup.
+#
 # Usage: scripts/tb-bench.sh [run|start|stop|status|setup] [node --test args]
 #   run    start, run test/bench/*.test.cjs, stop (default)
 #   start  start and leave running (state in .cache/tb-bench/state.json)

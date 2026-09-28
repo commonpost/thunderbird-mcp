@@ -10,7 +10,8 @@ user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);
 user_pref("datareporting.policy.dataSubmissionEnabled", false);
 user_pref("datareporting.healthreport.uploadEnabled", false);
 
-// No first-run UI, no network
+// No first-run UI. Not offline: the accounts below have no mail server or SMTP, but Thunderbird itself still
+// reaches Mozilla services over the network (e.g. Remote Settings).
 // Direct connections only: Linux Thunderbird takes the proxy from HTTP(S)_PROXY, which would also catch the local SMTP sink
 user_pref("network.proxy.type", 0);
 user_pref("network.connectivity-service.enabled", false);

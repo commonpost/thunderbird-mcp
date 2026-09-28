@@ -48,6 +48,12 @@ Bench tests can also run privileged JavaScript in that Thunderbird through Mario
 `test/bench/helpers.cjs`), for example to compare a tool's result with what Thunderbird's own compose window
 produces. Without a running bench they are skipped.
 
+**The bench is not a sandbox.** It runs Thunderbird with your own user permissions. While it is running, any
+local process that can reach the Marionette port (`TB_BENCH_MARIONETTE_PORT`, default 2830) can execute
+privileged JavaScript inside it; never run it against a real profile. Its synthetic accounts have no mail
+server or SMTP, but Thunderbird itself still reaches Mozilla services over the network (e.g. Remote
+Settings) -- it is not offline.
+
 To try the extension in Thunderbird, install the XPI from a release (Tools > Add-ons > Install Add-on From File).
 
 ## Reporting bugs and requesting features
