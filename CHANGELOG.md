@@ -33,6 +33,37 @@ project is kept in this repository.
 - HTML bodies larger than 2 MiB are no longer given to the DOM parser: they go through the existing tag-stripping
   path instead, which prints no link or image URL.
 
+### Added (search and reading)
+- `searchMessages`: `participant:` (From/To/Cc/Bcc); `participant:@example.com` matches the domain of each address
+  exactly, as Gloda's `LIKE '%@domain'` does (`@example.com` no longer matches `example.community`), commas list
+  alternatives for companies with several domains. Operators and quoted phrases combine:
+  `participant:@example.com subject:"invoice 42"`.
+- `searchMessages` `threadOf: { messageId, folderPath }`: the whole conversation across folders (Sent included),
+  oldest first. Headers are read first and then joined by References (union-find), so the result does not depend
+  on folder order. A `Re:` message without threading headers joins by subject only the earlier message whose
+  author (or, for own mail, a recipient) it involves (`linkedBy: "subject"`), so the same mail sent separately to
+  several companies and repeated notifications stay apart. See `docs/thunderbird-internals.md`.
+- `searchMessages` `groupBy: "sender" | "thread"`: one row per sender or conversation, with `count` and `latestId`
+  (the newest message that is not a draft).
+- `format: "table"` (`{ columns, rows }`) for `searchMessages`, `getRecentMessages`, `searchContacts`,
+  `listEvents` and `listTasks`.
+- `searchBody` reports the terms Gloda leaves out (under 3 characters) in `warning`, and errors instead of running
+  an empty full-text query. The description says that only English words are stemmed.
+- `getMessage` / `getMessages`: `maxBodyChars` (default 20000 / 4000) and `bodyOffset` page long bodies and raw
+  sources (`bodyTruncated`, `nextBodyOffset`, `bodyTotalChars`).
+- `rawSource` is decoded as text (strict UTF-8, else the charset declared in `Content-Type`, else Thunderbird's
+  charset detector) and names it in `rawCharset`. Before, 8-bit sources came back as Latin-1 mojibake.
+- `searchContacts` also matches the organization; empty fields are omitted.
+
+### Changed (search and reading, output format)
+- `searchMessages` and `getRecentMessages` always return `{ messages, totalMatches, offset, limit, hasMore }`
+  (default 20 rows, max 200). Before, they returned a plain array unless `offset` was passed.
+- Rows are compact: `folder` (display name), `threadId`, empty fields and `flagged: false` are omitted, `preview`
+  is cut to 120 characters; `subject` shows `Re:` as Thunderbird displays it.
+- Trash and Junk are skipped unless `includeTrash: true` or an explicit `folderPath`.
+- `getRecentMessages` runs the same search code: all folders except Trash/Junk (was Inboxes only), newest first.
+
+
 ### Fixed
 - The Experiment now imports `atob`, `btoa`, `DOMParser` and `TextDecoder`
   (`Cu.importGlobalProperties`). Experiment scripts do not get these web globals, so inside Thunderbird:

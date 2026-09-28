@@ -24,13 +24,14 @@ function loadRawMimeBodyHelpers() {
   vm.createContext(sandbox);
   vm.runInContext(
     `${source.slice(start, end)}
-this.extractBodyPartFromRawMime = extractBodyPartFromRawMime;`,
+this.extractBodyPartFromRawMime = extractBodyPartFromRawMime;
+this.decodeRawSource = decodeRawSource;`,
     sandbox
   );
-  return sandbox.extractBodyPartFromRawMime;
+  return sandbox;
 }
 
-const extractBodyPartFromRawMime = loadRawMimeBodyHelpers();
+const { extractBodyPartFromRawMime, decodeRawSource } = loadRawMimeBodyHelpers();
 
 function mimePart({
   body,
@@ -345,5 +346,39 @@ describe("raw MIME body extraction", () => {
       diagnostic.bodyNote,
       "raw MIME body extraction found no suitable text part"
     );
+  });
+});
+
+describe("decodeRawSource (R1)", () => {
+  const TEXT = "Здравствуйте, это письмо";
+  const raw = (charset, body, extra = "") => `Subject: t\nContent-Type: text/plain;\n charset="${charset}"\n${extra}\n${body}\n`;
+  const utf8 = text => Buffer.from(text, "utf8").toString("latin1");
+  const cp1251 = text => String.fromCharCode(...[...text].map(c => (c >= "А" && c <= "я" ? c.charCodeAt(0) - 0x410 + 0xc0 : c.charCodeAt(0))));
+  const KOI8 = "юабцдефгхийклмнопярстужвьызшэщчъЮАБЦДЕФГХИЙКЛМНОПЯРСТУЖВЬЫЗШЭЩЧЪ";
+  const koi8r = text => String.fromCharCode(...[...text].map(c => (KOI8.includes(c) ? 0xc0 + KOI8.indexOf(c) : c.charCodeAt(0))));
+  const plain = v => JSON.parse(JSON.stringify(v));
+
+  it("keeps valid UTF-8 even when another charset is declared", () => {
+    assert.deepEqual(plain(decodeRawSource(raw("windows-1251", utf8(TEXT)))), { text: raw("windows-1251", TEXT), charset: "utf-8" });
+  });
+
+  it("decodes 8-bit sources by the declared charset, a non-UTF-8 one first", () => {
+    assert.deepEqual(plain(decodeRawSource(raw("windows-1251", cp1251(TEXT)))), { text: raw("windows-1251", TEXT), charset: "windows-1251" });
+    assert.deepEqual(plain(decodeRawSource(raw("KOI8-R", koi8r(TEXT)))), { text: raw("KOI8-R", TEXT), charset: "koi8-r" });
+    const mixed = `Content-Type: multipart/mixed; boundary=b\n\n--b\nContent-Type: text/plain; charset=utf-8\n\nok\n--b\nContent-Type: text/plain; charset=cp1251\n\n${cp1251(TEXT)}\n--b--\n`;
+    const out = decodeRawSource(mixed);
+    assert.equal(out.charset, "windows-1251");
+    assert.ok(out.text.includes(TEXT));
+  });
+
+  it("falls back to lossy UTF-8 when only UTF-8 is declared, then to the detector", () => {
+    const broken = raw("utf-8", `${utf8("ок")}\xff`);
+    assert.equal(decodeRawSource(broken, () => "windows-1252").charset, "utf-8");
+    const unlabeled = `Subject: t\n\n${cp1251(TEXT)}\n`;
+    const seen = [];
+    const out = decodeRawSource(unlabeled, s => { seen.push(s); return "windows-1251"; });
+    assert.deepEqual(plain(out), { text: `Subject: t\n\n${TEXT}\n`, charset: "windows-1251" });
+    assert.deepEqual(seen, [unlabeled]);
+    assert.deepEqual(plain(decodeRawSource(raw("x-unknown", cp1251("я")), () => { throw new Error("no"); })), { text: raw("x-unknown", cp1251("я")), charset: "iso-8859-1" });
   });
 });

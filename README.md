@@ -47,10 +47,10 @@ The Thunderbird extension embeds a local HTTP server with session-scoped auth to
 |------|-------------|
 | `listAccounts` | List all email accounts and their identities |
 | `listFolders` | Browse folder tree with message counts -- filter by account or subtree |
-| `searchMessages` | Search by subject, sender, recipient, body preview, date range, or tags. Multi-word queries are AND-of-tokens (every word must appear somewhere). Prefix with `from:`, `subject:`, `to:`, or `cc:` to restrict to one field. Set `searchBody: true` for full-text body search via Thunderbird's Gloda index. Supports `includeSubfolders`, `countOnly`, and offset-based pagination. Results include `threadId` and `preview` snippet. By default, `dedupByMessageId` collapses the same RFC Message-ID found in multiple folders/labels into one row and reports the other folder paths in `dupLocations`; set `dedupByMessageId: false` to return every location. |
-| `getMessage` | Read full email content -- `bodyFormat`: `markdown` (default), `text`, or `html`. Set `rawSource: true` for the complete RFC 2822 source (all headers + MIME parts). Optional attachment saving. Set `includeInlineImages: true` to append supported inline CID images as MCP image blocks (PNG, JPEG, GIF, or WebP; max 1 MiB base64 per image and 4 MiB total). Skipped images are reported in attachment metadata. |
-| `getMessages` | Read full email content for up to the configured batch limit in one call (default 10, max 20). Uses the same `bodyFormat`, `rawSource`, and attachment options as `getMessage`; each item supplies `messageId` and `folderPath`. |
-| `getRecentMessages` | Get recent messages with date, unread, and tag filtering. Supports pagination. Results include `threadId` and `preview`. |
+| `searchMessages` | Search headers across accounts. Words must all match (subject, from, to, cc, preview); operators `from:`, `to:`, `cc:`, `subject:`, `participant:` (from/to/cc/bcc; `@domain` matches addresses in that domain only, commas list alternatives: `participant:@acme.com,@acme-group.com`) and quoted phrases can be combined, e.g. `participant:@acme.com subject:"invoice 42"`. `groupBy: "sender" \| "thread"` returns one row per sender or conversation (`latestId` is the newest message that is not a draft); `threadOf: {messageId, folderPath}` returns a whole conversation across folders (Sent included), oldest first. A `Re:` message sent without threading headers joins by subject the earlier message its sender took part in (`linkedBy: "subject"`); the same mail sent separately to several people and repeated notifications stay separate. Filters pick messages of the conversation without cutting its links. Trash and Junk are skipped unless `includeTrash` or an explicit `folderPath`. Always returns `{ messages, totalMatches, offset, limit, hasMore }` (default 20 rows, max 200); `format: "table"` returns `{ columns, rows }`. Also `countOnly`, `includeSubfolders`, date range, unread/flagged/tag filters, `searchBody` (Gloda full text: terms under 3 characters are left out and listed in `warning`, English words match other forms, Russian and other languages only the exact word form) and `dedupByMessageId` (copies in several folders collapse into one row with `dupLocations`). |
+| `getMessage` | Read full email content -- `bodyFormat`: `markdown` (default), `text`, or `html`. Bodies are capped (`maxBodyChars`, default 20000); a longer body sets `bodyTruncated` and `nextBodyOffset`, read the rest with `bodyOffset`. Set `rawSource: true` for the complete RFC 2822 source (same cap), decoded as UTF-8 when valid, else by its declared or detected charset (`rawCharset`). Optional attachment saving. Set `includeInlineImages: true` to append supported inline CID images as MCP image blocks (PNG, JPEG, GIF, or WebP; max 1 MiB base64 per image and 4 MiB total). Skipped images are reported in attachment metadata. |
+| `getMessages` | Read full email content for up to the configured batch limit in one call (default 10, max 20). Uses the same `bodyFormat`, `rawSource`, and attachment options as `getMessage`; each item supplies `messageId` and `folderPath`. Bodies are capped per message (`maxBodyChars`, default 4000). |
+| `getRecentMessages` | Recent messages newest first from all folders (Trash/Junk skipped) or one folder -- `daysBack` (default 7), unread/flagged filters, `includeTrash`, pagination. Same envelope, rows and `format` as `searchMessages`. |
 | `displayMessage` | Open a message in Thunderbird's GUI -- `3pane` (default), `tab`, or `window` mode |
 | `updateMessage` | Mark read/unread, flag/unflag, add/remove tags, move between folders, or trash -- supports bulk via `messageIds` |
 | `deleteMessages` | Delete messages -- drafts are safely moved to Trash |
@@ -94,7 +94,7 @@ Filter rules that **forward or reply** send mail without the review window that 
 
 | Tool | Description |
 |------|-------------|
-| `searchContacts` | Search contacts across all address books by email or name and return full contact details. Supports `maxResults`. |
+| `searchContacts` | Search contacts across all address books by email, name, or organization (e.g. `acme` or `@acme.com`); empty fields are omitted. Supports `maxResults` and `format: "table"`. |
 | `getContact` | Read full contact details by UID |
 | `createContact` | Create a contact with optional email/name, phones, postal addresses, organization, title, note, and birthday. Phone-only contacts are supported. |
 | `updateContact` | Update contact fields; omitted fields stay unchanged, while empty phone/address arrays clear those collections |
@@ -106,11 +106,11 @@ Filter rules that **forward or reply** send mail without the review window that 
 |------|-------------|
 | `listCalendars` | List all calendars with read-only, event, and task support flags |
 | `createEvent` | Create a calendar event -- opens a review dialog; direct creation via `skipReview` requires explicitly disabling the default safety block. Accepts `status: tentative \| confirmed \| cancelled` (VEVENT STATUS per iCal RFC 5545). |
-| `listEvents` | Query events by date range with recurring event expansion. Returns `status` on each event. |
+| `listEvents` | Query events by date range with recurring event expansion. Returns `status` on each event. Supports `maxResults` and `format: "table"`. |
 | `updateEvent` | Modify an event's title, dates, location, description, or `status` |
 | `deleteEvent` | Delete a calendar event by ID |
 | `createTask` | Open a pre-filled task dialog for review; direct creation via `skipReview` requires explicitly disabling the default safety block |
-| `listTasks` | List tasks/to-dos from calendars -- filter by completion status, due date, or calendar |
+| `listTasks` | List tasks/to-dos from calendars -- filter by completion status, due date, or calendar. Supports `maxResults` and `format: "table"`. |
 | `updateTask` | Update a task's title, due date, description, priority, completion status, or percent complete |
 
 ### Access Control
