@@ -3916,6 +3916,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
               return { descs, failed };
             }
+
+            /**
+             * A message whose attachments could not all be attached is neither
+             * sent, saved nor opened: returns the error result, or null.
+             */
+            function attachmentFailureResult(failed, action) {
+              if (!failed || failed.length === 0) return null;
+              return { error: `Attachment refused, nothing was ${action}: ${failed.join(", ")}` };
+            }
             // END OUTBOUND ATTACHMENT CONVERSION
 
             /**
@@ -7738,12 +7747,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
 
                 const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(attachments);
+                const attachmentFailure = attachmentFailureResult(failedPaths, "sent or opened");
+                if (attachmentFailure) return attachmentFailure;
 
                 if (skipReview) {
                   return sendMessageDirectly(composeFields, msgComposeParams.identity, fileDescs, null, Ci.nsIMsgCompType.New, Ci.nsIMsgCompDeliverMode.Now, useHtml ? "text/html" : "text/plain").then(result => {
                     if (result.success) {
-                      let msg = "Message sent";
-                      if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
+                      const msg = "Message sent";
                       result.message = msg;
                     }
                     return result;
@@ -7766,8 +7776,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   .getService(Ci.nsIMsgComposeService);
                 msgComposeService.OpenComposeWindowWithParams(null, msgComposeParams);
 
-                let msg = "Compose window opened";
-                if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
+                const msg = "Compose window opened";
                 return { success: true, message: msg };
               } catch (e) {
                 return { error: e.toString() };
@@ -7810,6 +7819,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
 
                 const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(attachments);
+                const attachmentFailure = attachmentFailureResult(failedPaths, "saved");
+                if (attachmentFailure) return attachmentFailure;
 
                 return sendMessageDirectly(
                   composeFields,
@@ -7821,8 +7832,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   useHtml ? "text/html" : "text/plain"
                 ).then(result => {
                   if (result.success) {
-                    let msg = "Draft saved";
-                    if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
+                    const msg = "Draft saved";
                     result.message = msg;
                   }
                   return result;
@@ -7856,6 +7866,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                  }
 	                  const { msgHdr, folder } = found;
 	                  const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(attachments);
+	                  const attachmentFailure = attachmentFailureResult(failedPaths, "sent or opened");
+	                  if (attachmentFailure) {
+	                    resolve(attachmentFailure);
+	                    return;
+	                  }
 	                  const msgURI = folder.getUriForMsg(msgHdr);
 	                  const compType = replyAll ? Ci.nsIMsgCompType.ReplyAll : Ci.nsIMsgCompType.Reply;
 
@@ -7954,8 +7969,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                            } catch {}
 	                            markMessageDispositionState(msgHdr, repliedDisposition);
 
-	                            let msg = "Reply sent";
-	                            if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
+	                            const msg = "Reply sent";
 	                            result.message = msg;
 	                          }
 	                          resolve(result);
@@ -7980,8 +7994,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                    fileDescs
 	                  ).then(result => {
 	                    if (result.success) {
-	                      let msg = "Reply window opened";
-	                      if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
+	                      const msg = "Reply window opened";
 	                      result.message = msg;
 	                    }
 	                    resolve(result);
@@ -8022,6 +8035,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   }
                   const { msgHdr, folder } = found;
                   const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(attachments);
+                  const attachmentFailure = attachmentFailureResult(failedPaths, "sent or opened");
+                  if (attachmentFailure) {
+                    resolve(attachmentFailure);
+                    return;
+                  }
                   const msgURI = folder.getUriForMsg(msgHdr);
                   const compType = Ci.nsIMsgCompType.ForwardInline;
 
@@ -8126,8 +8144,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                             } catch {}
                             markMessageDispositionState(msgHdr, forwardedDisposition);
 
-                            let msg = `Forward sent with ${allDescs.length} attachment(s)`;
-                            if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
+                            const msg = `Forward sent with ${allDescs.length} attachment(s)`;
                             result.message = msg;
                           }
                           resolve(result);
@@ -8157,8 +8174,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     fileDescs
                   ).then(result => {
                     if (result.success) {
-                      let msg = "Forward window opened";
-                      if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
+                      const msg = "Forward window opened";
                       result.message = msg;
                     }
                     resolve(result);
