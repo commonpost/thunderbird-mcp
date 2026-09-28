@@ -70,8 +70,15 @@ verify_archive() {
   mkdir -m 700 -p "$gnupghome"
   GNUPGHOME="$gnupghome" gpg --batch --quiet --import "$vtmp/KEY" 2>/dev/null || die "failed to import the Mozilla release key"
   check_release_key_pins "$gnupghome"
-  GNUPGHOME="$gnupghome" gpg --batch --quiet --verify "$vtmp/SHA512SUMS.asc" "$vtmp/SHA512SUMS" 2>/dev/null \
+  # Require the signature to come from the pinned signing subkey of the pinned primary key, not
+  # from any other key the KEY file might carry (VALIDSIG: signing key fingerprint ... primary).
+  local status signer primary
+  status="$(GNUPGHOME="$gnupghome" gpg --batch --status-fd 1 --verify "$vtmp/SHA512SUMS.asc" "$vtmp/SHA512SUMS" 2>/dev/null)" \
     || die "SHA512SUMS signature does not verify against the pinned Mozilla release key"
+  signer="$(awk '$2=="VALIDSIG"{print $3; exit}' <<<"$status")"
+  primary="$(awk '$2=="VALIDSIG"{print $NF; exit}' <<<"$status")"
+  [ "$signer" = "$MOZ_RELEASE_SIGNING_SUBKEY_FPR" ] && [ "$primary" = "$MOZ_RELEASE_KEY_FPR" ] \
+    || die "SHA512SUMS is not signed by the pinned Mozilla signing subkey (got '${signer:-none}')"
   local expected actual
   expected="$(awk -v p="$rel_path" '$2==p || $2=="./"p {print $1; exit}' "$vtmp/SHA512SUMS")"
   [ -n "$expected" ] || die "no SHA512SUMS entry for $rel_path"
@@ -113,8 +120,8 @@ setup() {
   if [ ! -s "$archive" ]; then
     log "downloading Thunderbird $VERSION"
     curl -fL -o "$archive.part" "$base_url/$rel_path"
+    verify_archive "$archive.part" "$rel_path" "$base_url" || { rm -f "$archive.part"; die "downloaded archive does not match SHA512SUMS"; }
     mv "$archive.part" "$archive"
-    verify_archive "$archive" "$rel_path" "$base_url" || die "downloaded archive does not match SHA512SUMS"
   fi
   rm -rf "$TB_DIR" && mkdir -p "$TB_DIR"
   tar -xf "$archive" -C "$TB_DIR" --strip-components=1
