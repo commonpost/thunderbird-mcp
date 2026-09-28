@@ -4150,6 +4150,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * We try the modern 16-arg call first; if TB throws
              * NS_ERROR_XPC_NOT_ENOUGH_ARGS, fall back to the legacy 18-arg call.
              */
+            // BEGIN DIRECT SEND
             function sendMessageDirectly(composeFields, identity, attachDescs, originalMsgURI, compType, deliverMode, bodyType) {
               if (!identity) {
                 return Promise.resolve({ error: "No identity available for direct send" });
@@ -4168,10 +4169,19 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   }
                 };
 
+                const sendingNow = mode === Ci.nsIMsgCompDeliverMode.Now;
+
                 // Safety timeout -- if neither listener callback nor error fires
                 const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
                 timer.initWithCallback({
-                  notify() { settle({ error: "Send timed out after " + (SEND_TIMEOUT_MS / 1000) + "s" }); }
+                  notify() {
+                    const after = SEND_TIMEOUT_MS / 1000 + "s";
+                    settle({
+                      error: sendingNow
+                        ? `Send did not finish within ${after}; the outcome is unknown and the message may still be delivered. Check the Sent folder and the Outbox before retrying.`
+                        : `Save timed out after ${after}`,
+                    });
+                  }
                 }, SEND_TIMEOUT_MS, Ci.nsITimer.TYPE_ONE_SHOT);
 
                 try {
@@ -4243,6 +4253,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     onStartCopy() {},
                     setMessageKey() {},
                     onStopCopy(status) {
+                      // A send is settled by the SMTP outcome only; this is the copy to Sent
+                      if (sendingNow) return;
                       timer.cancel();
                       if (Components.isSuccessCode(status)) {
                         settle({ success: true, message: "Saved" });
@@ -4294,12 +4306,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     }
                   }
                   // Modern TB (128+) returns a Promise from createAndSendMessage.
-                  // Handle both fulfillment and rejection -- belt-and-suspenders
-                  // with the listener (settle is idempotent). For SaveAsDraft on
-                  // older TB without the copy listener, the Promise fulfillment
-                  // can be the only completion signal we get.
+                  // For drafts and queued mail it resolves once the copy is done and
+                  // can be the only completion signal on older TB. For Now it resolves
+                  // as soon as SMTP starts (MessageSend._deliverAsMail), so only
+                  // onStopSending reports the outcome.
                   if (sendResult && typeof sendResult.then === "function") {
                     sendResult.then(() => {
+                      if (sendingNow) return;
                       timer.cancel();
                       settle({ success: true });
                     }).catch(e => {
@@ -4313,6 +4326,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
               });
             }
+            // END DIRECT SEND
 
             function escapeHtml(s) {
               return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
