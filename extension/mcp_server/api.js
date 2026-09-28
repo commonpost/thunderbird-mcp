@@ -4446,11 +4446,36 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * Returns { text, isHtml } without any format conversion.
              * Does NOT use coerceBodyToPlaintext -- callers that want
              * the raw HTML (for markdown/html output) need this.
+             * multipart/alternative selects the requested representation
+             * (preferHtml); every other multipart container is not a choice
+             * between duplicates, so its leaves are independent content:
+             * every one that shares the first leaf's type is concatenated,
+             * in document order, instead of returning only the first --
+             * Apple Mail's alternative[plain, mixed[html, pdf, html]]
+             * otherwise silently drops everything after the inline
+             * attachment.
              */
-            function extractBodyContent(aMimeMsg) {
+            function extractBodyContent(aMimeMsg, preferHtml = false) {
               if (!aMimeMsg) return { text: "", isHtml: false };
               try {
+                // A text/plain or text/html leaf can still be a real attachment
+                // (e.g. a plain .txt file): allUserAttachments is the canonical
+                // list, matched by partName, the same signal the inline-image
+                // walk elsewhere in this file uses. Without this, an attached
+                // .txt file's content would be concatenated into the body.
+                // Failure here must not empty out the whole body (the outer
+                // try does exactly that): fall back to no exclusion instead.
+                let attachmentPartNames;
+                try {
+                  attachmentPartNames = new Set(
+                    (aMimeMsg.allUserAttachments || []).map(att => att?.partName).filter(Boolean)
+                  );
+                } catch {
+                  attachmentPartNames = new Set();
+                }
                 function findBody(part, isRoot = false) {
+                  if (!part) return null;
+                  if (part.partName && attachmentPartNames.has(part.partName)) return null;
                   const ct = ((part.contentType || "").split(";")[0] || "").trim().toLowerCase();
                   if (ct === "message/rfc822" && !isRoot) return null;
                   if (ct !== "message/rfc822") {
@@ -4458,13 +4483,25 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     if (ct === "text/html" && part.body) return { text: part.body, isHtml: true };
                   }
                   if (part.parts) {
-                    let htmlFallback = null;
-                    for (const sub of part.parts) {
-                      const r = findBody(sub);
-                      if (r && !r.isHtml) return r;
-                      if (r && r.isHtml && !htmlFallback) htmlFallback = r;
+                    if (ct === "multipart/alternative") {
+                      let fallback = null;
+                      for (const sub of part.parts) {
+                        const candidate = findBody(sub);
+                        if (!candidate) continue;
+                        if (candidate.isHtml === preferHtml) return candidate;
+                        if (!fallback) fallback = candidate;
+                      }
+                      return fallback;
                     }
-                    if (htmlFallback) return htmlFallback;
+                    let dominant = null;
+                    const texts = [];
+                    for (const sub of part.parts) {
+                      const candidate = findBody(sub);
+                      if (!candidate) continue;
+                      if (dominant === null) dominant = candidate.isHtml;
+                      if (candidate.isHtml === dominant) texts.push(candidate.text);
+                    }
+                    if (texts.length) return { text: texts.join(""), isHtml: dominant };
                   }
                   return null;
                 }
@@ -4499,7 +4536,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 return { body: extractPlainTextBody(aMimeMsg), bodyIsHtml: false };
               }
               // For markdown/html: need raw MIME content, not coerced text
-              const { text, isHtml } = extractBodyContent(aMimeMsg);
+              const { text, isHtml } = extractBodyContent(aMimeMsg, true);
               if (!text) {
                 // MIME tree empty -- try coerce as last resort
                 const fallback = extractPlainTextBody(aMimeMsg);
