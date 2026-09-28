@@ -459,6 +459,12 @@ function buildCandidateGroups(options = {}) {
 // Returns null when the file is acceptable, else the refusal reason.
 function checkConnectionFileSafety(candidatePath, context) {
   const { fsImpl } = context;
+  // Before ANY filesystem access: on Windows even an lstat of a UNC path
+  // reaches the network. Also covers a UNC path given in the override
+  // variable for the connection file.
+  if (context.platform === 'win32' && isUncOrDevicePath(candidatePath)) {
+    return 'refused: UNC or device path for the connection file';
+  }
   let stat;
   try {
     stat = fsImpl.lstatSync(candidatePath);
@@ -502,6 +508,69 @@ function checkConnectionFileSafety(candidatePath, context) {
   return null;
 }
 
+// connection.json is a few hundred bytes; never read more than this.
+const MAX_CONNECTION_FILE_BYTES = 64 * 1024;
+
+class ConnectionFileRefusal extends Error {}
+
+// Read connection.json through ONE descriptor whose file is re-checked after
+// open: the checks above are made on the path, and a plain readFileSync
+// afterwards would resolve the path a second time. Here: lstat, open without
+// following a final symlink (O_NOFOLLOW where the platform has it), fstat the
+// descriptor, require the same regular file (dev/ino) as the lstat, re-check
+// owner and mode on POSIX, bound the size, then read from the descriptor.
+function readConnectionFileVerified(candidatePath, context) {
+  const { fsImpl } = context;
+  const before = fsImpl.lstatSync(candidatePath);
+  if (before.isSymbolicLink()) {
+    throw new ConnectionFileRefusal('refused: connection file is a symlink');
+  }
+  if (!before.isFile()) {
+    throw new ConnectionFileRefusal('refused: connection file is not a regular file');
+  }
+  const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0);
+  let fd;
+  try {
+    fd = fsImpl.openSync(candidatePath, flags);
+  } catch (err) {
+    if (err && err.code === 'ELOOP') {
+      throw new ConnectionFileRefusal('refused: connection file is a symlink');
+    }
+    throw err;
+  }
+  try {
+    const opened = fsImpl.fstatSync(fd);
+    if (!opened.isFile()) {
+      throw new ConnectionFileRefusal('refused: connection file is not a regular file');
+    }
+    if (opened.dev !== before.dev || opened.ino !== before.ino) {
+      throw new ConnectionFileRefusal('refused: connection file changed while it was being checked');
+    }
+    if (context.platform !== 'win32') {
+      if (opened.uid !== context.uid) {
+        throw new ConnectionFileRefusal(`refused: connection file is owned by uid ${opened.uid}, not the current uid ${context.uid}`);
+      }
+      if ((opened.mode & 0o077) !== 0) {
+        throw new ConnectionFileRefusal(
+          `refused: connection file mode ${(opened.mode & 0o777).toString(8)} gives group/other access (expected 600)`);
+      }
+    }
+    if (!Number.isSafeInteger(opened.size) || opened.size < 0 || opened.size > MAX_CONNECTION_FILE_BYTES) {
+      throw new ConnectionFileRefusal(`refused: connection file size ${opened.size} is not plausible (limit ${MAX_CONNECTION_FILE_BYTES} bytes)`);
+    }
+    const buffer = Buffer.alloc(opened.size);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const bytesRead = fsImpl.readSync(fd, buffer, offset, buffer.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    return buffer.subarray(0, offset).toString('utf8');
+  } finally {
+    fsImpl.closeSync(fd);
+  }
+}
+
 function tryReadConnectionCandidate(candidate, context) {
   const unsafe = checkConnectionFileSafety(candidate.path, context);
   if (unsafe) {
@@ -511,7 +580,16 @@ function tryReadConnectionCandidate(candidate, context) {
     };
   }
   try {
-    const raw = context.fsImpl.readFileSync(candidate.path, 'utf8');
+    let raw;
+    try {
+      raw = readConnectionFileVerified(candidate.path, context);
+    } catch (err) {
+      return {
+        ok: false,
+        attempt: makeAttempt(candidate.label, candidate.path,
+          err instanceof ConnectionFileRefusal ? err.message : normalizeFsError(err))
+      };
+    }
     let data;
     try {
       data = JSON.parse(raw);
@@ -1379,6 +1457,8 @@ module.exports = {
   formatDiscoveryAttempts,
   compactToolResultJsonText,
   checkConnectionFileSafety,
+  readConnectionFileVerified,
+  MAX_CONNECTION_FILE_BYTES,
   inlineAttachmentPaths,
   isDirectSendCall,
   isSensitiveFilePath,
