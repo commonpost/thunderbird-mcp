@@ -17,7 +17,7 @@ describe("bench", { skip: SKIP }, () => {
   it("runs chrome scripts through Marionette", async () => {
     const res = await tb("return { version: Services.appinfo.version, name: Services.appinfo.name };");
     assert.equal(res.name, "Thunderbird");
-    assert.equal(res.version, state.version.replace(/esr$/, ""));
+    assert.equal(res.version, state.version.replace(/(esr|[ab]\d+)$/, ""));
   });
 
   it("uses the POP3 account as default, like a real profile", async () => {

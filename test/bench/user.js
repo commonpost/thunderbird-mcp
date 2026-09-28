@@ -11,6 +11,10 @@ user_pref("datareporting.policy.dataSubmissionEnabled", false);
 user_pref("datareporting.healthreport.uploadEnabled", false);
 
 // No first-run UI, no network
+// Direct connections only: Linux Thunderbird takes the proxy from HTTP(S)_PROXY, which would also catch the local SMTP sink
+user_pref("network.proxy.type", 0);
+user_pref("network.connectivity-service.enabled", false);
+user_pref("network.captive-portal-service.enabled", false);
 user_pref("mail.provider.suppress_dialog_on_startup", true);
 user_pref("mail.shell.checkDefaultClient", false);
 user_pref("mail.spotlight.firstRunDone", true);
