@@ -2,7 +2,7 @@
 // Reading on a real Thunderbird: libmime decodes bodies and headers, search finds the fixtures.
 const { describe, it, after } = require("node:test");
 const assert = require("node:assert/strict");
-const { SKIP, mcp, closeAll, FOLDER } = require("./helpers.cjs");
+const { SKIP, mcp, tb, closeAll, FOLDER } = require("./helpers.cjs");
 
 describe("reading", { skip: SKIP }, () => {
   after(closeAll);
@@ -47,5 +47,18 @@ describe("reading", { skip: SKIP }, () => {
     const rows = Array.isArray(res) ? res : res.messages;
     assert.ok(rows.some(m => m.id === "chain1@alpha.test" || m.messageId === "chain1@alpha.test"), JSON.stringify(res));
     assert.ok(rows.every(m => !String(m.folderPath).endsWith("/Trash")));
+  });
+
+  it("names folders as Thunderbird displays them (prettyName is localizedName since 141)", async () => {
+    const expected = await tb(`
+      const { MailServices } = ChromeUtils.importESModule("resource:///modules/MailServices.sys.mjs");
+      const folder = MailServices.folderLookup.getFolderForURL(args.uri);
+      return folder.localizedName ?? folder.prettyName;`, { uri: FOLDER.inbox });
+    assert.equal(expected, "Inbox");
+    const res = await mcp().call("searchMessages", { query: "Project kickoff", folderPath: FOLDER.inbox });
+    const rows = Array.isArray(res) ? res : res.messages;
+    assert.ok(rows.length > 0 && rows.every(m => m.folder === expected), JSON.stringify(rows));
+    const folders = await mcp().call("listFolders", {});
+    assert.equal(folders.find(f => f.path === FOLDER.inbox)?.name, expected);
   });
 });

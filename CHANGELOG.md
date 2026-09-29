@@ -34,6 +34,10 @@ project is kept in this repository.
   path instead, which prints no link or image URL.
 
 ### Fixed
+- Folder names on Thunderbird 141 and later: `nsIMsgFolder.prettyName` was renamed `localizedName` there, so
+  search and recent-message rows had no `folder`, `listFolders` and the folder tools' messages fell back to the
+  unlocalized `folder.name`, and the Trash lookup by name found nothing. Folder names now come from
+  `localizedName`, or `prettyName` on 140 ESR.
 - The Experiment now imports `atob`, `btoa`, `DOMParser` and `TextDecoder`
   (`Cu.importGlobalProperties`). Experiment scripts do not get these web globals, so inside Thunderbird:
   - `getMessage`/`getMessages` returned HTML bodies as flat text instead of Markdown (no links, bold or lists:
