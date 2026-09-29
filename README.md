@@ -199,7 +199,7 @@ Both add-ons can be installed at the same time: they use different ids, preferen
 
 ## Security
 
-- **Auth tokens**: The HTTP server requires a session-scoped bearer token. Generated on startup, written to `<TmpD>/commonpost-mcp/connection.json` with 0600 permissions. The bridge re-discovers that file automatically across native installs, Snap, Flatpak, Betterbird Flatpak, and macOS temp directories.
+- **Auth tokens**: The HTTP server requires a session-scoped bearer token. Generated on startup, written to `<TmpD>/commonpost-mcp/connection.json` with 0600 permissions. The bridge re-discovers that file automatically across native installs, Snap, Flatpak, Betterbird Flatpak, and macOS temp directories. The options page also offers a stable token that stays the same across restarts, stored in a Thunderbird preference instead of the connection file; removing the add-on while it is still enabled clears that preference, but removing an add-on that was disabled first does not, so clear it yourself (uncheck "Use stable token" in the options page) before removing a disabled add-on.
 - **Dynamic port**: Tries ports 8780-8789, records the actual port in the connection file. No hardcoded port dependency.
 - **Account access control**: Restrict which email accounts are visible to MCP clients via the settings page. Changes take effect immediately.
 - **Tool access control**: Disable specific tools via the settings page. Disabled tools are hidden from `tools/list` and blocked at dispatch.

@@ -1584,9 +1584,13 @@ function protectMessageToolResult(toolName, result, nonce) {
 // END UNTRUSTED CONTENT HELPERS
 
 // BEGIN UNINSTALL CLEANUP HELPERS
-// Preferences of a removed add-on stay in the profile. The stable token and the
-// listen-on-all-interfaces setting are cleared when the user removes the
-// add-on; a disabled or updated add-on keeps them.
+// Preferences of a removed add-on stay in the profile. Removing an add-on
+// that is still enabled clears the stable token and the listen-on-all-
+// interfaces setting, through the onUninstalling listener registered below.
+// Disabling the add-on first removes that listener (see onShutdown), so
+// removing an add-on that was already disabled keeps both preferences; the
+// options page has a manual "Clear" action for that case. An update keeps
+// them either way.
 function createUninstallCleanupListener(addonId, clear) {
   return {
     onUninstalling(addon) {

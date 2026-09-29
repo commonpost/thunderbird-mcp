@@ -66,6 +66,13 @@ describe("wiring", () => {
     const warning = html.slice(html.indexOf('id="listenAllWarning"'), html.indexOf('id="listenAllWarning"') + 700);
     assert.match(warning, /clear\s+text/);
     assert.match(warning, /Host header/);
-    assert.match(html, /stored in your Thunderbird profile\s+while the add-on is enabled/);
+    assert.match(html, /stored in your Thunderbird profile/);
+  });
+
+  it("the options page explains that a disabled add-on must be cleared manually before removal", () => {
+    const html = fs.readFileSync(path.join(root, "extension/options.html"), "utf8");
+    assert.match(html, /Removing\s+the add-on while it is enabled clears the stored token/);
+    assert.match(html, /if you disable the add-on first/);
+    assert.match(html, /removing an\s+already-disabled add-on leaves the token in the profile/);
   });
 });
