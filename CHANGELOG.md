@@ -37,20 +37,21 @@ recommended.
 
 ### Changed
 - Attachments: a `sendMail`, `saveDraft`, `replyToMessage` or `forwardMessage` call whose attachment is refused
-  (missing, too large, on the deny-list, a network or device path, ...) now fails as a whole and names the
-  attachment, instead of sending or saving the message without it. `saveDraft` attachments go through the same
-  checks as the other tools. The bridge also checks the resolved real path of an attachment.
+  (missing, too large, on the deny-list, an unsupported path form, more attachments than the per-message limit,
+  ...) now fails as a whole and names the attachment, instead of sending or saving the message without it.
+  `saveDraft` attachments go through the same checks as the other tools. The bridge also checks the resolved
+  real path of an attachment.
 - Account restrictions now apply to calendars and address books (including CardDAV) as well: one that names a
   restricted account is no longer reachable, and a remote one that names no account is refused while a restriction
-  is active. An unreadable restriction refuses everything, on the options page as on the server, and the options
-  page no longer treats an empty selection as "allow all".
+  is active. An unreadable restriction, or one with an empty selection, refuses everything, on the options page
+  as on the server.
 - Filter names, condition values and action values are validated: control characters, backslashes and overlong
   values are rejected before they reach Thunderbird's filter file.
 - The bridge only accepts a connection file that belongs to the current user (no group or other access on POSIX,
-  the user's temporary directory on Windows) and reads it in one step.
+  the user's temporary directory on Windows), checked again immediately before it is read.
 - Options: the "Listen on all interfaces" warning now says that the token travels in clear text and that the check
-  of the Host header is off in that mode. The stable token and that setting are cleared from the profile when the
-  add-on is removed.
+  of the Host header is off in that mode. The stable token and that setting live in the profile while the add-on
+  is enabled.
 - `mcp-bridge.cjs`: a `sendMail`, `replyToMessage` or `forwardMessage` call made with `skipReview` (direct send, no
   compose window) now waits up to 150 s for Thunderbird's answer instead of 30 s, so the bridge no longer gives up
   before Thunderbird's own 120 s send timeout. Every other call keeps the 30 s limit. If the wait still runs out,

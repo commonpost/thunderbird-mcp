@@ -1065,7 +1065,84 @@ const SENSITIVE_ATTACHMENT_PATTERNS = [
   /\/all users\/(application data\/)?microsoft\/(crypto|protect)\//,
   /^[a-z]:\/programdata\/application data\/microsoft\/(crypto|protect)\//,
   /^\/private\/(etc|var\/log|var\/root)\//,
+  // macOS: everything under a user's home Library (Mail, Messages, Cookies,
+  // Keychains, Application Support, ...), not just the keychain subfolder.
+  /^\/users\/[^/]+\/library(\/|$)/,
 ];
+
+// Directory names Windows applications commonly use for per-user local data
+// (see the compatibility-junction comment above), checked as a WHOLE path
+// component so a user-chosen file merely containing these words is not
+// caught. The extension's own saved-attachment folder lives under one of
+// these on Windows (%TEMP% sits under AppData\Local): a path that also has a
+// "commonpost-mcp" component is exempt from THIS rule only -- every other
+// rule here (dotfiles, sensitive filenames, the patterns above) still
+// applies to it.
+const SENSITIVE_DIR_COMPONENTS = new Set(["appdata", "application data", "local settings"]);
+
+// Filenames (last path component, case-insensitive) that hold credentials or
+// secrets on their own, wherever they are found.
+const SENSITIVE_FILENAMES = [
+  /^credentials(\.(json|toml))?$/,
+  /^auth\.json$/,
+  /\.ppk$/,
+  /\.jks$/,
+  /\.keystore$/,
+  /\.ovpn$/,
+  /\.keychain(-db)?$/,
+  /^terraform\.tfstate/,
+  /^wallet\.dat$/,
+  /^local state$/,
+  /^web data$/,
+  /^places\.sqlite$/,
+  /^formhistory\.sqlite$/,
+  /^consolehost_history\.txt$/,
+  /^ntuser\.dat$/,
+];
+
+// Checked component by component, not only as a whole string: a dotfile or
+// dot-directory anywhere in the path (.ssh, .config, .env, .git-credentials,
+// .pgpass, .bash_history, .claude, .codex, .gemini, ...) holds configuration
+// or credentials by convention, whatever directory it sits under.
+// Returns null (allowed) or the reason: "dotfile", "appdata" (the
+// SENSITIVE_DIR_COMPONENTS rule -- on Windows this is also where %TEMP%
+// lives, so it is worth a more specific error than the others) or
+// "filename". hasSensitivePathComponent keeps the plain yes/no callers used
+// before this had a reason.
+function sensitivePathComponentReason(normalized) {
+  const components = normalized.split("/").filter(Boolean);
+  if (components.length === 0) return null;
+  const exemptDirComponents = components.includes("commonpost-mcp");
+  for (const part of components) {
+    if (part.length > 1 && part[0] === "." && part !== "..") return "dotfile";
+    if (!exemptDirComponents && SENSITIVE_DIR_COMPONENTS.has(part)) return "appdata";
+  }
+  return SENSITIVE_FILENAMES.some((re) => re.test(components[components.length - 1])) ? "filename" : null;
+}
+function hasSensitivePathComponent(normalized) {
+  const components = normalized.split("/").filter(Boolean);
+  if (components.length === 0) return false;
+  const exemptDirComponents = components.includes("commonpost-mcp");
+  for (const part of components) {
+    if (part.length > 1 && part[0] === "." && part !== "..") return true;
+    if (!exemptDirComponents && SENSITIVE_DIR_COMPONENTS.has(part)) return true;
+  }
+  return SENSITIVE_FILENAMES.some((re) => re.test(components[components.length - 1]));
+}
+
+// The generic "sensitive path blocked" note doesn't say why -- fine for a
+// dotfile or a credential filename, but on Windows the appdata rule also
+// catches every ordinary file under %TEMP% (which sits under
+// AppData\Local\Temp), which a caller can hit just by naming a file from
+// there. Give that one case a note that explains it and says what to do.
+function sensitiveAttachmentNote(attachmentPath) {
+  const normalized = attachmentPath.replace(/\\/g, "/").toLowerCase();
+  if (sensitivePathComponentReason(normalized) === "appdata") {
+    return "files under AppData (on Windows this includes %TEMP%) can't be attached; "
+      + "copy the file to another folder, for example Documents";
+  }
+  return "sensitive path blocked";
+}
 
 /**
  * Return true if `attachmentPath` looks like a credential, secret, or system
@@ -1085,7 +1162,7 @@ function isSensitiveFilePath(attachmentPath, windows = isWindowsHost()) {
 
 function matchesSensitivePattern(attachmentPath) {
   const normalized = attachmentPath.replace(/\\/g, "/").toLowerCase();
-  return SENSITIVE_ATTACHMENT_PATTERNS.some(re => re.test(normalized));
+  return SENSITIVE_ATTACHMENT_PATTERNS.some(re => re.test(normalized)) || hasSensitivePathComponent(normalized);
 }
 
 function isWindowsHost() {
@@ -1238,49 +1315,102 @@ function isCollectionAllowed(state, hints, accounts) {
 // END ACCOUNT RESTRICTION HELPERS
 
 // BEGIN UNTRUSTED CONTENT HELPERS
-// What the message tools return is text written by third parties. Before it
-// is handed to the assistant, characters that draw nothing or reorder text
-// are removed (and counted), and the body-like fields are wrapped in markers
-// that carry a random identifier, so that where the content starts and ends
-// is unambiguous. A separate notice block says so and reports removals.
-const UNTRUSTED_CONTENT_TOOLS = new Set(["getMessage", "getMessages", "searchMessages", "getRecentMessages"]);
-const UNTRUSTED_WRAPPED_KEYS = new Set(["body", "rawSource", "preview"]);
+// What these tools return is text written by third parties: a message's
+// body, but also an event's or task's title/description/location (from an
+// invite or a synced calendar) and a contact's note (from an imported or
+// CardDAV-synced card). Before it is handed to the assistant, characters
+// that draw nothing or reorder text are removed (and counted), and the
+// free-text fields are wrapped in markers that carry a random identifier,
+// so that where the content starts and ends is unambiguous. A separate
+// notice block says so and reports removals.
+const UNTRUSTED_CONTENT_TOOLS = new Set([
+  "getMessage", "getMessages", "searchMessages", "getRecentMessages",
+  "listEvents", "listTasks", "searchContacts", "getContact",
+]);
+const UNTRUSTED_WRAPPED_KEYS = new Set(["body", "rawSource", "preview", "title", "description", "location", "note"]);
+// Identifiers the caller is expected to pass back into a later call
+// (getMessage's id, a folder or file path...): hidden characters in them are
+// still counted for the notice, but the value itself is left exactly as it
+// came in. Rewriting an identifier -- even to remove something invisible --
+// could desync it from the real message, folder or file it names.
+const UNTRUSTED_COUNT_ONLY_KEYS = new Set(["id", "folderPath", "filePath"]);
 const UNTRUSTED_WALK_MAX_NODES = 50000;
 const UNTRUSTED_WALK_MAX_DEPTH = 12;
 
-// Bidirectional controls, zero-width and invisible format characters, fillers,
-// variation selectors (except the emoji presentation pair FE0E/FE0F), tag
-// characters, line/paragraph separators, C0/C1 controls other than tab, LF
-// and CR, and DEL. ZWJ is handled apart: it stays between two pictographs.
-const HIDDEN_CHARACTERS = new RegExp(
-  // The class lists combining and format characters on purpose: each is removed on its own.
-  // eslint-disable-next-line no-misleading-character-class
-  "[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F\\u00AD\\u034F\\u061C\\u115F\\u1160\\u17B4\\u17B5"
-  + "\\u180B-\\u180E\\u200B\\u200C\\u200E\\u200F\\u2028-\\u202E\\u2060-\\u206F\\u3164\\uFE00-\\uFE0D\\uFEFF\\uFFA0"
-  + "\\uFFF9-\\uFFFB\\u{E0000}-\\u{E007F}\\u{E0100}-\\u{E01EF}]",
-  "gu"
-);
-const PICTOGRAPH = /^\p{Extended_Pictographic}$/u;
+// Shared with the filter-confirmation dialog's DISPLAY_INVISIBLE further
+// below (single source of truth for what counts as invisible or
+// direction-changing): Unicode's own Control, Format, line/paragraph
+// separator and Default_Ignorable_Code_Point categories, plus a handful of
+// blocks kept as explicit code points because their category alone is not
+// reliably enough (older engines, or characters default-ignorable by
+// convention rather than by general category): the four Mongolian free
+// variation selectors and the blank braille pattern (shown by the dialog,
+// removed here too since it draws nothing in the fonts this add-on runs
+// under). The whole Tag block (E0000-E0FFF, assigned or not) is
+// default-ignorable by specification; listed explicitly rather than trusted
+// to \p{Default_Ignorable_Code_Point} alone. Excludes tab, LF and CR itself
+// (\p{Cc} would otherwise include them): the code below passes those three
+// through untouched rather than trying to subtract them from the class,
+// which plain Unicode property escapes cannot express.
+const CORE_HIDDEN_CLASS_SRC =
+  "\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Default_Ignorable_Code_Point}\\u180B-\\u180F\\u2800";
+const HIDDEN_CORE_PATTERN = new RegExp(`[${CORE_HIDDEN_CLASS_SRC}]|[\\u{E0000}-\\u{E0FFF}]`, "gu");
+const PICTOGRAPH_OR_MODIFIER = /^(?:\p{Extended_Pictographic}|\p{Emoji_Modifier})$/u;
+const LETTER = /^\p{L}$/u;
+const EMOJI_BASE = /^\p{Emoji}$/u;
+
+// One code point immediately before/after `pos` in `str` (a UTF-16 index),
+// surrogate-pair aware; "" past either end.
+function codePointBefore(str, pos) {
+  if (pos <= 0) return "";
+  const low = str.charCodeAt(pos - 1);
+  const start = (low >= 0xDC00 && low <= 0xDFFF && pos >= 2) ? pos - 2 : pos - 1;
+  return str.slice(start, pos);
+}
+function codePointAfter(str, pos) {
+  if (pos >= str.length) return "";
+  const high = str.charCodeAt(pos);
+  const end = (high >= 0xD800 && high <= 0xDBFF && pos + 1 < str.length) ? pos + 2 : pos + 1;
+  return str.slice(pos, end);
+}
 
 // Returns { text, removed }.
 function stripHiddenCharacters(value) {
   if (typeof value !== "string" || value === "") return { text: value, removed: 0 };
   let removed = 0;
-  let text = value.replace(HIDDEN_CHARACTERS, () => { removed++; return ""; });
-  if (text.includes("‍")) {
-    const chars = Array.from(text);
-    const kept = [];
-    for (let i = 0; i < chars.length; i++) {
-      if (chars[i] === "‍") {
-        let before = kept.length - 1;
-        if (before >= 0 && (kept[before] === "️" || kept[before] === "︎")) before--;
-        const joins = before >= 0 && PICTOGRAPH.test(kept[before]) && i + 1 < chars.length && PICTOGRAPH.test(chars[i + 1]);
-        if (!joins) { removed++; continue; }
-      }
-      kept.push(chars[i]);
+  const text = value.replace(HIDDEN_CORE_PATTERN, (m, offset, str) => {
+    if (m === "\t" || m === "\n" || m === "\r") return m; // never matched by \p{Cc} minus these three
+    // Line/paragraph separators reformat text invisibly rather than draw
+    // nothing: normalized to a real newline instead of deleted outright.
+    if (m === "\u2028" || m === "\u2029") { removed++; return "\n"; }
+    if (m === "\u200C" || m === "\u200D") {
+      // ZWNJ/ZWJ: kept, uncounted, only where removing it would break real
+      // text -- an emoji sequence (joining two pictographs or an
+      // emoji-modifier, skipping a single presentation selector attached to
+      // the pictograph before it) or, for Persian/Indic scripts that use
+      // these to control joining and word breaks, sitting between two
+      // letters. Anywhere else -- alone, doubled, or between anything
+      // else -- it is invisible and is removed like the rest of this class.
+      let beforeEnd = offset;
+      if (beforeEnd > 0 && (str[beforeEnd - 1] === "\uFE0E" || str[beforeEnd - 1] === "\uFE0F")) beforeEnd--;
+      const before = codePointBefore(str, beforeEnd);
+      const after = codePointAfter(str, offset + 1);
+      const emojiSequence = PICTOGRAPH_OR_MODIFIER.test(before) && PICTOGRAPH_OR_MODIFIER.test(after);
+      const scriptJoining = LETTER.test(before) && LETTER.test(after);
+      if (emojiSequence || scriptJoining) return m;
     }
-    text = kept.join("");
-  }
+    if (m === "\uFE0E" || m === "\uFE0F") {
+      // The emoji-presentation-selector pair: kept, uncounted, only as a
+      // SINGLE selector immediately after an emoji-capable base -- a bare
+      // one (no base) or a repeat (two or more in a row) has no legitimate
+      // reading and is removed.
+      const isRepeat = offset > 0 && (str[offset - 1] === "\uFE0E" || str[offset - 1] === "\uFE0F");
+      const base = codePointBefore(str, offset);
+      if (!isRepeat && EMOJI_BASE.test(base)) return m;
+    }
+    removed++;
+    return "";
+  });
   return { text, removed };
 }
 
@@ -1294,20 +1424,41 @@ function untrustedContentClose(nonce) {
 
 // Cleans every string of `result` in place and wraps the body-like fields.
 // Returns the number of characters removed. Arrays and objects are walked to a
-// bounded depth and size; anything beyond is left as it is.
-function protectUntrustedResult(result, nonce) {
+// bounded depth and size; anything beyond that sets `statusRef.truncated = true`
+// (default a throwaway object) so a caller can fail closed instead of handing
+// back a result where some of the text was never checked or delimited.
+function protectUntrustedResult(result, nonce, statusRef = {}) {
   let removedTotal = 0;
   let visited = 0;
   const walk = (node, depth) => {
-    if (!node || typeof node !== "object" || depth > UNTRUSTED_WALK_MAX_DEPTH) return;
+    if (!node || typeof node !== "object") return;
+    if (depth > UNTRUSTED_WALK_MAX_DEPTH) { statusRef.truncated = true; return; }
     const keys = Array.isArray(node) ? node.keys() : Object.keys(node);
     for (const key of keys) {
-      if (++visited > UNTRUSTED_WALK_MAX_NODES) return;
+      if (++visited > UNTRUSTED_WALK_MAX_NODES) { statusRef.truncated = true; return; }
       const value = node[key];
       if (typeof value === "string") {
-        const { text, removed } = stripHiddenCharacters(value);
+        const inObject = !Array.isArray(node);
+        // rawSource is a byte string (readMessageStreamFully), one JS code
+        // unit per octet, not decoded text: the hidden-character ranges this
+        // strips (C1 controls 0x80-0x9F, DEL, soft hyphen...) are ordinary
+        // continuation bytes in UTF-8 and escape bytes in ISO-2022-JP, so
+        // stripping them corrupts the message. Never rewritten (delimited
+        // below like any other wrapped key).
+        const isRawBytes = inObject && key === "rawSource";
+        // id/folderPath/filePath: see UNTRUSTED_COUNT_ONLY_KEYS above.
+        const isCountOnly = inObject && UNTRUSTED_COUNT_ONLY_KEYS.has(key);
+        if (isCountOnly) {
+          removedTotal += stripHiddenCharacters(value).removed;
+          continue;
+        }
+        const { text, removed } = isRawBytes ? { text: value, removed: 0 } : stripHiddenCharacters(value);
         removedTotal += removed;
-        node[key] = !Array.isArray(node) && UNTRUSTED_WRAPPED_KEYS.has(key) && text !== ""
+        // The encrypted-message notice in `body` (see ENCRYPTED_CONTENT_NOTICE)
+        // is our own text, not the sender's: counted and cleaned like any
+        // other string, but never delimited as untrusted third-party content.
+        const skipWrap = inObject && key === "body" && node.encrypted === true;
+        node[key] = inObject && UNTRUSTED_WRAPPED_KEYS.has(key) && !skipWrap && text !== ""
           ? `${untrustedContentOpen(nonce, removed)}\n${text}\n${untrustedContentClose(nonce)}`
           : text;
       } else if (value && typeof value === "object") {
@@ -1333,7 +1484,18 @@ function protectMessageToolResult(toolName, result, nonce) {
   if (!UNTRUSTED_CONTENT_TOOLS.has(toolName) || !result || typeof result !== "object") return "";
   const keys = Object.keys(result);
   if (keys.length === 1 && keys[0] === "error") return "";
-  const removed = protectUntrustedResult(result, nonce);
+  const status = {};
+  const removed = protectUntrustedResult(result, nonce, status);
+  if (status.truncated) {
+    // Fail closed: past the walk budget, some of this result's text was
+    // never checked for hidden characters or delimited as untrusted content.
+    // Handing it back as if it were fully protected would be worse than
+    // refusing it outright.
+    throw new Error(
+      "Result too large or deeply nested to check safely for hidden or untrusted content; "
+      + "narrow the request (for example a smaller maxResults or a more specific query) and try again."
+    );
+  }
   return untrustedContentNotice(nonce, removed);
 }
 // END UNTRUSTED CONTENT HELPERS
@@ -1535,7 +1697,11 @@ const FILTER_TEXT_FORBIDDEN = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u;
 const FILTER_TEXT_NOTE = "it cannot be represented in msgFilterRules.dat";
 const FILTER_TAG_KEY_PATTERN = /^[!#$&'+,\-.0-9:;=?@A-Z[^_\x60a-z|}~]+$/;
 
-function assertFilterText(label, value, maxLength) {
+// `note` explains WHY, for the two checks where that depends on the caller
+// (msgFilterRules.dat's format for a filter name/value; something else for
+// a folder name, see FOLDER_TEXT_NOTE below); defaults to the filter one
+// since most callers are filter-related.
+function assertFilterText(label, value, maxLength, note = FILTER_TEXT_NOTE) {
   if (typeof value !== "string") {
     throw new Error(`${label} must be a string`);
   }
@@ -1545,11 +1711,11 @@ function assertFilterText(label, value, maxLength) {
   const bad = FILTER_TEXT_FORBIDDEN.exec(value);
   if (bad) {
     const code = bad[0].codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
-    throw new Error(`${label} contains a control or line-separator character (U+${code} at position ${bad.index}); ${FILTER_TEXT_NOTE}`);
+    throw new Error(`${label} contains a control or line-separator character (U+${code} at position ${bad.index}); ${note}`);
   }
   const backslash = value.indexOf("\\");
   if (backslash >= 0) {
-    throw new Error(`${label} contains a backslash (position ${backslash}); ${FILTER_TEXT_NOTE}`);
+    throw new Error(`${label} contains a backslash (position ${backslash}); ${note}`);
   }
   if (typeof value.isWellFormed === "function" && !value.isWellFormed()) {
     throw new Error(`${label} contains a lone UTF-16 surrogate`);
@@ -2321,7 +2487,7 @@ const FILTER_SEND_ACTION_TYPES = ["Forward", "Reply"]
 const FILTER_ACTION_FORWARD = resolveXpcomConstant("nsMsgFilterAction", "Forward");
 const FILTER_TYPE_POST_OUTGOING = resolveXpcomConstant("nsMsgFilterType", "PostOutgoing") ?? 0x40;
 const FILTER_SEND_GUARD_NOTE =
-  'blocked by the "Block filter forward/reply" setting (extensions.commonpost-mcp.blockFilterForwardReply, on by default); '
+  'blocked by "Filter rules that send mail: Always block" (extensions.commonpost-mcp.blockFilterForwardReply, on by default); '
   + "review and change such rules in Thunderbird's filter editor";
 
 // A forward target the user can read in full and that means one recipient:
@@ -2668,17 +2834,23 @@ function describeConfirmationRefusal(admitted) {
 // folders Thunderbird knows), never from free text presented as an
 // explanation. Free text inside those values already passed assertFilterText;
 // here every character that draws nothing or changes direction is also shown
-// as [U+XXXX] -- controls and format characters (Cc, Cf), private use,
-// surrogates, UNASSIGNED code points (Cn: invisible or unpredictable in the
-// dialog's font), line/paragraph separators, all of Unicode's
-// Default_Ignorable_Code_Point (variation selectors, Mongolian free variation
-// selectors U+180B-U+180F, fillers, tags, U+2065, U+FFF0-U+FFF8...), every
-// space other than U+0020 and the blank braille pattern U+2800 --, long runs
-// of spaces are counted, and long values are cut visibly -- except forward
-// addresses, always shown in full.
+// as [U+XXXX] -- CORE_HIDDEN_CLASS_SRC (shared with the untrusted-content
+// removal further up: controls and format characters, line/paragraph
+// separators, Default_Ignorable_Code_Point...), PLUS, for display only,
+// private-use characters, surrogates, UNASSIGNED code points (Cn: invisible
+// or unpredictable in the dialog's font -- unlike the removal side, nothing
+// here is ever deleted from message content, so showing more errs safe),
+// every space other than U+0020, and the full FE00-FE0F variation-selector
+// run (the removal side keeps a single one right after an emoji, which does
+// not apply to plain quoted text); long runs of spaces are counted, and long
+// values are cut visibly -- except forward addresses, always shown in full.
 // The class lists combining and format characters on purpose: each is matched (and shown) on its own.
-// eslint-disable-next-line no-misleading-character-class
-const DISPLAY_INVISIBLE = /[\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000\u034F\u115F\u1160\u17B4\u17B5\u3164\uFFA0\uFE00-\uFE0F\u2800]|[\u{E0000}-\u{E0FFF}]/gu;
+/* eslint-disable no-misleading-character-class */
+const DISPLAY_INVISIBLE = new RegExp(
+  `[${CORE_HIDDEN_CLASS_SRC}\\p{Co}\\p{Cs}\\p{Cn}\\u00A0\\u1680\\u2000-\\u200A\\u202F\\u205F\\u3000\\u034F\\u115F\\u1160\\u17B4\\u17B5\\u3164\\uFFA0\\uFE00-\\uFE0F]|[\\u{E0000}-\\u{E0FFF}]`,
+  "gu"
+);
+/* eslint-enable no-misleading-character-class */
 
 function displayFilterText(value, max = 80) {
   const s = value === null || value === undefined ? "" : String(value);
@@ -3956,7 +4128,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "createFilter",
         group: "filters", crud: "create",
         title: "Create Filter",
-        description: "Create a new mail filter rule on an account. A rule that forwards or replies (sends mail), or a new rule in a filter list that already holds a rule sending mail, is not written at once: with the default setting (\"Filter rules that send mail: Ask me each time\") the call returns {status: \"pending_user_confirmation\", confirmationId} and Thunderbird asks the user in a dialog (only the user can accept; follow it with getFilterConfirmation); with \"Always block\" it is refused. Forward takes exactly one plain e-mail address; reply takes a template of a Templates folder (<folder URI>?messageId=<id>&subject=<subject>). Sending rules for outgoing mail (type 64) are always refused.",
+        description: "Create a new mail filter rule on an account. A rule that forwards or replies (sends mail), or a new rule in a filter list that already holds a rule sending mail, is refused by default (\"Filter rules that send mail: Always block\"); only if the user has switched the setting to \"Ask me each time\" does the call instead return {status: \"pending_user_confirmation\", confirmationId} and let Thunderbird ask the user in a dialog (only the user can accept; follow it with getFilterConfirmation). Forward takes exactly one plain e-mail address; reply takes a template of a Templates folder (<folder URI>?messageId=<id>&subject=<subject>). Sending rules for outgoing mail (type 64) are always refused.",
         inputSchema: {
           type: "object",
           properties: {
@@ -3998,7 +4170,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "updateFilter",
         group: "filters", crud: "update",
         title: "Update Filter",
-        description: "Modify an existing filter's properties, conditions, or actions. Adding forward/reply actions, or changing a filter list that holds a rule sending mail (including enabling or editing that rule), needs the user's confirmation in Thunderbird with the default setting (the call returns {status: \"pending_user_confirmation\", confirmationId}; follow it with getFilterConfirmation) and is refused with \"Always block\". Sending rules for outgoing mail (type 64) are always refused.",
+        description: "Modify an existing filter's properties, conditions, or actions. Adding forward/reply actions, or changing a filter list that holds a rule sending mail (including enabling or editing that rule), is refused by default (\"Always block\"); it instead needs the user's confirmation in Thunderbird (the call returns {status: \"pending_user_confirmation\", confirmationId}; follow it with getFilterConfirmation) only if the user has switched the setting to \"Ask me each time\". Sending rules for outgoing mail (type 64) are always refused.",
         inputSchema: {
           type: "object",
           properties: {
@@ -4040,7 +4212,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "deleteFilter",
         group: "filters", crud: "delete",
         title: "Delete Filter",
-        description: "Delete a mail filter by index. Deleting a rule that sends mail is always allowed; deleting another rule of a list that holds one needs the user's confirmation (default setting) or is refused (\"Always block\").",
+        description: "Delete a mail filter by index. Deleting a rule that sends mail is always allowed; deleting another rule of a list that holds one is refused by default (\"Always block\"), or needs the user's confirmation if the user has switched the setting to \"Ask me each time\".",
         inputSchema: {
           type: "object",
           properties: {
@@ -4054,7 +4226,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "reorderFilters",
         group: "filters", crud: "update",
         title: "Reorder Filters",
-        description: "Move a filter to a different position in the execution order. In a filter list that holds a rule sending mail, this needs the user's confirmation (default setting; returns status pending_user_confirmation) or is refused (\"Always block\").",
+        description: "Move a filter to a different position in the execution order. In a filter list that holds a rule sending mail, this is refused by default (\"Always block\"); it needs the user's confirmation (returns status pending_user_confirmation) only if the user has switched the setting to \"Ask me each time\".",
         inputSchema: {
           type: "object",
           properties: {
@@ -4069,7 +4241,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "applyFilters",
         group: "filters", crud: "update",
         title: "Apply Filters",
-        description: "Manually run all enabled filters on a folder to organize existing messages. If the account's filter list holds a rule that forwards, replies or runs an add-on action, running it needs the user's confirmation in Thunderbird with the default setting (returns status pending_user_confirmation; follow it with getFilterConfirmation) and is refused with \"Always block\".",
+        description: "Manually run all enabled filters on a folder to organize existing messages. If the account's filter list holds a rule that forwards, replies or runs an add-on action, running it is refused by default (\"Always block\"); it needs the user's confirmation in Thunderbird (returns status pending_user_confirmation; follow it with getFilterConfirmation) only if the user has switched the setting to \"Ask me each time\".",
         inputSchema: {
           type: "object",
           properties: {
@@ -4665,6 +4837,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * (Personal, Collected) are dirType 101/2; anything else counts as
              * remote and must name an allowed account.
              */
+            // Only the Personal Address Book (dirType 2) counts as "local, no
+            // account restriction applies" here. Collected Addresses (dirType
+            // 101) names no account -- Thunderbird fills it automatically from
+            // every message sent, across every account -- so under a
+            // restriction it is treated like a remote book that names no
+            // account: refused, not defaulted to allowed. A MAPI-backed
+            // address book (Windows Contacts/Outlook) is neither of these
+            // dirTypes and was already refused the same way; noted here so
+            // the choice reads as deliberate.
             function getAccessibleAddressBooks() {
               const books = Array.from(MailServices.ab.directories);
               const state = accountRestrictionState();
@@ -4678,7 +4859,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   emails: [readTextProperty(() => book.getStringValue("carddav.username", ""))],
                   identityKeys: [],
                   accountKeys: [],
-                  remote: dirType !== 101 && dirType !== 2,
+                  remote: dirType !== 2,
                 }, accounts);
               });
             }
@@ -4929,9 +5110,55 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * Returns { descs: [{url, name, size, contentType?}], failed: string[] }
              */
             // BEGIN OUTBOUND ATTACHMENT CONVERSION
+            // isSymlink() above only looks at the final path component; a
+            // symlinked or reparse-point PARENT directory reaches a denied
+            // file under an allowed name. Without the bridge (which resolves
+            // a real path with fs.promises.realpath), nsIFile has no portable
+            // realpath, so every ancestor directory is walked and checked
+            // for a symlink or reparse point of its own (Windows junctions
+            // and mount points report as symlinks through nsIFile too).
+            // Returns the offending ancestor's path, or null.
+            function findSymlinkAncestor(file) {
+              let ancestor;
+              try {
+                ancestor = file.parent;
+              } catch (e) {
+                throw new Error(`parent directory check failed: ${e && e.message ? e.message : e}`, { cause: e });
+              }
+              let previousPath = file.path;
+              let guard = 0;
+              while (ancestor && guard++ < 256) {
+                let ancestorIsSymlink;
+                try {
+                  ancestorIsSymlink = ancestor.isSymlink();
+                } catch (e) {
+                  throw new Error(`parent directory check failed: ${e && e.message ? e.message : e}`, { cause: e });
+                }
+                if (ancestorIsSymlink) return ancestor.path;
+                if (ancestor.path === previousPath) break; // reached the filesystem root
+                previousPath = ancestor.path;
+                let next;
+                try {
+                  next = ancestor.parent;
+                } catch (e) {
+                  throw new Error(`parent directory check failed: ${e && e.message ? e.message : e}`, { cause: e });
+                }
+                ancestor = next;
+              }
+              return null;
+            }
+
             function filePathsToAttachDescs(filePaths) {
               const descs = [];
               const failed = [];
+              // Decoded inline-base64 attachments this call wrote to disk
+              // (nsIFile instances). The whole call fails when any attachment
+              // is refused (attachmentFailureResult), so a file already
+              // decoded before a later one failed would otherwise sit on disk
+              // -- readable by the current user only, but unattached to any
+              // message and never cleaned up before the add-on next shuts
+              // down. Removed immediately when that happens.
+              const decodedThisCall = [];
               if (!filePaths || !Array.isArray(filePaths)) return { descs, failed };
               let attachmentEntries = filePaths;
               if (filePaths.length > MAX_ATTACHMENTS_PER_MESSAGE) {
@@ -4951,7 +5178,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     // assistant into calling sendMail with attachments=["/path/to/id_rsa"]
                     // and we never want that to succeed regardless of skipReview.
                     if (isSensitiveFilePath(entry)) {
-                      failed.push(`${entry} (sensitive path blocked)`);
+                      failed.push(`${entry} (${sensitiveAttachmentNote(entry)})`);
                       continue;
                     }
                     const file = createLocalFile(entry);
@@ -4981,7 +5208,18 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       continue;
                     }
                     if (isSensitiveFilePath(file.path)) {
-                      failed.push(`${entry} (sensitive path blocked)`);
+                      failed.push(`${entry} (${sensitiveAttachmentNote(file.path)})`);
+                      continue;
+                    }
+                    let symlinkAncestor;
+                    try {
+                      symlinkAncestor = findSymlinkAncestor(file);
+                    } catch (e) {
+                      failed.push(`${entry} (${e && e.message ? e.message : e})`);
+                      continue;
+                    }
+                    if (symlinkAncestor) {
+                      failed.push(`${entry} (a parent directory is a symlink or reparse point: ${symlinkAncestor})`);
                       continue;
                     }
                     let isRegularFile;
@@ -5096,6 +5334,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     bstream.close();
                     ostream.close();
                     _tempAttachFiles.add(tmpFile.path);
+                    decodedThisCall.push(tmpFile);
                     const desc = { url: Services.io.newFileURI(tmpFile).spec, name: entry.name || entry.filename, size: tmpFile.fileSize };
                     if (entry.contentType) desc.contentType = entry.contentType;
                     descs.push(desc);
@@ -5105,6 +5344,16 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   }
                 } catch (e) {
                   failed.push(typeof entry === "object" ? (entry.name || JSON.stringify(entry)) : String(entry));
+                }
+              }
+              if (failed.length > 0) {
+                for (const tmpFile of decodedThisCall) {
+                  try {
+                    if (tmpFile.exists()) tmpFile.remove(false);
+                    _tempAttachFiles.delete(tmpFile.path);
+                  } catch (e) {
+                    console.warn("commonpost-mcp: could not remove a decoded attachment after the call failed:", e);
+                  }
                 }
               }
               return { descs, failed };
@@ -5704,7 +5953,44 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
             }
 
-            function stripHtml(html) {
+            // BEGIN HTML HIDDEN CONTENT HELPERS
+            // Ways to keep text out of a human reader's sight while still handing
+            // it to whatever reads the raw HTML (an assistant): the `hidden`
+            // attribute, display:none / visibility:hidden / opacity:0 /
+            // font-size:0 in an inline style, and <template> (never rendered --
+            // its content is not part of the document a browser or mail client
+            // shows). Removed, and counted through `counterRef`, before either
+            // HTML path returns anything. The match is lexical, like the rest of
+            // this file's regex-based HTML handling: a `style` value merely
+            // containing one of these keywords as text (not as CSS) would also
+            // be caught, which errs toward removing too much rather than missing
+            // a real one.
+            const CSS_HIDDEN_STYLE_SRC =
+              "display\\s*:\\s*none\\b|visibility\\s*:\\s*hidden\\b|" +
+              "font-size\\s*:\\s*0(?:\\.0*)?(?:px|pt|%|em|rem)?\\b|opacity\\s*:\\s*0(?:\\.0+)?\\b";
+            const CSS_HIDDEN_STYLE_TEST = new RegExp(CSS_HIDDEN_STYLE_SRC, "i");
+            const HIDDEN_HTML_BLOCK = new RegExp(
+              "<(template)\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>" +
+              "|<([a-zA-Z][a-zA-Z0-9]*)\\b(?=[^>]*\\shidden\\b(?:\\s*=|[\\s>]))[^>]*>[\\s\\S]*?<\\/\\2\\s*>" +
+              "|<([a-zA-Z][a-zA-Z0-9]*)\\b(?=[^>]*\\sstyle\\s*=\\s*(?:\"[^\"]*(?:" + CSS_HIDDEN_STYLE_SRC + ")[^\"]*\"" +
+              "|'[^']*(?:" + CSS_HIDDEN_STYLE_SRC + ")[^']*'))[^>]*>[\\s\\S]*?<\\/\\3\\s*>",
+              "gi"
+            );
+
+            function removeHiddenHtmlBlocks(html, counterRef) {
+              return html.replace(HIDDEN_HTML_BLOCK, () => { counterRef.n++; return " "; });
+            }
+
+            // True when a DOM element itself is hidden this way (walk() calls
+            // this per element; HIDDEN_HTML_BLOCK above does the same job when
+            // there is no DOM, in stripHtml).
+            function isHiddenElementNode(node) {
+              if (node.hasAttribute && node.hasAttribute("hidden")) return true;
+              const style = (node.getAttribute && node.getAttribute("style")) || "";
+              return CSS_HIDDEN_STYLE_TEST.test(style);
+            }
+
+            function stripHtml(html, counterRef = { n: 0 }) {
               if (!html) return "";
               let text = String(html);
 
@@ -5713,6 +5999,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               // accept it, so it must end the block here too.
               text = text.replace(/<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/gi, " ");
               text = text.replace(/<style\b[^>]*>[\s\S]*?<\/style\b[^>]*>/gi, " ");
+              text = removeHiddenHtmlBlocks(text, counterRef);
 
               // Convert block-level tags to newlines before stripping
               text = text.replace(/<br\s*\/?>/gi, "\n");
@@ -5795,9 +6082,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * Falls back to stripHtml if DOMParser is unavailable or the HTML
              * is too large to parse.
              */
-            function htmlToMarkdown(html) {
+            function htmlToMarkdown(html, counterRef = { n: 0 }) {
               if (!html) return "";
-              if (htmlExceedsDomLimit(html)) return stripHtml(html);
+              if (htmlExceedsDomLimit(html)) return stripHtml(html, counterRef);
               try {
                 const doc = new DOMParser().parseFromString(html, "text/html");
 
@@ -5812,6 +6099,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (node.nodeType !== 1) return "";
                   const tag = node.tagName.toLowerCase();
                   const inner = () => walkChildren(node);
+                  if (tag === "template" || isHiddenElementNode(node)) {
+                    counterRef.n++;
+                    return "";
+                  }
 
                   switch (tag) {
                     case "script": case "style": case "head": return "";
@@ -5880,9 +6171,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 return result;
               } catch {
                 // DOMParser unavailable or parse failure -- fall back to stripHtml
-                return stripHtml(html);
+                return stripHtml(html, counterRef);
               }
             }
+            // END HTML HIDDEN CONTENT HELPERS
 
             /**
              * Walks the MIME tree to find the raw body content.
@@ -5974,7 +6266,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * For "text": uses coerceBodyToPlaintext fast path (original behavior).
              * For "markdown"/"html": walks MIME tree to find raw HTML content.
              */
-            function extractFormattedBody(aMimeMsg, bodyFormat) {
+            function extractFormattedBody(aMimeMsg, bodyFormat, counterRef = { n: 0 }) {
               if (bodyFormat === "text") {
                 return { body: extractPlainTextBody(aMimeMsg), bodyIsHtml: false };
               }
@@ -5986,9 +6278,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 return { body: fallback, bodyIsHtml: false };
               }
               if (!isHtml) return { body: text, bodyIsHtml: false };
+              // html mode: the sender's HTML is returned as is, hidden text and
+              // all -- this is the one path that deliberately does not clean it.
               if (bodyFormat === "html") return { body: text, bodyIsHtml: true };
               // Default: markdown
-              return { body: htmlToMarkdown(text), bodyIsHtml: false };
+              return { body: htmlToMarkdown(text, counterRef), bodyIsHtml: false };
             }
 
             /**
@@ -8103,7 +8397,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     }
 
                     const requestedBodyFormat = bodyFormat || "markdown";
-                    const fmt = extractFormattedBody(aMimeMsg, requestedBodyFormat);
+                    const hiddenElementCounter = { n: 0 };
+                    const fmt = extractFormattedBody(aMimeMsg, requestedBodyFormat, hiddenElementCounter);
                     let body = fmt.body;
                     let bodyIsHtml = fmt.bodyIsHtml;
                     let bodyNote = "";
@@ -8151,10 +8446,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                                 body = extracted.text;
                                 bodyIsHtml = true;
                               } else if (requestedBodyFormat === "markdown") {
-                                body = htmlToMarkdown(extracted.text);
+                                body = htmlToMarkdown(extracted.text, hiddenElementCounter);
                                 bodyIsHtml = false;
                               } else {
-                                body = stripHtml(extracted.text);
+                                body = stripHtml(extracted.text, hiddenElementCounter);
                                 bodyIsHtml = false;
                               }
                             } else {
@@ -8398,6 +8693,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                           }
                         }
                       }
+                    }
+
+                    if (hiddenElementCounter.n > 0) {
+                      const hiddenNote = `${hiddenElementCounter.n} element(s) hidden by CSS, the hidden attribute, or <template> were removed from the HTML body`;
+                      bodyNote = bodyNote ? `${bodyNote}; ${hiddenNote}` : hiddenNote;
                     }
 
                     const msgTags = getUserTags(msgHdr);
@@ -9740,6 +10040,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 } else if (moveTo) {
                   const moveResult = getAccessibleFolder(moveTo);
                   if (moveResult.error) return moveResult;
+                  // A message in a Templates folder is a reply-rule source: a
+                  // filter's "reply" action sends its whole content to the
+                  // sender of each matching message, without the review a
+                  // compose window gives. Filing a message there through MCP
+                  // -- an incoming message, or one from anywhere else -- would
+                  // let a filter rule reply with content the user never wrote.
+                  // Templates only ever hold what the user puts there directly
+                  // in Thunderbird.
+                  if (moveResult.folder.getFlag(Ci.nsMsgFolderFlags.Templates)) {
+                    return { error: `Cannot move a message into a Templates folder through MCP: ${moveResult.folder.URI}` };
+                  }
                   targetFolder = moveResult.folder;
                 }
 
@@ -9762,6 +10073,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
+            // Not msgFilterRules.dat: a plain reason for the same checks when
+            // applied to a folder name (control characters and a backslash
+            // are unusual and often unsupported in a folder name on some
+            // filesystems/protocols; the check errs toward rejecting them).
+            const FOLDER_TEXT_NOTE = "it is not a printable, unambiguous folder name";
+
             function createFolder(parentFolderPath, name) {
               try {
                 if (typeof parentFolderPath !== "string" || !parentFolderPath) {
@@ -9769,6 +10086,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
                 if (typeof name !== "string" || !name) {
                   return { error: "name must be a non-empty string" };
+                }
+                // Same free-text validation as a filter name: a control
+                // character, backslash or lone surrogate in a folder name is
+                // refused before Thunderbird ever sees it, the same way one is
+                // refused in msgFilterRules.dat.
+                try {
+                  assertFilterText("Folder name", name, FILTER_NAME_MAX_LENGTH, FOLDER_TEXT_NOTE);
+                } catch (e) {
+                  return { error: e.message };
                 }
 
                 const parentResult = getAccessibleFolder(parentFolderPath);
@@ -9813,6 +10139,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
                 if (typeof newName !== "string" || !newName) {
                   return { error: "newName must be a non-empty string" };
+                }
+                try {
+                  assertFilterText("Folder name", newName, FILTER_NAME_MAX_LENGTH, FOLDER_TEXT_NOTE);
+                } catch (e) {
+                  return { error: e.message };
                 }
 
                 const renameResult = getAccessibleFolder(folderPath);
@@ -10057,6 +10388,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // of an accessible account, found by its Message-ID, as the filter
             // editor writes it. Anything else could make every matching sender
             // receive an arbitrary message of the mailbox as the "template".
+            // See also: updateMessage refuses to move a message INTO a
+            // Templates folder through MCP, so this folder can only ever
+            // hold messages the user filed there themselves.
             function resolveReplyTemplate(value) {
               const { folderUri, messageId } = parseReplyTemplateValue(value);
               const found = getAccessibleFolder(folderUri);
