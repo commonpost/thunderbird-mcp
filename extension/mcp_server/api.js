@@ -4412,6 +4412,263 @@ function buildReplyReferences(originalReferences, originalMessageId) {
   if (own) ids.push(own);
   return ids.map(id => `<${id}>`).join(" ");
 }
+
+// nsAppendEscapedHTML
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+/**
+ * Cite line, as the QuotingOutputStreamListener constructor builds it (nsMsgCompose.cpp):
+ * template by mailnews.reply_header_type, then the first #2 (date), #3 (time), #1 (author) replaced.
+ * strings: { authorWrote, onDateAuthorWrote, authorWroteOnDate, originalMessage }; parts: { date, time, author }.
+ */
+function buildCitePrefix(type, strings, parts) {
+  let prefix;
+  let citing = true;
+  let withDate = false;
+  if (type === 0) {
+    prefix = strings.originalMessage;
+    citing = false;
+  } else if (type === 2 || type === 3) {
+    prefix = type === 2 ? strings.onDateAuthorWrote : strings.authorWroteOnDate;
+    withDate = true;
+  } else {
+    prefix = strings.authorWrote;
+  }
+  prefix = String(prefix || "");
+  if (citing) {
+    if (withDate) prefix = prefix.replace("#2", () => parts.date).replace("#3", () => parts.time);
+    prefix = prefix.replace("#1", () => parts.author);
+  }
+  return prefix || `\n\n${strings.originalMessage || ""}\n`;
+}
+
+// InsertDivWrappedTextAtSelection: every line followed by <br>.
+function divWrappedHtml(text, className) {
+  const lines = String(text).split("\n");
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  return `<div class="${className}">${lines.map(line => `${escapeHtml(line)}<br>`).join("")}</div>`;
+}
+
+// InternetCiter::GetCiteString: ">" before every line, plus a space unless the line is already quoted.
+function citeText(text) {
+  const lines = String(text).split("\n");
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines.map(line => `>${line.startsWith(">") ? "" : " "}${line}\n`).join("");
+}
+
+// remove_plaintext_tag (nsMsgCompose.cpp)
+function removePlaintextTag(html) {
+  return /<plaintext/i.test(html) ? html.replace(/<(\/?)plaintext/gi, "<$1x-plaintext") : html;
+}
+
+// Content of an HTML document without its html / head / body tags, as the editor inserts a quoted document.
+function stripDocumentTags(html) {
+  return String(html || "").replace(/<!DOCTYPE[^>]*>|<\/?(?:html|head|body)\b[^>]*>/gi, "");
+}
+
+/**
+ * nsMsgCompose::ReplaceFileURLs: file:// URLs (quoted, or up to a space / ">") become data: URLs.
+ * toDataURL(fileURL) returns the data: URL or throws.
+ */
+function replaceFileURLs(data, toDataURL) {
+  let out = String(data || "");
+  let offset = 0;
+  for (;;) {
+    const pos = out.toLowerCase().indexOf("file://", offset);
+    if (pos < 0) break;
+    const q = pos > 0 ? out[pos - 1] : "";
+    let end;
+    if (q === '"' || q === "'") {
+      end = out.indexOf(q, pos);
+    } else {
+      const space = out.indexOf(" ", pos);
+      const gt = out.indexOf(">", pos);
+      end = space < 0 ? gt : (gt < 0 ? space : Math.min(space, gt));
+    }
+    if (end < 0) break;
+    let dataURL = null;
+    try { dataURL = toDataURL(out.slice(pos, end)); } catch { /* keep the file URL */ }
+    if (dataURL) {
+      out = out.slice(0, pos) + dataURL + out.slice(end);
+      offset = pos + dataURL.length;
+    } else {
+      offset = end;
+    }
+  }
+  return out;
+}
+
+/**
+ * ProcessSignature (nsMsgCompose.cpp), after the signature text is loaded: framing and "-- " separator.
+ * sig: { data (already in the compose format), htmlSig }; o: { composeHtml, replyOnTop, sigBottom,
+ * quoted, suppressSigSep, paragraphMode, wrapLength }.
+ */
+function frameSignature(sig, o) {
+  let data = String(sig.data || "").replace(/\r\n?/g, "\n");
+  if (!sig.htmlSig && !o.composeHtml && data && !data.endsWith("\n")) data += "\n";
+  if (!data) return "";
+  let out = "";
+  if (o.composeHtml) out += (o.paragraphMode ? "" : "<br>") + (sig.htmlSig ? '<div class="moz-signature">' : `<pre class="moz-signature" cols=${o.wrapLength}>`);
+  if ((o.replyOnTop !== 1 || o.sigBottom || !o.quoted) && !data.includes("\n-- \n") && !o.suppressSigSep && !data.startsWith("-- \n")) {
+    out += `-- ${o.composeHtml && sig.htmlSig ? "<br>" : "\n"}`;
+  }
+  if (!o.composeHtml && o.replyOnTop === 1 && !o.sigBottom && o.quoted) out += "\n";
+  out += data;
+  if (o.composeHtml) out += sig.htmlSig ? "</div>" : "</pre>";
+  return out;
+}
+
+// Image signature file (ProcessSignature imageSig branch), HTML compose only.
+function frameImageSignature(dataURL, o) {
+  const dashes = !o.suppressSigSep && (o.replyOnTop !== 1 || o.sigBottom || !o.quoted) ? "-- " : "";
+  return `${o.paragraphMode ? "" : "<br>"}<div class="moz-signature">${dashes}<br><img src='${dataURL}' border=0></div>`;
+}
+
+// MsgRemoveQueryPart (nsMsgUtils.cpp): the path up to the first "?" or "/;".
+function removeQueryPart(spec) {
+  let out = String(spec || "");
+  const q = out.indexOf("?");
+  if (q >= 0) out = out.slice(0, q);
+  const s = out.indexOf("/;");
+  return s >= 0 ? out.slice(0, s) : out;
+}
+
+/**
+ * nsMsgCompose::TagEmbeddedObjects: every <img> and <a> of the quote / forward gets
+ * moz-do-not-send="true" unless isSafe(url) (a part of the original message), so the compose
+ * window does not attach remote content on send.
+ */
+function tagEmbeddedObjects(html, isSafe) {
+  return String(html || "").replace(/<(a|img)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag, name) => {
+    const attr = name.toLowerCase() === "img" ? "src" : "href";
+    const m = tag.match(new RegExp(`\\s${attr}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+    const url = m ? (m[1] ?? m[2] ?? m[3]).replace(/&amp;/g, "&") : "";
+    if (url && isSafe(url)) return tag;
+    const rest = tag.replace(/\smoz-do-not-send\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)|\smoz-do-not-send(?=[\s>/])/gi, "");
+    return rest.replace(/\s*(\/?)>$/, ' moz-do-not-send="true"$1>');
+  });
+}
+
+// Text the user adds, as typed at the caret: a paragraph in paragraph mode, HTML as given.
+function userBodyHtml(body, isHtml, paragraphMode) {
+  if (isHtml) return stripDocumentTags(body);
+  const text = String(body || "");
+  const html = escapeHtml(text).replace(/\r\n|\r|\n/g, "<br>");
+  if (!paragraphMode) return html;
+  return `<p>${html || "<br>"}</p>`;
+}
+
+// The serializer of a saved compose document writes the document charset into every content-type meta.
+function serializerMetaCharset(html) {
+  return String(html || "").replace(/<meta\b(?=[^>]*\bhttp-equiv\s*=\s*["']?content-type\b)[^>]*>/gi, '<meta http-equiv="content-type" content="text/html; charset=UTF-8">');
+}
+
+function wrapHtmlDocument(inner) {
+  return `<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body>${inner}</body></html>`;
+}
+
+/**
+ * Body as Thunderbird's compose window lays it out (ConvertAndLoadComposeWindow), with the
+ * user's text where the caret ends up. kind: "reply" | "new".
+ * parts: { user, prefix, quote, citeRef, signature } (HTML, or text for the plain variant);
+ * prefs: { replyOnTop, sigBottom, paragraphMode, sigAboveQuote } (sigAboveQuote: a reply
+ * signature is configured above the quote, which drops one of the two breaks).
+ * reply_on_top 2 (select the quote) is laid out like 0: typing would replace the selected quote.
+ */
+const BLOCK_START = /^<(?:address|article|aside|blockquote|div|dl|fieldset|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|table|ul)\b/i;
+
+// Text typed (or HTML inserted) in front of a <br> that then only ends its line before a block boundary: the editor
+// deletes that <br> (HTMLEditor::EnsureNoFollowingUnnecessaryLineBreak after HandleInsertText and InsertHTML).
+function typedBefore(user, rest) {
+  const br = rest.match(/^<br\s*\/?>/i);
+  if (user && br) {
+    const after = rest.slice(br[0].length);
+    if (!after || BLOCK_START.test(after)) return user + after;
+  }
+  return user + rest;
+}
+
+function layoutComposeHtml(kind, parts, prefs) {
+  const sigOnTop = prefs.replyOnTop === 1 && !prefs.sigBottom;
+  const user = parts.user || "";
+  const sig = parts.signature || "";
+  const typed = prefs.paragraphMode ? (u, rest) => u + rest : typedBefore;
+  const cite = (parts.prefix ? divWrappedHtml(parts.prefix, "moz-cite-prefix") : "") +
+    (parts.quote ? `<blockquote type="cite"${parts.citeRef ? ` cite="${escapeHtml(parts.citeRef)}"` : ""}>${parts.quote}</blockquote>` : "");
+  if (kind !== "reply" || !cite) return typed(user, sig);
+  // Without a quote the caret stays at the top
+  if (prefs.replyOnTop === 1 || !parts.quote) {
+    const breaks = prefs.replyOnTop === 1 && parts.prefix && !prefs.paragraphMode ? (prefs.sigAboveQuote ? "<br>" : "<br><br>") : "";
+    // The line breaks go in before the editor's padding <br>, which stays at the end
+    const padding = breaks ? "<br>" : "";
+    return typed(user, sigOnTop ? `${sig}${breaks}${cite}${padding}` : `${breaks}${cite}${sig}${padding}`);
+  }
+  // The caret goes back before the break inserted after the quote
+  return cite + typed(user, `${prefs.paragraphMode ? "" : "<br>"}${sig}`);
+}
+
+// Plain body as hunks for plainEditorHtml: `quotes` marks text Thunderbird inserts with InsertTextWithQuotations
+// or InsertAsQuotation (its lines starting with ">" become quotations); the rest is typed text.
+function layoutComposeText(kind, parts, prefs) {
+  const sigOnTop = prefs.replyOnTop === 1 && !prefs.sigBottom;
+  const user = parts.user || "";
+  const sig = parts.signature ? `\n${parts.signature}` : "";
+  const quoted = text => ({ text: text || "", quotes: true });
+  const hunks = (...items) => items.flat().map(h => (typeof h === "string" ? { text: h } : h)).filter(h => h.text);
+  const prefix = parts.prefix ? `${parts.prefix}\n` : "";
+  const quote = parts.quote ? quoted(citeText(parts.quote)) : "";
+  if (kind !== "reply" || !(prefix || quote)) return hunks(user, sig);
+  if (prefs.replyOnTop === 1 || !parts.quote) {
+    const breaks = prefs.replyOnTop === 1 && parts.prefix ? (prefs.sigAboveQuote ? "\n" : "\n\n") : "";
+    return sigOnTop ? hunks(user, sig, breaks, prefix, quote) : hunks(user, breaks, prefix, quote, sig);
+  }
+  return hunks(prefix, quote, user, `\n${sig}`);
+}
+
+const PLAIN_QUOTE_SPAN = '<span _moz_quote="true" style="white-space: pre-wrap; display: block; width: 98vw;">';
+
+// Document of Thunderbird's plain-text editor holding these hunks: typed text as text and <br>; in `quotes` hunks
+// runs of lines starting with ">" go in a quotation span (HTMLEditor::InsertTextWithQuotationsInternal,
+// InsertAsPlaintextQuotation), the body style is the one HTMLEditor::SetWrapWidth sets.
+function plainEditorHtml(hunks, wrapLength) {
+  const typed = text => escapeHtml(text).replace(/\n/g, "<br>");
+  let body = "";
+  for (const hunk of hunks) {
+    const text = hunk.text.replace(/\r\n?/g, "\n");
+    if (!hunk.quotes) {
+      body += typed(text);
+      continue;
+    }
+    let quoted = text[0] === ">";
+    let start = 0;
+    let pos = 0;
+    for (;;) {
+      const nl = text.indexOf("\n", pos);
+      let next = text.length;
+      let nextQuoted = false;
+      if (nl >= 0) {
+        next = nl;
+        while (text[next] === "\n") next++;
+        nextQuoted = text[next] === ">";
+        if (nextQuoted === quoted) {
+          pos = next;
+          continue;
+        }
+        // Blank lines after a quotation are typed text
+        if (quoted) next = nl + 1;
+      }
+      const part = typed(text.slice(start, next));
+      body += quoted ? `${PLAIN_QUOTE_SPAN}${part}</span>` : part;
+      if (nl < 0) break;
+      quoted = nextQuoted;
+      start = pos = next;
+    }
+  }
+  const style = wrapLength > 0 ? `font-family: -moz-fixed; white-space: pre-wrap; width: ${wrapLength}ch;` : "white-space: pre-wrap;";
+  return `<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body style="${style}">${body}</body></html>`;
+}
 // END COMPOSE HELPERS
 
 // BEGIN BRIDGE COMPAT
@@ -7597,8 +7854,299 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
             // END COMPOSE DRAFT SAVE
 
-            function escapeHtml(s) {
-              return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            // NS_GetLocalizedUnicharPreference: the user value, else the string its default points to.
+            function localizedPref(name, fallback = "") {
+              try {
+                return Services.prefs.getComplexValue(name, Ci.nsIPrefLocalizedString).data;
+              } catch {
+                return fallback;
+              }
+            }
+
+            // Identity and editor prefs that place the quote and the signature.
+            function composeLayoutPrefs(identity) {
+              const read = (fn, fallback) => {
+                try { return fn() ?? fallback; } catch { return fallback; }
+              };
+              const sigBottom = read(() => identity.sigBottom, true);
+              const sigConfigured = read(() => identity.attachSignature, false) || !!read(() => identity.htmlSigText, "");
+              return {
+                replyOnTop: read(() => identity.replyOnTop, 0),
+                sigBottom,
+                sigAboveQuote: read(() => identity.sigOnReply, true) && !sigBottom && sigConfigured,
+                suppressSigSep: read(() => identity.suppressSigSep, false),
+                paragraphMode: Services.prefs.getBoolPref("mail.compose.default_to_paragraph", false),
+                wrapLength: Services.prefs.getIntPref("mailnews.wraplength", 72),
+              };
+            }
+
+            // QuotingOutputStreamListener constructor: cite line from the localized reply header prefs.
+            function citePrefixFor(msgHdr) {
+              const date = new Date(msgHdr.date / 1000);
+              const format = style => {
+                try { return new Services.intl.DateTimeFormat(undefined, style).format(date); } catch { return date.toLocaleString(); }
+              };
+              let author = "";
+              try {
+                const [first] = MailServices.headerParser.parseEncodedHeader(msgHdr.author || "", null);
+                author = first ? (first.name || first.email || "") : "";
+              } catch { /* no author */ }
+              return buildCitePrefix(Services.prefs.getIntPref("mailnews.reply_header_type", 0), {
+                authorWrote: localizedPref("mailnews.reply_header_authorwrotesingle"),
+                onDateAuthorWrote: localizedPref("mailnews.reply_header_ondateauthorwrote"),
+                authorWroteOnDate: localizedPref("mailnews.reply_header_authorwroteondate"),
+                originalMessage: localizedPref("mailnews.reply_header_originalmessage"),
+              }, { date: format({ dateStyle: "short" }), time: format({ timeStyle: "short" }), author });
+            }
+
+            function citeReferenceFor(msgHdr) {
+              if (!msgHdr.messageId) return "";
+              const flags = Ci.nsINetUtil.ESCAPE_URL_FILE_BASENAME | Ci.nsINetUtil.ESCAPE_URL_FORCED;
+              return `mid:${Services.io.QueryInterface(Ci.nsINetUtil).escapeURL(msgHdr.messageId, flags)}`;
+            }
+
+            // IsEmbeddedObjectSafe (nsMsgCompose.cpp): same scheme and path (query removed) as the original message URL.
+            function embeddedObjectFilter(msgURI) {
+              let scheme = "";
+              let path = "";
+              try {
+                const url = MailServices.messageServiceFromURI(msgURI).getUrlForUri(msgURI);
+                scheme = url.scheme.toLowerCase();
+                path = removeQueryPart(url.pathQueryRef).toLowerCase();
+              } catch { /* nothing is safe */ }
+              return spec => {
+                if (!scheme) return false;
+                try {
+                  const uri = Services.io.newURI(spec);
+                  return uri.scheme.toLowerCase() === scheme && removeQueryPart(uri.pathQueryRef).toLowerCase() === path;
+                } catch {
+                  return false;
+                }
+              };
+            }
+
+            const QUOTE_TIMEOUT_MS = 15000;
+            // nsMsgQuote holds its listener weakly: keep it alive until the quote is done
+            const pendingQuotes = new Set();
+
+            // Thunderbird's own quote of a message (nsIMsgQuote) as HTML, or null.
+            function quoteMessageHtml(msgURI, msgHdr) {
+              return new Promise(resolve => {
+                let bytes = "";
+                const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+                const job = {};
+                const finish = (value, why) => {
+                  if (!pendingQuotes.has(job)) return;
+                  if (value === null) console.warn("commonpost-mcp: quote not available, plain fallback:", why);
+                  pendingQuotes.delete(job);
+                  timer.cancel();
+                  resolve(value);
+                };
+                job.listener = {
+                  QueryInterface: ChromeUtils.generateQI(["nsIMsgQuotingOutputStreamListener", "nsIStreamListener", "nsIRequestObserver", "nsISupportsWeakReference"]),
+                  onStartRequest() {},
+                  onDataAvailable(request, stream, offset, count) {
+                    const bis = Cc["@mozilla.org/binaryinputstream;1"].createInstance(Ci.nsIBinaryInputStream);
+                    bis.setInputStream(stream);
+                    bytes += bis.readBytes(count);
+                  },
+                  onStopRequest(request, status) {
+                    if (!Components.isSuccessCode(status)) return finish(null, status);
+                    try {
+                      finish(new TextDecoder().decode(Uint8Array.from(bytes, c => c.charCodeAt(0))));
+                    } catch (e) {
+                      finish(null, e);
+                    }
+                  },
+                  setMimeHeaders() {},
+                };
+                pendingQuotes.add(job);
+                timer.initWithCallback({ notify() { finish(null, "timeout"); } }, QUOTE_TIMEOUT_MS, Ci.nsITimer.TYPE_ONE_SHOT);
+                try {
+                  job.quote = Cc["@mozilla.org/messengercompose/quoting;1"].createInstance(Ci.nsIMsgQuote);
+                  // 157 dropped headersOnly; extra arguments are ignored, so try the short form first
+                  try {
+                    job.quote.quoteMessage(msgURI, false, job.listener, false, msgHdr);
+                  } catch (e) {
+                    if (e?.result !== 0x80570001) throw e;
+                    job.quote.quoteMessage(msgURI, false, job.listener, false, false, msgHdr);
+                  }
+                } catch (e) {
+                  finish(null, e);
+                }
+              });
+            }
+
+            // What MessageSend._getBodyFromEditor makes of the editor's HTML: meta charset, then URLs linked (scanHTML).
+            function composeHtmlOutput(html) {
+              let flags = Ci.mozITXTToHTMLConv.kURLs;
+              if (Services.prefs.getBoolPref("mail.send_struct", false)) flags |= Ci.mozITXTToHTMLConv.kStructPhrase;
+              return Cc["@mozilla.org/txttohtmlconv;1"].getService(Ci.mozITXTToHTMLConv).scanHTML(serializerMetaCharset(html), flags);
+            }
+
+            // ConvertBufToPlainText (nsMsgUtils.cpp)
+            function htmlToPlainText(html, formatFlowed, formatOutput, disallowBreaks) {
+              if (!html) return "";
+              let wrap = Services.prefs.getIntPref("mailnews.wraplength", 72);
+              if (wrap === 0 || wrap > 990) wrap = 990;
+              else if (wrap < 10) wrap = 10;
+              let flags = Ci.nsIDocumentEncoder.OutputPersistNBSP;
+              if (formatFlowed) flags |= Ci.nsIDocumentEncoder.OutputFormatFlowed;
+              if (formatOutput) flags |= Ci.nsIDocumentEncoder.OutputFormatted;
+              if (disallowBreaks) flags |= Ci.nsIDocumentEncoder.OutputDisallowLineBreaking;
+              const text = Cc["@mozilla.org/parserutils;1"].getService(Ci.nsIParserUtils).convertToPlainText(html, flags, wrap);
+              return text.replace(/\r\n?/g, "\n");
+            }
+
+            // Plain body as the plain-text editor saves and sends it (nsMsgCompose::SendMsg): format=flowed with
+            // space-stuffing and soft breaks at mailnews.wraplength, quotations as they are
+            function plainEditorOutput(hunks) {
+              const wrap = Services.prefs.getIntPref("mailnews.wraplength", 72);
+              let flags = Ci.nsIDocumentEncoder.OutputFormatted | Ci.nsIDocumentEncoder.OutputDisallowLineBreaking |
+                Ci.nsIDocumentEncoder.OutputPersistNBSP | Ci.nsIDocumentEncoder.OutputLFLineBreak;
+              if (Services.prefs.getBoolPref("mailnews.send_plaintext_flowed", true)) flags |= Ci.nsIDocumentEncoder.OutputFormatFlowed;
+              return Cc["@mozilla.org/parserutils;1"].getService(Ci.nsIParserUtils)
+                .convertToPlainText(plainEditorHtml(hunks, wrap), flags, Math.max(wrap, 0));
+            }
+
+            function readFileBytes(file) {
+              const fis = Cc["@mozilla.org/network/file-input-stream;1"].createInstance(Ci.nsIFileInputStream);
+              fis.init(file, 0x01, 0, 0);
+              const bis = Cc["@mozilla.org/binaryinputstream;1"].createInstance(Ci.nsIBinaryInputStream);
+              bis.setInputStream(fis);
+              try {
+                return bis.readBytes(bis.available());
+              } finally {
+                bis.close();
+              }
+            }
+
+            function fileMimeType(file) {
+              try {
+                return Cc["@mozilla.org/mime;1"].getService(Ci.nsIMIMEService).getTypeFromFile(file);
+              } catch {
+                return "";
+              }
+            }
+
+            // nsMsgCompose::DataURLForFileURL
+            function fileDataURL(file) {
+              const type = Cc["@mozilla.org/mime;1"].getService(Ci.nsIMIMEService).getTypeFromFile(file);
+              const bytes = readFileBytes(file);
+              const { MailStringUtils } = ChromeUtils.importESModule("resource:///modules/MailStringUtils.sys.mjs");
+              const flags = Ci.nsINetUtil.ESCAPE_URL_FILE_BASENAME | Ci.nsINetUtil.ESCAPE_URL_FORCED;
+              const name = Services.io.QueryInterface(Ci.nsINetUtil).escapeURL(MailStringUtils.stringToByteString(file.leafName), flags);
+              return `data:${type}${name ? `;filename=${name}` : ""};base64,${btoa(bytes)}`;
+            }
+
+            function fileURLToDataURL(fileURL) {
+              return fileDataURL(Services.io.newURI(fileURL).QueryInterface(Ci.nsIFileURL).file);
+            }
+
+            // nsMsgCompose::LoadDataFromFile: meta charset, else UTF-8, else UTF-16 BOM, else detected.
+            function readSignatureFile(file, composeHtml) {
+              const bytes = readFileBytes(file);
+              const array = Uint8Array.from(bytes, c => c.charCodeAt(0));
+              const meta = bytes.slice(0, 4096).match(/<meta\b[^>]*charset=["']?([\w.:-]+)/i)?.[1] || "";
+              const decode = label => {
+                try { return new TextDecoder(label, { fatal: label === "utf-8" }).decode(array); } catch { return null; }
+              };
+              let text = meta ? decode(meta) : null;
+              if (text === null) text = decode("utf-8");
+              if (text === null && bytes.length % 2 === 0 && /^(\xfe\xff|\xff\xfe)/.test(bytes)) text = decode(bytes[0] === "\xfe" ? "utf-16be" : "utf-16le");
+              if (text === null) {
+                const { MailStringUtils } = ChromeUtils.importESModule("resource:///modules/MailStringUtils.sys.mjs");
+                text = decode(MailStringUtils.detectCharset(bytes)) ?? bytes;
+              }
+              // The editor may re-encode an HTML signature, so its meta charset is dropped
+              if (meta && composeHtml) {
+                const at = text.toLowerCase().indexOf(`charset=${meta.toLowerCase()}`);
+                if (at >= 0) text = text.slice(0, at) + text.slice(at + "charset=".length + meta.length);
+              }
+              return text;
+            }
+
+            /**
+             * Identity signature as ProcessSignature (nsMsgCompose.cpp) inserts it: sig_on_reply /
+             * sig_on_fwd, signature file (image, HTML or text) or htmlSigText, converted to the
+             * compose format and framed with the "-- " separator. "" when there is none.
+             */
+            function signatureFor(identity, compType, composeHtml, quoted, prefs) {
+              if (!identity) return "";
+              try {
+                const T = Ci.nsIMsgCompType;
+                if (compType === T.ForwardInline || compType === T.ForwardAsAttachment) {
+                  if (!identity.sigOnForward) return "";
+                } else if ([T.Reply, T.ReplyAll, T.ReplyToList, T.ReplyToGroup, T.ReplyToSender, T.ReplyToSenderAndGroup].includes(compType)) {
+                  if (!identity.sigOnReply) return "";
+                }
+                const frame = { ...prefs, composeHtml, quoted };
+                let data;
+                let htmlSig;
+                if (identity.attachSignature) {
+                  let file = null;
+                  try { file = identity.signature; } catch { /* no sig_file */ }
+                  if (!file || !file.path || !file.exists() || file.isDirectory()) return "";
+                  const type = fileMimeType(file).toLowerCase();
+                  if (type.startsWith("image/")) return composeHtml ? frameImageSignature(fileDataURL(file), frame) : "";
+                  htmlSig = type === "text/html";
+                  const text = readSignatureFile(file, composeHtml);
+                  if (composeHtml && !htmlSig) data = escapeHtml(text);
+                  else if (!composeHtml && htmlSig) data = htmlToPlainText(text, false, true, true);
+                  else data = replaceFileURLs(text, fileURLToDataURL);
+                } else {
+                  const text = identity.htmlSigText || "";
+                  if (!text) return "";
+                  htmlSig = !!identity.htmlSigFormat;
+                  if (!composeHtml) data = htmlSig ? htmlToPlainText(text, false, true, true) : text;
+                  else data = htmlSig ? replaceFileURLs(text, fileURLToDataURL) : escapeHtml(text);
+                }
+                return frameSignature({ data, htmlSig }, frame);
+              } catch (e) {
+                console.warn("commonpost-mcp: signature not added:", e);
+                return "";
+              }
+            }
+
+            /**
+             * Reply body as Thunderbird's reply window builds it: localized cite line, Thunderbird's
+             * own quote (nsIMsgQuote; plain text of the original as fallback), the identity signature
+             * and the layout of reply_on_top / sig_bottom, with the new text where the caret starts.
+             */
+            async function buildReplyBody(body, isHtml, useHtml, { msgHdr, msgURI, mimeMsg, identity, compType }) {
+              const prefs = composeLayoutPrefs(identity);
+              const parts = { user: useHtml ? userBodyHtml(body, isHtml, prefs.paragraphMode) : String(body || "") };
+              let autoQuote = true;
+              try { autoQuote = identity.autoQuote !== false; } catch { /* default on */ }
+              if (autoQuote) {
+                parts.prefix = citePrefixFor(msgHdr);
+                parts.citeRef = citeReferenceFor(msgHdr);
+                const html = await quoteMessageHtml(msgURI, msgHdr);
+                if (html === null) {
+                  const text = extractPlainTextBody(mimeMsg);
+                  parts.quote = useHtml ? (text ? `<pre wrap class="moz-quote-pre">${escapeHtml(text)}</pre>` : "") : text;
+                } else if (useHtml) {
+                  parts.quote = tagEmbeddedObjects(removePlaintextTag(stripDocumentTags(html)), embeddedObjectFilter(msgURI));
+                } else {
+                  parts.quote = htmlToPlainText(`${html}</html>`, Services.prefs.getBoolPref("mailnews.send_plaintext_flowed", true), true, false);
+                }
+              }
+              parts.signature = signatureFor(identity, compType, useHtml, true, prefs);
+              return useHtml ? composeHtmlOutput(wrapHtmlDocument(layoutComposeHtml("reply", parts, prefs))) : plainEditorOutput(layoutComposeText("reply", parts, prefs));
+            }
+
+            // Body saved or sent without a window: as given (UTF-8, no entity encoding), plus the identity signature for New.
+            function newMessageBody(body, isHtml, useHtml, identity) {
+              const prefs = composeLayoutPrefs(identity);
+              const signature = signatureFor(identity, Ci.nsIMsgCompType.New, useHtml, false, prefs);
+              const text = String(body || "");
+              if (!useHtml) return plainEditorOutput(layoutComposeText("new", { user: text, signature }, prefs));
+              if (isHtml && /<html[\s>]/i.test(text)) {
+                const end = text.toLowerCase().lastIndexOf("</body>");
+                return composeHtmlOutput(end >= 0 ? text.slice(0, end) + signature + text.slice(end) : text + signature);
+              }
+              const user = isHtml ? text : userBodyHtml(text, false, prefs.paragraphMode);
+              return composeHtmlOutput(wrapHtmlDocument(layoutComposeHtml("new", { user, signature }, prefs)));
             }
 
             // BEGIN HTML HIDDEN CONTENT HELPERS
@@ -11466,6 +12014,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (attachmentFailure) return attachmentFailure;
 
                 if (skipReview) {
+                  // The window adds the signature itself; a direct send gets it here
+                  composeFields.body = newMessageBody(body, isHtml, useHtml, msgComposeParams.identity);
                   return sendMessageDirectly(composeFields, msgComposeParams.identity, fileDescs, null, Ci.nsIMsgCompType.New, Ci.nsIMsgCompDeliverMode.Now, useHtml ? "text/html" : "text/plain").then(result => {
                     if (result.success) {
                       const msg = "Message sent";
@@ -11548,14 +12098,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
                 const { useHtml, format } = resolveComposeFormat(msgComposeParams.identity, isHtml, Ci.nsIMsgCompType.New);
                 msgComposeParams.format = format;
-                if (useHtml) {
-                  const formatted = formatBodyHtml(body, isHtml);
-                  composeFields.body = isHtml && formatted.includes('<html')
-                    ? formatted
-                    : `<html><head><meta charset="UTF-8"></head><body>${formatted}</body></html>`;
-                } else {
-                  composeFields.body = body || "";
-                }
+                composeFields.body = newMessageBody(body, isHtml, useHtml, msgComposeParams.identity);
 
                 const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(attachments);
                 const attachmentFailure = attachmentFailureResult(failedPaths, "saved");
@@ -11581,8 +12124,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * Review path uses Thunderbird's native reply compose flow so it can
              * build the quoted original, place the identity signature according
              * to user preferences, and set threading headers/disposition flags.
-             * skipReview still uses direct send, so it keeps a manual quoted body
-             * and manually marks the original as replied after a successful send.
+             * A draft or a direct send builds the same body as that window
+             * (buildReplyBody); a direct send marks the original as replied itself.
              * A direct send takes the sender and the recipients from the caller
              * only: the original message, which anyone can write, never picks them.
              * A draft gets the recipients Thunderbird computes, for the user to review.
@@ -11631,7 +12174,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
 
                 // Resolve compose mode against caller intent + identity pref.
-                // The skipReview branch reads useHtml below to shape the body.
+                // A draft or a direct send reads useHtml below to shape the body.
                 let { useHtml: replyUseHtml, format: replyFormat } =
                   resolveComposeFormat(msgComposeParams.identity, isHtml, compType);
                 msgComposeParams.format = replyFormat;
@@ -11648,7 +12191,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (!isEncryptedContentAllowed() && isEncryptedMimeMessage(mimeMsg)) {
                     return { error: `${ENCRYPTED_CONTENT_NOTICE}; nothing was ${composeMode === "send" ? "sent" : "saved"}` };
                   }
-                  const originalBody = extractPlainTextBody(mimeMsg);
                   if (composeMode === "send") {
                     setDirectSendRecipients(composeFields, msgComposeParams.identity, to, cc, bcc);
                   } else {
@@ -11669,28 +12211,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     : buildReplyReferences(Array.from({ length: msgHdr.numReferences }, (_, i) => msgHdr.getStringReference(i)),
                       msgHdr.messageId.startsWith("md5:") ? "" : msgHdr.messageId);
 
-                  const dateStr = msgHdr.date ? new Date(msgHdr.date / 1000).toLocaleString() : "";
-                  const author = msgHdr.mime2DecodedAuthor || msgHdr.author || "";
-
-                  // Direct send goes through nsIMsgSend, not nsIMsgCompose, so
-                  // it still uses a hand-built quoted body and cannot place the
-                  // identity signature according to reply preferences. The shape
-                  // matches the resolved compose mode -- shipping an HTML envelope
-                  // for a plain-format send would otherwise render as literal
-                  // markup in the recipient's mail client.
-                  if (replyUseHtml) {
-                    const quotedLines = originalBody.split('\n').map(line =>
-                      `&gt; ${escapeHtml(line)}`
-                    ).join('<br>');
-                    const quotedHtml = escapeHtml(originalBody).replace(/\n/g, '<br>');
-                    const quoteBlock = isHtml
-                      ? `<br><br>On ${dateStr}, ${escapeHtml(author)} wrote:<blockquote type="cite">${quotedHtml}</blockquote>`
-                      : `<br><br>On ${dateStr}, ${escapeHtml(author)} wrote:<br>${quotedLines}`;
-                    composeFields.body = `<html><head><meta charset="UTF-8"></head><body>${formatBodyHtml(body, isHtml)}${quoteBlock}</body></html>`;
-                  } else {
-                    const quotedLines = originalBody.split('\n').map(line => `> ${line}`).join('\n');
-                    composeFields.body = `${body || ""}\n\nOn ${dateStr}, ${author} wrote:\n${quotedLines}`;
-                  }
+                  composeFields.body = await buildReplyBody(body, isHtml, replyUseHtml,
+                    { msgHdr, msgURI, mimeMsg, identity: msgComposeParams.identity, compType });
 
                   if (composeMode === "draft") {
                     // The original is marked as replied when the draft is sent

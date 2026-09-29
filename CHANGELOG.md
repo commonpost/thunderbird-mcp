@@ -19,6 +19,15 @@ project is kept in this repository.
   to replace is (the MCP configuration of the client; `claude mcp get <server name>` in Claude Code) and how to
   install the `.mcpb` bundle when the file does not open in Claude Desktop (Settings > Extensions > Advanced settings
   > Install Extension). The options page and the README say that each MCP client has its own bridge.
+- A reply without a window (`mode: "draft"` or `"send"`), `saveDraft` and `sendMail` with `skipReview` get the body
+  Thunderbird's compose window would save with the same text typed at its caret: the localized cite line
+  (`mailnews.reply_header_type`), the quote from Thunderbird's own quoting (`nsIMsgQuote`) with the original's HTML
+  formatting, the identity's signature (text, HTML, file or image) placed by its reply position and signature
+  settings, HTML in UTF-8, plain text as `format=flowed` wrapped at `mailnews.wraplength`. Before, a reply quoted the
+  plain-text body by hand under an English "On ..., ... wrote:" line without a signature, a new message got no
+  signature, a plain body went out labeled `format=flowed` without being flowed, and an HTML body (`isHtml: true`)
+  had every non-ASCII character written as a `&#...;` reference, which made a Cyrillic body several times larger. A
+  forward draft's body is still quoted by the tool. By @mazixs in #28.
 
 ### Fixed
 
