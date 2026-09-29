@@ -5,8 +5,10 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
+const { spawn } = require('node:child_process');
 
 const bridge = require('../mcp-bridge.cjs');
 
@@ -56,7 +58,7 @@ describe('tools/list entries', () => {
   });
 
   it('set every hint explicitly per crud', () => {
-    assert.equal(entry('createFilter', 'create').annotations.destructiveHint, false);
+    assert.equal(entry('createContact', 'create').annotations.destructiveHint, false);
     assert.equal(entry('updateFilter', 'update').annotations.destructiveHint, true);
     assert.equal(entry('deleteMessages', 'delete').annotations.destructiveHint, true);
     assert.equal(entry('deleteMessages', 'delete').annotations.readOnlyHint, false);
@@ -99,9 +101,51 @@ describe('tool results', () => {
 describe('result text', () => {
   // Hidden characters are handled by the untrusted-content helpers
   // (test/untrusted-content.test.cjs), before the result is serialized.
-  it('is compact, valid JSON', () => {
+  it('is compact, valid JSON, and the bridge leaves it as it is', () => {
     const [block] = api.buildToolResultContent({ subject: 'Hi there', body: 'line 1\nline 2', n: 1 });
     assert.deepEqual({ ...JSON.parse(block.text) }, { subject: 'Hi there', body: 'line 1\nline 2', n: 1 });
     assert.equal(block.text.includes('\n'), false);
+    const response = { jsonrpc: '2.0', id: 1, result: { content: [block] } };
+    assert.strictEqual(bridge.compactToolResultJsonText(response), response);
+  });
+});
+
+describe('bridge JSON-RPC error codes', () => {
+  // A bridge pinned to a connection file whose port refuses connections
+  function runBridge(lines) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-codes-'));
+    const file = path.join(dir, 'connection.json');
+    // 0600: the bridge refuses a connection file that others can read
+    fs.writeFileSync(file, JSON.stringify({ port: 1, token: 'a'.repeat(64) }), { mode: 0o600 });
+    const child = spawn(process.execPath, [path.resolve(__dirname, '../mcp-bridge.cjs')], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, COMMONPOST_MCP_CONNECTION_FILE: file },
+    });
+    return new Promise((resolve, reject) => {
+      let out = '';
+      const done = (fn, value) => { clearTimeout(timer); child.kill(); fs.rmSync(dir, { recursive: true, force: true }); fn(value); };
+      const timer = setTimeout(() => done(reject, new Error(`bridge answered only: ${out}`)), 10000);
+      child.stdout.on('data', (chunk) => {
+        out += chunk;
+        const responses = out.split('\n').filter(Boolean);
+        if (responses.length >= lines.length) done(resolve, responses.map(l => JSON.parse(l)));
+      });
+      child.stdin.write(lines.join('\n') + '\n');
+    });
+  }
+
+  it('answer -32700 for unparsable input, -32603 for internal errors, isError for tool calls', async () => {
+    const responses = await runBridge([
+      '{"jsonrpc":"2.0","id":1,',
+      JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'completion/complete', params: {} }),
+      JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'listAccounts', arguments: {} } }),
+    ]);
+    const byId = new Map(responses.map(r => [r.id, r]));
+    assert.equal(byId.get(null).error.code, -32700);
+    assert.equal(byId.get(2).error.code, -32603);
+    assert.match(byId.get(2).error.message, /ECONNREFUSED/);
+    assert.equal(byId.get(3).error, undefined);
+    assert.equal(byId.get(3).result.isError, true);
+    assert.match(JSON.parse(byId.get(3).result.content[0].text).error, /ECONNREFUSED/);
   });
 });
