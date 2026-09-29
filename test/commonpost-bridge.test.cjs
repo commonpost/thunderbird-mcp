@@ -131,6 +131,38 @@ describe('AppData / %TEMP% attachment message', () => {
   });
 });
 
+// The commonpost-mcp exemption exists so a saved attachment next to
+// connection.json can still be attached -- it must never let connection.json
+// itself (a bearer token for the whole mailbox) through, nor apply to a
+// commonpost-mcp folder that isn't actually the one under %TEMP%/%tmp%.
+describe('the commonpost-mcp exemption never reaches connection.json, and only applies directly under temp', () => {
+  const tempCommonpostMcp = 'C:\\Users\\alice\\AppData\\Local\\Temp\\commonpost-mcp';
+
+  it('refuses connection.json even inside the exempt folder', () => {
+    assert.equal(isSensitiveFilePath(`${tempCommonpostMcp}\\connection.json`), true);
+  });
+
+  it('still allows an ordinary saved attachment in that same folder', () => {
+    assert.equal(isSensitiveFilePath(`${tempCommonpostMcp}\\abc123\\a.pdf`), false);
+  });
+
+  it('refuses a commonpost-mcp folder that is not directly under temp/tmp', () => {
+    assert.equal(isSensitiveFilePath('C:\\Users\\alice\\AppData\\Roaming\\X\\commonpost-mcp\\y'), true);
+  });
+
+  it('refuses a path that walks back out of the exempt folder with ..', () => {
+    assert.equal(isSensitiveFilePath(`${tempCommonpostMcp}\\..\\secret`), true);
+  });
+
+  it('the extension has the same connection.json pattern and the same directly-under-temp exemption', () => {
+    const api = fs.readFileSync(path.resolve(__dirname, '../extension/mcp_server/api.js'), 'utf8');
+    const block = api.slice(api.indexOf('// BEGIN SENSITIVE ATTACHMENT PATH HELPERS'), api.indexOf('// END SENSITIVE ATTACHMENT PATH HELPERS'));
+    assert.match(block, /\/\(commonpost-mcp\|thunderbird-mcp\)\\\/connection\\\.json\$\//);
+    assert.match(block, /function isExemptCommonpostMcpDir\(components\) \{/);
+    assert.match(block, /if \(components\.includes\("\.\."\)\) return false;/);
+  });
+});
+
 describe('connection.json safety on POSIX', { skip: typeof process.getuid !== 'function' }, () => {
   let root;
   let file;
@@ -465,6 +497,15 @@ const COMPAT_JUNCTIONS = [
   'C:\\ProgramData\\Application Data\\Microsoft\\Crypto\\RSA\\x',
   '/private/etc/master.passwd',
   '/private/var/log/system.log',
+  // Windows compatibility junctions into AppData (N4/N5 follow-up).
+  'C:\\Users\\g\\Cookies\\x',
+  'C:\\Documents and Settings\\g\\Cookies\\x',
+  'C:\\Users\\g\\Recent\\x.lnk',
+  'C:\\Users\\g\\SendTo\\x',
+  'C:\\Users\\g\\NetHood\\x',
+  'C:\\Users\\g\\PrintHood\\x',
+  'C:\\Users\\g\\Start Menu\\Programs\\x.lnk',
+  'C:\\Users\\g\\Templates\\x.dotx',
 ];
 
 function loadExtensionSensitivePathHelpers() {
@@ -511,6 +552,59 @@ describe('Windows name forms and compatibility junctions', () => {
     }
     // Without Services (test sandbox) the extension defaults to non-Windows rules.
     assert.equal(ext.isSensitiveFilePath('C:\\Users\\g\\secrets.kdbx:s'), false);
+  });
+});
+
+// A home directory that is not under /Users/ at all: the static pattern
+// cannot cover it, so the bridge's own os.homedir() is checked directly.
+describe('a home directory outside the conventional /Users/ location is still checked (its own Library)', () => {
+  it('refuses a path under os.homedir()/Library, whatever the home directory actually is', () => {
+    const realHomedir = os.homedir;
+    os.homedir = () => '/opt/customhome/alice';
+    try {
+      assert.equal(isSensitiveFilePath('/opt/customhome/alice/Library/Mail'), true);
+      assert.equal(isSensitiveFilePath('/opt/customhome/alice/Library'), true);
+      assert.equal(isSensitiveFilePath('/opt/customhome/alice/Documents/report.pdf'), false);
+      // A look-alike prefix is not the home directory itself.
+      assert.equal(isSensitiveFilePath('/opt/customhome/alice2/Library/Mail'), false);
+    } finally {
+      os.homedir = realHomedir;
+    }
+  });
+});
+
+// Windows can itself report the known temp directory (TmpD/os.tmpdir()) with
+// an 8.3 short user-profile-name component (GetTempPathW as-is), which is
+// not something a caller chose -- the 8.3 check skips however many leading
+// components match that known prefix, and only that many.
+describe('the 8.3 rule does not fire on the known temp directory itself', () => {
+  const shortTemp = 'C:\\Users\\JEANTR~1\\AppData\\Local\\Temp';
+
+  it('allows a path entirely inside the known temp prefix, short name and all', () => {
+    assert.equal(windowsPathAmbiguity(`${shortTemp}\\commonpost-mcp\\a.pdf`, shortTemp), null);
+  });
+
+  it('still catches an 8.3 component AFTER the known temp prefix', () => {
+    assert.match(
+      windowsPathAmbiguity(`${shortTemp}\\commonpost-mcp\\REPORT~1.PDF`, shortTemp) || '',
+      /8\.3 short-name component/
+    );
+  });
+
+  it('still catches an 8.3 component when the path is not under the known temp prefix at all', () => {
+    assert.match(windowsPathAmbiguity(shortTemp, undefined) || '', /8\.3 short-name component/);
+    assert.match(windowsPathAmbiguity('C:\\Users\\JEANTR~1\\Documents\\a.pdf', 'C:\\Users\\alice\\AppData\\Local\\Temp') || '',
+      /8\.3 short-name component/);
+  });
+
+  it('the extension has the same exemption logic', () => {
+    const api = fs.readFileSync(path.resolve(__dirname, '../extension/mcp_server/api.js'), 'utf8');
+    const start = api.indexOf('function windowsPathAmbiguity(attachmentPath, knownTempDir) {');
+    const end = api.indexOf('\n}\n', start);
+    assert.ok(start >= 0 && end > start);
+    const fn = api.slice(start, end);
+    assert.match(fn, /skip8dot3/);
+    assert.match(fn, /tempParts\.every\(\(p, i\) => p\.toLowerCase\(\) === parts\[i\]\.toLowerCase\(\)\)/);
   });
 });
 

@@ -37,13 +37,15 @@ function loadHtmlHiddenContentHelpers() {
   vm.createContext(sandbox);
   vm.runInContext(`${apiSource.slice(start, end)}
 this.stripHtml = stripHtml;
-this.isHiddenElementNode = isHiddenElementNode;`, sandbox);
+this.isHiddenElementNode = isHiddenElementNode;
+this.removeHiddenHtmlBlocks = removeHiddenHtmlBlocks;`, sandbox);
   return sandbox;
 }
 
 const htmlHelpers = loadHtmlHiddenContentHelpers();
 const stripHtml = htmlHelpers.stripHtml;
 const isHiddenElementNode = htmlHelpers.isHiddenElementNode;
+const removeHiddenHtmlBlocks = htmlHelpers.removeHiddenHtmlBlocks;
 const descriptionToHTML = loadHelper("descriptionToHTML");
 
 describe("stripHtml", () => {
@@ -101,6 +103,29 @@ describe("stripHtml", () => {
     stripHtml('<div hidden>a</div><span style="display:none">b</span>', counter);
     assert.equal(counter.n, 2);
     assert.doesNotThrow(() => stripHtml('<div hidden>a</div>'));
+  });
+});
+
+describe("removeHiddenHtmlBlocks: bounded span", () => {
+  it("stays fast on an unclosed hidden tag followed by a lot of ordinary text", () => {
+    // No matching </div> anywhere: without a bound, [\s\S]*? scans to the
+    // end of the string for this candidate (and for every other one before
+    // it), O(n^2) on many such tags. One unclosed tag plus a large trailing
+    // body is enough to show the bound is actually in effect.
+    const html = '<div hidden>' + 'x'.repeat(2_000_000);
+    const start = Date.now();
+    const counter = { n: 0 };
+    const result = removeHiddenHtmlBlocks(html, counter);
+    assert.ok(Date.now() - start < 2000, 'took too long: the span bound may not be in effect');
+    assert.equal(result, html, 'no closing tag within the bound: nothing removed');
+    assert.equal(counter.n, 0);
+  });
+
+  it("still removes a hidden block whose content is well within the bound", () => {
+    const html = 'a<div hidden>' + 'x'.repeat(1000) + '</div>b';
+    const counter = { n: 0 };
+    assert.equal(removeHiddenHtmlBlocks(html, counter), 'a b');
+    assert.equal(counter.n, 1);
   });
 });
 

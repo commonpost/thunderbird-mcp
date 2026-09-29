@@ -329,7 +329,7 @@ describe('Bridge attachment path policy', () => {
     }]);
   });
 
-  it('a JSON string still goes through every check: a sensitive path inside it is refused, not silently forwarded', async () => {
+  it('a JSON string goes through every check: a sensitive path inside it is refused', async () => {
     const sensitivePath = path.join(root, '.ssh', 'id_rsa');
     const args = { attachments: JSON.stringify([sensitivePath]) };
 
@@ -438,9 +438,8 @@ describe('Bridge discovery', () => {
     });
 
     fs.mkdirSync(path.join(options.homeDir, 'snap', 'thunderbird'), { recursive: true });
-    // Named "thunderbird" and even exports SNAP_NAME itself (both forgeable
-    // by any local process); only the exe target cannot be forged without
-    // controlling the Snap.
+    // Named "thunderbird" and exports SNAP_NAME, but the exe target does not
+    // resolve under the Snap's read-only mount.
     const fakeTmpDir = path.join(root, 'fake-tmp');
     writeSnapProc(options.procRoot, '5150', { exe: '/home/user/lookalike/thunderbird', tmpDir: fakeTmpDir });
     writeConnectionFile(path.join(fakeTmpDir, 'commonpost-mcp', 'connection.json'), {
@@ -768,13 +767,32 @@ describe('Bridge discovery', () => {
     const dirStat = (over = {}) => ({ isDirectory: () => true, uid: 1000, mode: 0o40700, ...over });
 
     it('never returns an externally supplied XDG_RUNTIME_DIR value, even if one is passed alongside', () => {
+      // A real (accepted, owned, mode 700) /run/user/1000, but env.XDG_RUNTIME_DIR
+      // names a DIFFERENT, made-up location -- if getRuntimeDir read env at
+      // all, this is where a bug would substitute it in.
+      const fsImpl = makeRuntimeFsWithOverride('/run/user/1000', dirStat());
+      const result = getRuntimeDir({ fsImpl, pathImpl: path, uid: 1000, env: { XDG_RUNTIME_DIR: '/tmp/elsewhere' } });
+      assert.equal(result, '/run/user/1000');
+      assert.notEqual(result, '/tmp/elsewhere');
+
+      // And the other way: env.XDG_RUNTIME_DIR pointing at a directory that
+      // WOULD pass every check does not make getRuntimeDir accept it either
+      // -- /run/user/1000 itself is missing, so the real answer is null.
       const missing = new Error('ENOENT');
       missing.code = 'ENOENT';
-      const fsImpl = makeRuntimeFsWithOverride('/run/user/1000', missing);
-      // An extra, unused `env` key is harmless: getRuntimeDir never reads it.
-      const result = getRuntimeDir({ fsImpl, pathImpl: path, uid: 1000, env: { XDG_RUNTIME_DIR: '/tmp/elsewhere' } });
-      assert.notEqual(result, '/tmp/elsewhere');
-      assert.equal(result, null);
+      const missingFsImpl = makeRuntimeFsWithOverride('/run/user/1000', missing);
+      const envPointsElsewhere = new Proxy(missingFsImpl, {
+        get(target, prop) {
+          if (prop === 'lstatSync') {
+            return (p, ...args) => (p === '/tmp/elsewhere' ? dirStat() : target.lstatSync(p, ...args));
+          }
+          return target[prop];
+        },
+      });
+      assert.equal(
+        getRuntimeDir({ fsImpl: envPointsElsewhere, pathImpl: path, uid: 1000, env: { XDG_RUNTIME_DIR: '/tmp/elsewhere' } }),
+        null
+      );
     });
 
     it('accepts a directory owned by the uid with no group/other access', WIN32_REAL_POSIX_FS_SKIP, () => {

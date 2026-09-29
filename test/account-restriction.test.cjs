@@ -118,10 +118,47 @@ describe("wiring", () => {
   });
 
   it("Collected Addresses (dirType 101) is not defaulted to local-allowed under a restriction", () => {
-    const i = apiSource.indexOf("function getAccessibleAddressBooks()");
-    assert.ok(i > 0);
-    const fn = apiSource.slice(i, apiSource.indexOf("\n            }\n", i));
-    assert.match(fn, /remote: dirType !== 2,/);
-    assert.doesNotMatch(fn, /dirType !== 101/);
+    // pab and history share dirType 101 (mailnews.js:
+    // ldap_2.servers.pab.dirType=101, ldap_2.servers.history.dirType=101;
+    // dirType 2 does not exist for either) -- the personal address book (pab)
+    // stays reachable under a restriction, Collected Addresses (history)
+    // does not, a CardDAV book (dirType 102 here) follows the account it
+    // names like any other remote collection. Behavior, not source pattern:
+    // dirType alone cannot tell pab and history apart, so a check for the
+    // old (wrong) `dirType !== 2` text would not catch a bug here.
+    function functionSource(name) {
+      const marker = `\n            function ${name}(`;
+      const fnStart = apiSource.indexOf(marker);
+      assert.ok(fnStart >= 0, `${name} not found in api.js`);
+      const close = "\n            }\n";
+      const fnEnd = apiSource.indexOf(close, fnStart);
+      assert.ok(fnEnd > fnStart, `end of ${name} not found in api.js`);
+      return apiSource.slice(fnStart, fnEnd + close.length);
+    }
+
+    const abSandbox = {
+      isCollectionAllowed,
+      accountRestrictionState: () => "restricted",
+      describeAccountsForOwnership: () => [
+        { key: "account1", allowed: true, emails: ["me@work.example"], identityKeys: [] },
+      ],
+      readTextProperty: (fn) => { try { return fn() || ""; } catch { return ""; } },
+      MailServices: { ab: { directories: [] } },
+    };
+    vm.createContext(abSandbox);
+    vm.runInContext(`${functionSource("isCollectedAddressesBook")}
+${functionSource("getAccessibleAddressBooks")}
+this.getAccessibleAddressBooks = getAccessibleAddressBooks;`, abSandbox);
+
+    const pab = { name: "pab", dirType: 101, dirPrefId: "ldap_2.servers.pab", URI: "jsaddrbook://abook.sqlite", getStringValue: () => "" };
+    const history = { name: "history", dirType: 101, dirPrefId: "ldap_2.servers.history", URI: "jsaddrbook://history.sqlite", getStringValue: () => "" };
+    const cardDavAllowed = { name: "cardDavAllowed", dirType: 102, dirPrefId: "ldap_2.servers.carddav1", URI: "jsaddrbook://carddav1.sqlite", getStringValue: (p) => (p === "carddav.username" ? "me@work.example" : "") };
+    const cardDavOther = { name: "cardDavOther", dirType: 102, dirPrefId: "ldap_2.servers.carddav2", URI: "jsaddrbook://carddav2.sqlite", getStringValue: (p) => (p === "carddav.username" ? "other@elsewhere.example" : "") };
+
+    abSandbox.MailServices.ab.directories = [pab, history, cardDavAllowed, cardDavOther];
+    // .join, not deepEqual: the array comes back from a different vm realm,
+    // whose Array is not === the host's, which deepStrictEqual is picky about.
+    const names = abSandbox.getAccessibleAddressBooks().map((b) => b.name).sort().join(",");
+    assert.equal(names, "cardDavAllowed,pab");
   });
 });
