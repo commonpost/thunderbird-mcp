@@ -130,13 +130,11 @@ function createDiscoveryContext(options = {}) {
   };
 }
 
-// The real per-user runtime directory, not read from the environment:
-// XDG_RUNTIME_DIR is exported by whatever process launched the bridge, so a
-// compromised or merely misconfigured caller could point a Flatpak scan (the
-// only consumer of this value) at a directory of its choosing. /run/user/<uid>
-// is the kernel/systemd-managed location for the real uid the bridge runs as,
-// and is trusted only after checking that it is a directory owned by that uid
-// with no group or other access (systemd creates it 0700).
+// The real per-user runtime directory, computed rather than read from the
+// environment: /run/user/<uid>, the kernel/systemd-managed location for the
+// real uid the bridge runs as, trusted only after checking that it is a
+// directory owned by that uid with no group or other access (systemd
+// creates it 0700).
 function getRuntimeDir({ fsImpl, pathImpl, uid }) {
   if (uid === null || uid === undefined) {
     return null;
@@ -318,12 +316,10 @@ function findSnapConnectionCandidates(context) {
           continue;
         }
 
-        // The name alone proves nothing -- any local process can name
-        // itself "thunderbird" and export a TMPDIR of its choosing. Two
-        // checks neither of them can forge without controlling the Snap
-        // itself: the process's own binary must resolve under the Snap's
-        // read-only mount, and snapd's own environment marker must be
-        // present. Both must hold.
+        // Two checks, both required, neither forgeable without controlling
+        // the Snap itself: the process's own binary must resolve under the
+        // Snap's read-only mount, and snapd's own environment marker must
+        // be present.
         let exeTarget;
         try {
           exeTarget = fsImpl.readlinkSync(pathImpl.join(procRoot, pid, 'exe'));
@@ -371,11 +367,8 @@ function findSnapConnectionCandidates(context) {
   }
 
   // Match the official snap tmpdir helper as a best-effort fallback when /proc
-  // cannot tell us the runtime TMPDIR -- but only once a real, confined
-  // Thunderbird Snap process was actually seen; otherwise this is just a path
-  // guess with nothing behind it, and a decoy at that fixed location should
-  // not be trusted merely because a snap of Thunderbird happens to be
-  // installed (it may not be running at all).
+  // cannot tell us the runtime TMPDIR, and only once a real, confined
+  // Thunderbird Snap process was actually seen.
   if (sawRealSnapProcess) {
     const fallbackPath = pathImpl.join(
       homeDir,
@@ -403,12 +396,19 @@ function findSnapConnectionCandidates(context) {
 // Flatpak app ids trusted as Thunderbird or Betterbird. A closed list, not a
 // directory listing: any other app id under the runtime directory belongs to
 // an unrelated sandboxed application and its connection.json (if it somehow
-// had one) is never read.
-const FLATPAK_APP_IDS = ['org.mozilla.Thunderbird', 'org.mozilla.ThunderbirdBeta', 'eu.betterbird.Betterbird'];
+// had one) is never read. There is no separate org.mozilla.ThunderbirdBeta
+// id (checked against the Flathub manifest): the beta channel is the same
+// org.mozilla.Thunderbird id, installed from the flathub-beta remote instead
+// of flathub.
+const FLATPAK_APP_IDS = ['org.mozilla.Thunderbird', 'net.thunderbird.Thunderbird', 'eu.betterbird.Betterbird'];
 
 function findFlatpakConnectionCandidates(context) {
-  const { fsImpl, pathImpl, runtimeDir } = context;
-  const patternBase = runtimeDir || '$XDG_RUNTIME_DIR';
+  const { fsImpl, pathImpl, runtimeDir, uid } = context;
+  // getRuntimeDir() already resolved (and verified) this once; shown again
+  // here, computed the same way, only for a discovery-failure message when
+  // it turned out unusable -- never $XDG_RUNTIME_DIR, which nothing here
+  // reads any more.
+  const patternBase = runtimeDir || `/run/user/${uid}`;
   const pattern = pathImpl.join(
     patternBase,
     'app',
@@ -790,18 +790,38 @@ const SENSITIVE_ATTACHMENT_PATTERNS = [
   /^\/private\/(etc|var\/log|var\/root)\//,
   // macOS: everything under a user's home Library (Mail, Messages, Cookies,
   // Keychains, Application Support, ...), not just the keychain subfolder.
-  /^\/users\/[^/]+\/library(\/|$)/,
+  // /System/Volumes/Data/Users/x is the APFS Data-volume path /Users/x is
+  // firmlinked to -- a resolved real path can come back in that form.
+  /^(?:\/system\/volumes\/data)?\/users\/[^/]+\/library(\/|$)/,
+  // The bridge's own discovery file: a bearer token for the whole mailbox.
+  // Falls under no other rule here (the commonpost-mcp exemption below exists
+  // FOR this folder, to allow a saved attachment next to it).
+  /\/(commonpost-mcp|thunderbird-mcp)\/connection\.json$/,
+  // Windows compatibility junctions into AppData not already covered above:
+  // <profile>\Cookies -> AppData\...\Cookies, \Recent -> \Windows\Recent,
+  // \SendTo, \NetHood, \PrintHood, \Start Menu, \Templates.
+  /^[a-z]:\/(users|documents and settings)\/[^/]+\/(cookies|recent|sendto|nethood|printhood|start menu|templates)(\/|$)/,
 ];
 
 // Directory names Windows applications commonly use for per-user local data
 // (see the compatibility-junction comment above), checked as a WHOLE path
 // component so a user-chosen file merely containing these words is not
 // caught. The extension's own saved-attachment folder lives under one of
-// these on Windows (%TEMP% sits under AppData\Local): a path that also has a
-// 'commonpost-mcp' component is exempt from THIS rule only -- every other
-// rule here (dotfiles, sensitive filenames, the patterns above) still
-// applies to it.
+// these on Windows (%TEMP% sits under AppData\Local): a path is exempt from
+// THIS rule only when 'commonpost-mcp' is a component that sits DIRECTLY
+// under a 'temp'/'tmp' component, with no '..' anywhere in the path -- not
+// merely somewhere in it (a sibling folder such as
+// AppData\Roaming\X\commonpost-mcp\y, or a '..' walking back out of it, must
+// still be refused). Every other rule here (dotfiles, sensitive filenames,
+// the patterns above, including connection.json itself) still applies to an
+// exempt path.
 const SENSITIVE_DIR_COMPONENTS = new Set(['appdata', 'application data', 'local settings']);
+
+function isExemptCommonpostMcpDir(components) {
+  if (components.includes('..')) return false;
+  const i = components.indexOf('commonpost-mcp');
+  return i > 0 && /^(temp|tmp)$/.test(components[i - 1]);
+}
 
 // Filenames (last path component, case-insensitive) that hold credentials or
 // secrets on their own, wherever they are found.
@@ -835,7 +855,7 @@ const SENSITIVE_FILENAMES = [
 function sensitivePathComponentReason(normalized) {
   const components = normalized.split('/').filter(Boolean);
   if (components.length === 0) return null;
-  const exemptDirComponents = components.includes('commonpost-mcp');
+  const exemptDirComponents = isExemptCommonpostMcpDir(components);
   for (const part of components) {
     if (part.length > 1 && part[0] === '.' && part !== '..') return 'dotfile';
     if (!exemptDirComponents && SENSITIVE_DIR_COMPONENTS.has(part)) return 'appdata';
@@ -845,7 +865,7 @@ function sensitivePathComponentReason(normalized) {
 function hasSensitivePathComponent(normalized) {
   const components = normalized.split('/').filter(Boolean);
   if (components.length === 0) return false;
-  const exemptDirComponents = components.includes('commonpost-mcp');
+  const exemptDirComponents = isExemptCommonpostMcpDir(components);
   for (const part of components) {
     if (part.length > 1 && part[0] === '.' && part !== '..') return true;
     if (!exemptDirComponents && SENSITIVE_DIR_COMPONENTS.has(part)) return true;
@@ -870,28 +890,64 @@ function isUncOrDevicePath(attachmentPath) {
 //   - a trailing dot or space in a component is stripped (Thunderbird. is
 //     Thunderbird, a.pem. is a.pem);
 //   - an 8.3 short name (THUNDE~1, APPDAT~1) hides the long name.
+// `knownTempDir`: Gecko's own TmpD (this process: os.tmpdir()) is sometimes
+// reported BY WINDOWS ITSELF using an 8.3 component (a short user profile
+// name, e.g. C:\Users\JEANTR~1\AppData\Local\Temp) -- that is not a caller
+// choice to be suspicious of, so the 8.3 check is skipped for however many
+// leading components match this known prefix (compared case-insensitively,
+// component by component); every other check still applies to it.
 // Returns the reason, or null. Keep in sync with extension/mcp_server/api.js.
-function windowsPathAmbiguity(attachmentPath) {
+function windowsPathAmbiguity(attachmentPath, knownTempDir) {
   if (typeof attachmentPath !== 'string') return null;
   const rest = attachmentPath.replace(/^[A-Za-z]:/, '');
   if (rest.includes(':')) {
     return "names an alternate data stream (':' after the drive)";
   }
-  for (const part of rest.split(/[\\/]+/)) {
-    if (part === '' || part === '.' || part === '..') continue;
+  const parts = rest.split(/[\\/]+/).filter((p) => p !== '' && p !== '.' && p !== '..');
+  let skip8dot3 = 0;
+  if (typeof knownTempDir === 'string' && knownTempDir) {
+    const tempParts = knownTempDir.replace(/^[A-Za-z]:/, '').split(/[\\/]+/).filter(Boolean);
+    if (tempParts.length > 0 && tempParts.length <= parts.length
+      && tempParts.every((p, i) => p.toLowerCase() === parts[i].toLowerCase())) {
+      skip8dot3 = tempParts.length;
+    }
+  }
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
     if (/[. ]$/.test(part)) {
       return `has a component ending with a dot or a space (${JSON.stringify(part)})`;
     }
-    if (/^[^.~\s]{1,6}~[0-9]{1,6}(\.[^.\s]{1,3})?$/.test(part) && part.split('.')[0].length <= 8) {
+    if (i >= skip8dot3 && /^[^.~\s]{1,6}~[0-9]{1,6}(\.[^.\s]{1,3})?$/.test(part) && part.split('.')[0].length <= 8) {
       return `has an 8.3 short-name component (${JSON.stringify(part)})`;
     }
   }
   return null;
 }
 
+// Catches a home directory that is not under /Users/ at all (the static
+// pattern above only covers the conventional location), by checking the
+// CURRENT PROCESS's own os.homedir() directly -- same caveat as the %TEMP%
+// discovery checks elsewhere in this file: this is the bridge's own home
+// directory, which only agrees with Thunderbird's when both run natively on
+// the same machine.
+function isHomeLibraryPath(normalized) {
+  let home;
+  try {
+    home = os.homedir();
+  } catch {
+    return false;
+  }
+  if (!home) return false;
+  const normalizedHome = home.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '');
+  if (!normalizedHome) return false;
+  return normalized === `${normalizedHome}/library` || normalized.startsWith(`${normalizedHome}/library/`);
+}
+
 function matchesSensitivePattern(attachmentPath) {
   const normalized = attachmentPath.replace(/\\/g, '/').toLowerCase();
-  return SENSITIVE_ATTACHMENT_PATTERNS.some(re => re.test(normalized)) || hasSensitivePathComponent(normalized);
+  return SENSITIVE_ATTACHMENT_PATTERNS.some(re => re.test(normalized))
+    || hasSensitivePathComponent(normalized)
+    || isHomeLibraryPath(normalized);
 }
 
 // The generic "blocked" message doesn't say why -- fine for a dotfile or a
@@ -915,7 +971,7 @@ function sensitiveAttachmentMessage(displayPath, reasonPath = displayPath, suffi
 function isSensitiveFilePath(attachmentPath, windows = process.platform === 'win32') {
   if (typeof attachmentPath !== 'string' || !attachmentPath) return false;
   if (isUncOrDevicePath(attachmentPath)) return true;
-  if (windows && windowsPathAmbiguity(attachmentPath)) return true;
+  if (windows && windowsPathAmbiguity(attachmentPath, os.tmpdir())) return true;
   return matchesSensitivePattern(attachmentPath);
 }
 
@@ -1023,7 +1079,7 @@ async function inspectAttachmentPath(filePath) {
     throw new Error(`UNC or device attachment paths are not allowed: ${filePath}`);
   }
   if (windows) {
-    const ambiguity = windowsPathAmbiguity(filePath);
+    const ambiguity = windowsPathAmbiguity(filePath, os.tmpdir());
     if (ambiguity) {
       throw new Error(`Attachment path ${ambiguity}, not allowed: ${filePath}`);
     }
@@ -1152,9 +1208,8 @@ async function inlineAttachmentPaths(args) {
 
   // Some MCP clients (and the extension's own coerceToolArgs) accept
   // `attachments` as a JSON-encoded string and parse it into an array
-  // themselves. If the bridge silently ignored that form it would never
-  // read, check or inline those paths -- they would reach the extension
-  // without ever going through any of the checks above.
+  // themselves; the bridge parses and checks that form too, the same as an
+  // array.
   if (typeof args.attachments === 'string') {
     let parsed;
     try {

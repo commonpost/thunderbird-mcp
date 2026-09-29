@@ -24,10 +24,11 @@ recommended.
   the tools; their decrypted content is then handed to the assistant.
 - Filter rules that send mail: when "Block filter forward/reply" is switched off (it is on by default and keeps
   refusing such rules), a request to create or change a rule that forwards or replies, or to change or run a filter
-  list holding one, no longer goes through silently. The call returns `pending_user_confirmation` and Thunderbird
-  shows its own dialog with the account, the rule, its conditions and the full destination; nothing is written
-  unless the user confirms, and refusing, closing the dialog or waiting ten minutes writes nothing. The options
-  page presents the two choices as "Always block" (default) and "Ask me each time". New read-only tool
+  list holding one, needs the user's confirmation in Thunderbird before anything is written. The call returns
+  `pending_user_confirmation` and Thunderbird shows its own dialog with the account, the rule, its conditions and
+  the full destination; nothing is written unless the user confirms, and refusing, closing the dialog or waiting
+  ten minutes writes nothing. The options page presents the two choices as "Always block" (default) and "Ask me
+  each time". New read-only tool
   `getFilterConfirmation` reports the state of a request.
 - The message tools (`getMessage`, `getMessages`, `searchMessages`, `getRecentMessages`) wrap `body`, `rawSource`
   and `preview` in `<email-content id="...">` markers with a random identifier for each call, and add a text block
@@ -38,10 +39,19 @@ recommended.
 ### Changed
 - Attachments: a `sendMail`, `saveDraft`, `replyToMessage` or `forwardMessage` call whose attachment is refused
   (missing, too large, on the deny-list, an unsupported path form, more attachments than the per-message limit,
-  ...) now fails as a whole and names the attachment, instead of sending or saving the message without it.
-  `saveDraft` attachments go through the same checks as the other tools. The bridge also checks the resolved
-  real path of an attachment.
-- Account restrictions now apply to calendars and address books (including CardDAV) as well: one that names a
+  ...) fails as a whole and names the attachment. `saveDraft` attachments go through the same checks as the other
+  tools. The bridge also checks the resolved real path of an attachment. The deny-list covers credential and
+  secret filenames (wallet files, private keys, keystores, saved browser/OS credentials, ...), the whole
+  Thunderbird/mail-client profile, the signed-in user's macOS `Library` folder (in both its usual and its APFS
+  Data-volume real-path form), and, on Windows, AppData together with its compatibility-junction aliases -- except
+  the extension's own `<TEMP>\commonpost-mcp\` backup folder, with `connection.json` itself refused even there. On
+  Windows, a file path attachment can only be verified through the bridge (which resolves the real path); the
+  extension refuses one outright.
+- The bridge's connection-file discovery computes `/run/user/<uid>` itself and checks it belongs to the current
+  user (rather than trusting `$XDG_RUNTIME_DIR` from the environment), only follows a Snap Thunderbird process
+  confirmed by its own binary path and environment marker (with the official snap's Downloads fallback tried only
+  after such a process was seen), and checks a Flatpak app id against a closed list.
+- Account restrictions apply to calendars and address books (including CardDAV) as well: one that names a
   restricted account is no longer reachable, and a remote one that names no account is refused while a restriction
   is active. An unreadable restriction, or one with an empty selection, refuses everything, on the options page
   as on the server.
