@@ -6519,6 +6519,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     onQueryCompleted(collection) {
                       try {
                         const results = [];
+                        const encryptedAllowed = isEncryptedContentAllowed();
                         for (const glodaMsg of collection.items) {
                           if (results.length >= SEARCH_COLLECTION_CAP) break;
                           // Get the underlying msgHdr
@@ -6532,6 +6533,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                           const folder = msgHdr.folder;
                           if (!folder) continue;
                           if (!isFolderAccessible(folder)) continue;
+
+                          // A Gloda hit can come from the full-text index, which may
+                          // hold decrypted content for a message opened once before:
+                          // excluded outright rather than trusted to filter what it
+                          // shows, same as getMessage's own encrypted gate.
+                          if (!encryptedAllowed && isRawMimeEnvelopeEncrypted(msgHdr)) continue;
 
                           // Folder filter (URI prefix match includes subfolders)
                           if (folderFilterURI && !folder.URI.startsWith(folderFilterURI)) continue;
@@ -6599,6 +6606,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                return glodaBodySearch(query, folderPath, startDate, endDate, maxResults, offset, sortOrder, unreadOnly, flaggedOnly, tag, countOnly, dedupByMessageId);
 	              }
 	              const results = [];
+	              const encryptedAllowed = isEncryptedContentAllowed();
 	              const lowerQuery = (query || "").toLowerCase();
 	              const hasQuery = !!lowerQuery;
 	              // Parse optional field-operator prefix and split into AND tokens.
@@ -6686,6 +6694,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                           );
                       if (!matches) continue;
                     }
+
+                    // Checked only for a message that already passed the cheap
+                    // filters above, not the whole folder: msgHdr.subject/preview
+                    // can themselves be what OpenPGP rewrote after decrypting a
+                    // protected-header message once, so a candidate matched (or
+                    // listed, with no query) on those is excluded outright rather
+                    // than trusted to show only what it should.
+                    if (!encryptedAllowed && isRawMimeEnvelopeEncrypted(msgHdr)) continue;
 
                     const msgTags = getUserTags(msgHdr);
                     const result = {
@@ -8273,6 +8289,69 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return raw;
             }
 
+            // Reads just enough of a message's raw bytes to get its OUTER,
+            // wire-level headers and top-level Content-Type -- never
+            // Thunderbird's own msgHdr cache (subject, preview, ...), which
+            // OpenPGP is known to rewrite with decrypted content once a
+            // message with protected headers ("memory hole") has been opened
+            // and decrypted at least once. Bounded to a small prefix: headers
+            // sit at the very start of a message, comfortably within this
+            // even with many Received: lines. Returns null if the stream, or
+            // the message itself, cannot be read.
+            const RAW_MIME_HEADER_PEEK_BYTES = 32 * 1024;
+            function readRawMimeOuterEntity(msgHdr) {
+              let stream = null;
+              try {
+                const folder = msgHdr.folder;
+                if (!folder) return null;
+                stream = folder.getMsgInputStream(msgHdr, {});
+                const raw = readMessageStreamFully(stream, RAW_MIME_HEADER_PEEK_BYTES);
+                if (!raw) return null;
+                // maxDepth 0: never descends into a multipart body, only the
+                // outer entity's own headers and Content-Type are needed here.
+                return parseRawMimeEntity(raw, { maxDepth: 0 });
+              } catch {
+                return null;
+              } finally {
+                if (stream) try { stream.close(); } catch { /* ignore */ }
+              }
+            }
+
+            // The Subject header exactly as it arrived over the wire: for a
+            // "memory hole"/protected-header message this is the placeholder
+            // the sender's software chose ("...", "Encrypted Message", ...),
+            // never whatever OpenPGP may have written back into
+            // msgHdr.subject after decrypting it once. Falls back to
+            // `fallback` (the ordinary mime2Decoded subject) if the raw
+            // headers cannot be read -- never less safe than reading msgHdr
+            // directly. Not RFC 2047 decoded (a protected-header placeholder
+            // is plain ASCII in every known implementation); an undecoded
+            // `=?...?=` form for the rare message that both protects its
+            // subject AND uses one is still safe, only less pretty than
+            // mime2DecodedSubject would have made it.
+            function outerWireSubject(msgHdr, fallback) {
+              const root = readRawMimeOuterEntity(msgHdr);
+              if (!root) return fallback;
+              const raw = getRawMimeHeader(root.headers, "subject");
+              return raw ? raw : fallback;
+            }
+
+            // Best-effort, cheap encrypted check for a listing or search loop
+            // where running the full Gloda MimeMessage parse
+            // (isEncryptedMimeMessage) per candidate would be too expensive:
+            // only the message's OWN outer envelope is inspected, not a part
+            // nested inside it (e.g. an encrypted attachment forwarded in a
+            // plaintext wrapper is not caught by this). Unlike
+            // isEncryptedMimeMessage, this FAILS OPEN (false) when the raw
+            // headers cannot be read, matching its role here -- one filter
+            // among several on a listing, not the sole gate on decrypted
+            // content ever reaching the assistant (getMessage's own encrypted
+            // check, which does fail closed, still applies whenever the
+            // actual body is fetched).
+            function isRawMimeEnvelopeEncrypted(msgHdr) {
+              return isEncryptedMimeMessage(readRawMimeOuterEntity(msgHdr));
+            }
+
             function parseAttachmentPartsFromRawMime(rawBytes, options = {}) {
               const includeInlineImages = options.includeInlineImages === true;
               // Keep the attachment walk's historical depth allowance. Body
@@ -8356,7 +8435,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                      }
 	                      resolve({
 	                        id: msgHdr.messageId,
-	                        subject: msgHdr.mime2DecodedSubject || msgHdr.subject,
+	                        subject: outerWireSubject(msgHdr, msgHdr.mime2DecodedSubject || msgHdr.subject),
 	                        rawSource: raw,
 	                      });
 	                    } catch (e) {
@@ -8382,7 +8461,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     if (!encryptedAllowed && isEncryptedMimeMessage(aMimeMsg)) {
                       resolve({
                         id: msgHdr.messageId,
-                        subject: msgHdr.mime2DecodedSubject || msgHdr.subject,
+                        // Never msgHdr.subject/mime2DecodedSubject here: OpenPGP
+                        // rewrites them with the decrypted subject once a
+                        // protected-header ("memory hole") message has been
+                        // opened, which is exactly the content this branch exists
+                        // to withhold. The wire-level Subject is read fresh from
+                        // the raw message instead, every time.
+                        subject: outerWireSubject(msgHdr, msgHdr.mime2DecodedSubject || msgHdr.subject),
                         author: msgHdr.mime2DecodedAuthor || msgHdr.author,
                         recipients: msgHdr.mime2DecodedRecipients || msgHdr.recipients,
                         ccList: msgHdr.ccList,
@@ -9744,11 +9829,27 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 return { error: `Failed to display message: ${e.message || e}` };
               }
 
-              return { success: true, displayMode: mode, subject: msgHdr.mime2DecodedSubject || msgHdr.subject || "" };
+              // The wire-level subject, not msgHdr's: this call can itself be what
+              // triggers Thunderbird decrypting a protected-header message (and so
+              // rewriting msgHdr.subject) for the human to read in the window/tab
+              // it just opened -- that decrypted text should not also come back in
+              // the tool result to the assistant.
+              return {
+                success: true,
+                displayMode: mode,
+                subject: outerWireSubject(msgHdr, msgHdr.mime2DecodedSubject || msgHdr.subject || ""),
+              };
             }
 
             function getRecentMessages(folderPath, daysBack, maxResults, offset, unreadOnly, flaggedOnly, includeSubfolders) {
               const results = [];
+              // Checked once per message below (no query to narrow candidates
+              // first, unlike searchMessages): a bounded raw-header read per
+              // listed message, only while the option is off (the default).
+              // Accepted for the same reason every other deny-list/content
+              // check in this file is: the alternative is trusting a field
+              // OpenPGP is known to rewrite after a decryption.
+              const encryptedAllowed = isEncryptedContentAllowed();
               const days = Number.isFinite(Number(daysBack)) && Number(daysBack) > 0 ? Math.floor(Number(daysBack)) : 7;
               const cutoffTs = (Date.now() - days * 86400000) * 1000; // Thunderbird uses microseconds
               const requestedLimit = Number(maxResults);
@@ -9772,12 +9873,18 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     if (unreadOnly && msgHdr.isRead) continue;
                     if (flaggedOnly && !msgHdr.isFlagged) continue;
 
+                    // preview (and subject, below) can be what OpenPGP rewrote
+                    // after decrypting a protected-header message once: withheld
+                    // rather than trusted, the same as getMessage's own body.
+                    const encrypted = !encryptedAllowed && isRawMimeEnvelopeEncrypted(msgHdr);
                     const msgTags = getUserTags(msgHdr);
-                    const preview = msgHdr.getStringProperty("preview") || "";
+                    const preview = encrypted ? "" : (msgHdr.getStringProperty("preview") || "");
                     const result = {
                       id: msgHdr.messageId,
                       threadId: msgHdr.threadId, // folder-local, use with folderPath for grouping
-                      subject: msgHdr.mime2DecodedSubject || msgHdr.subject,
+                      subject: encrypted
+                        ? outerWireSubject(msgHdr, msgHdr.mime2DecodedSubject || msgHdr.subject)
+                        : (msgHdr.mime2DecodedSubject || msgHdr.subject),
                       author: msgHdr.mime2DecodedAuthor || msgHdr.author,
                       recipients: msgHdr.mime2DecodedRecipients || msgHdr.recipients,
                       ccList: msgHdr.ccList,
@@ -9789,6 +9896,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       tags: msgTags,
                       _dateTs: msgDateTs
                     };
+                    if (encrypted) result.encrypted = true;
                     if (preview) result.preview = preview;
                     results.push(result);
                   }
