@@ -1,5 +1,5 @@
 /**
- * Compose decisions: mode resolution, reply recipients, References and body layout (nsMsgCompose.cpp ports).
+ * Compose decisions: mode resolution, reply recipients, References and body layout (nsMsgCompose.cpp / mimedrft.cpp ports).
  */
 
 const { describe, it } = require('node:test');
@@ -17,9 +17,11 @@ const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${apiSource.slice(start, end)}
 this.api = { resolveComposeMode, computeReplyRecipients, switchIdentityRecipients, buildReplyReferences,
-  buildCitePrefix, divWrappedHtml, citeText, removePlaintextTag, stripDocumentTags, replaceFileURLs, frameSignature, frameImageSignature,
+  buildCitePrefix, divWrappedHtml, citeText, removePlaintextTag, stripDocumentTags, plainTextToForwardHtml, forwardHeaderRows,
+  forwardHeaderTableHtml, forwardPlainText, joinFlowedLines, replaceFileURLs, frameSignature, frameImageSignature,
   userBodyHtml, wrapHtmlDocument, layoutComposeHtml, layoutComposeText, removeQueryPart, tagEmbeddedObjects, serializerMetaCharset, plainEditorHtml };`, sandbox);
 const api = sandbox.api;
+const plain = v => JSON.parse(JSON.stringify(v));
 
 describe('resolveComposeMode', () => {
   it('uses an explicit mode and maps legacy skipReview to send', () => {
@@ -191,7 +193,42 @@ describe('cite line and quote (QuotingOutputStreamListener, InternetCiter)', () 
   });
 });
 
-describe('ReplaceFileURLs', () => {
+describe('forward inline (mimedrft.cpp)', () => {
+  const labels = { subject: 'Subject', date: 'Date', from: 'From', to: 'To', cc: 'CC', replyTo: 'Reply-To', newsgroups: 'Newsgroups', references: 'References', organization: 'Organization' };
+
+  it('lists the normal headers in mimedrft order, skipping empty address lists', () => {
+    const rows = api.forwardHeaderRows({ from: 'A <a@x.test>', to: 'b@y.test', cc: '', subject: '', date: 'Thu, 12 Mar 2026', references: '<r@x>' }, labels, false);
+    assert.deepEqual(plain(rows), [['Subject', ''], ['Date', 'Thu, 12 Mar 2026'], ['From', 'A <a@x.test>'], ['To', 'b@y.test']]);
+    const news = api.forwardHeaderRows({ subject: 's', newsgroups: 'n.g', references: '<r@x>' }, labels, false);
+    assert.deepEqual(plain(news), [['Subject', 's'], ['Newsgroups', 'n.g'], ['References', '<r@x>']]);
+  });
+
+  it('micro headers: From, Subject, To, CC, Newsgroups', () => {
+    const rows = api.forwardHeaderRows({ from: 'a@x.test', to: 'b@y.test', subject: 's', date: 'd', organization: 'o' }, labels, true);
+    assert.deepEqual(plain(rows).map(r => r[0]), ['From', 'Subject', 'To']);
+  });
+
+  it('builds the header table with escaped values and the plain header block', () => {
+    assert.equal(api.forwardHeaderTableHtml([['From', 'A <a@x.test>']]),
+      '<TABLE CELLPADDING=0 CELLSPACING=0 BORDER=0 class="moz-email-headers-table"><TR><TH VALIGN=BASELINE ALIGN=RIGHT NOWRAP>From: </TH><TD>A &lt;a@x.test&gt;</TD></TR></TABLE>');
+    assert.equal(api.forwardPlainText('-------- Forwarded Message --------', [['Subject', 's'], ['From', 'a@x.test']], 'Body\n'),
+      '\n\n-------- Forwarded Message --------\nSubject: s\nFrom: a@x.test\n\nBody\n');
+  });
+
+  it('converts a plain original to HTML: quote levels and the signature', () => {
+    assert.equal(api.plainTextToForwardHtml('Hi <b>\n> q\n\n-- \nSig\n'),
+      'Hi &lt;b&gt;<br><blockquote type="cite"><pre wrap class="moz-quote-pre">q<br></pre></blockquote><br><pre class="moz-signature">-- <br>Sig<br></pre>');
+    // format=flowed: a soft break keeps the line open
+    assert.equal(api.plainTextToForwardHtml('long \nline\n'), 'long line<br>');
+  });
+});
+
+describe('BuildBodyMessageAndSignature and ReplaceFileURLs', () => {
+  it('joins unquoted lines that end in a space, leaves quotes and "-- " alone', () => {
+    assert.equal(api.joinFlowedLines('a \nb\n> q \n> r\n-- \nsig \nx\n'), 'a b\n> q \n> r\n-- \nsig x\n');
+    assert.equal(api.joinFlowedLines('a \r\nb'), 'a b');
+  });
+
   it('replaces quoted and bare file URLs, keeps the ones it cannot read', () => {
     const toData = url => { if (url.includes('missing')) throw new Error('no'); return `data:x;${url.slice(7)}`; };
     assert.equal(api.replaceFileURLs('<img src="file:///a.png"> <img src=file:///b.png> file:///missing.png end', toData),
@@ -274,21 +311,27 @@ describe('compose body layout (ConvertAndLoadComposeWindow)', () => {
     assert.equal(api.layoutComposeHtml('reply', { ...reply, user: '<p>Hi</p>', signature: 'S' }, prefs(1, false, true, true)), `<p>Hi</p>S${cite}`);
   });
 
-  it('HTML reply without a quote keeps the caret on top; new message', () => {
+  it('HTML reply without a quote keeps the caret on top; new message and forward', () => {
     const sig = '<br><div class="moz-signature">S</div>';
+    const fwd = '<div class="moz-forward-container">F</div>';
     assert.equal(api.layoutComposeHtml('reply', { prefix, user: 'Hi', signature: 'S' }, prefs(0, true, false)),
       `Hi<div class="moz-cite-prefix">${prefix}<br></div>S`);
     assert.equal(api.layoutComposeHtml('new', { user: 'Hi', signature: 'S' }, prefs(1, false, false)), 'HiS');
     // Typed text drops a <br> that only ended its line before a block
     assert.equal(api.layoutComposeHtml('new', { user: 'Hi', signature: sig }, prefs(0, true, false)), 'Hi<div class="moz-signature">S</div>');
     assert.equal(api.layoutComposeHtml('new', { user: '', signature: sig }, prefs(0, true, false)), sig);
+    assert.equal(api.layoutComposeHtml('forward', { user: 'Hi', forward: fwd, signature: sig }, prefs(0, true, false)), `Hi${fwd}${sig}`);
+    assert.equal(api.layoutComposeHtml('forward', { user: 'Hi', forward: fwd, signature: sig }, prefs(1, false, false)), `Hi<br>${sig}${fwd}`);
+    assert.equal(api.layoutComposeHtml('forward', { user: '<p>Hi</p>', forward: fwd, signature: 'S' }, prefs(1, false, true)), `<p>Hi</p>S${fwd}`);
   });
 
   const plainText = hunks => hunks.map(h => h.text).join('');
 
-  it('plain hunks: the quote goes in as a quotation, the rest is typed', () => {
+  it('plain hunks: the quote and the forwarded message go in as quotations, the rest is typed', () => {
     const hunks = api.layoutComposeText('reply', { prefix, quote: 'q', user: 'Hi', signature: '-- \nS\n' }, prefs(0, true));
-    assert.deepEqual(JSON.parse(JSON.stringify(hunks)), [{ text: `${prefix}\n` }, { text: '> q\n', quotes: true }, { text: 'Hi' }, { text: '\n\n-- \nS\n' }]);
+    assert.deepEqual(plain(hunks), [{ text: `${prefix}\n` }, { text: '> q\n', quotes: true }, { text: 'Hi' }, { text: '\n\n-- \nS\n' }]);
+    const forward = api.layoutComposeText('forward', { user: 'Hi', forward: '\n\nF\n> q\n' }, prefs(0, true));
+    assert.deepEqual(plain(forward), [{ text: 'Hi' }, { text: '\n' }, { text: '\n\nF\n> q\n', quotes: true }]);
   });
 
   it('plain editor document: InsertTextWithQuotations hunks, typed ">" lines stay text', () => {
@@ -302,12 +345,14 @@ describe('compose body layout (ConvertAndLoadComposeWindow)', () => {
     assert.equal(body(api.plainEditorHtml([{ text: '> x', quotes: true }], 72))[1], `${span}&gt; x</span>`);
   });
 
-  it('plain reply: bottom, top with the signature above the quote; new message', () => {
+  it('plain reply: bottom, top with the signature above the quote; new message, forward', () => {
     assert.equal(plainText(api.layoutComposeText('reply', { prefix, quote: 'a\nb\n', user: 'Hi' }, prefs(0, true))), `${prefix}\n> a\n> b\nHi\n`);
     assert.equal(plainText(api.layoutComposeText('reply', { prefix, quote: 'q', user: '', signature: '\nBench\nUser\n' }, prefs(1, false, false, true))),
       `\n\nBench\nUser\n\n${prefix}\n> q\n`);
     assert.equal(plainText(api.layoutComposeText('reply', { prefix, quote: 'q', user: 'Hi', signature: '-- \nS\n' }, prefs(1, true))), `Hi\n\n${prefix}\n> q\n\n-- \nS\n`);
     assert.equal(plainText(api.layoutComposeText('new', { user: 'Hi', signature: '-- \nS\n' }, prefs(0, true))), 'Hi\n-- \nS\n');
+    assert.equal(plainText(api.layoutComposeText('forward', { user: 'Hi', forward: '\n\nF', signature: '-- \nS\n' }, prefs(0, true))), 'Hi\n\n\nF\n-- \nS\n');
+    assert.equal(plainText(api.layoutComposeText('forward', { user: 'Hi', forward: '\n\nF', signature: '\nS\n' }, prefs(1, false))), 'Hi\n\n\nS\n\n\nF');
   });
 
   it('wraps the body in a UTF-8 document', () => {
