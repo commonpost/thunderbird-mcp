@@ -1,6 +1,7 @@
 "use strict";
 // Reply, forward and new-message draft bodies (cite line, quote, forward header, signature, layout, charset) equal
-// what Thunderbird's own compose window saves with the same text typed at its caret.
+// what Thunderbird's own compose window saves with the same text typed at its caret; an edited draft equals a fresh
+// one with the new text.
 const { describe, it, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const { SKIP, state, mcp, tbLib, closeAll, FOLDER } = require("./helpers.cjs");
@@ -116,6 +117,16 @@ const nativeDraft = (type, folder, id, text) => tbLib(`
   return raw;
 `, { type, folder, id, text });
 
+// Native draft kept in Drafts; returns its Message-ID.
+const nativeDraftKept = (type, folder, id, text) => tbLib(`
+  const win = await openNativeCompose(Ci.nsIMsgCompType[args.type], hdrById(args.folder, args.id));
+  if (args.text) win.GetCurrentEditor().insertText(args.text);
+  const draft = await saveNativeDraft(win);
+  await closeCompose(win);
+  await rawOf(draft);
+  return draft.messageId;
+`, { type, folder, id, text });
+
 const draftRaw = (id, keep) => tbLib(`
   const h = hdrById(args.drafts, args.id);
   if (!h) return null;
@@ -196,6 +207,28 @@ describe("compose body", { skip: SKIP }, () => {
           await t.test(`${name} top=${replyOnTop} bottom=${sigBottom}`, { skip }, () =>
             compare({ type: "ForwardInline", folder, id, identity: { composeHtml, ...TEXT_SIG, replyOnTop, sigBottom } }));
         }
+      }
+    });
+
+    it(`${mode} draftId: a new body for a native reply draft replaces only the typed text`, async t => {
+      const cases = [[0, true, TEXT_SIG], [1, false, TEXT_SIG], [1, true, HTML_SIG]];
+      for (const [replyOnTop, sigBottom, sig] of cases) {
+        await t.test(`top=${replyOnTop} bottom=${sigBottom} ${sig === HTML_SIG ? "html" : "text"} sig`, async () => {
+          const prev = await applySettings({ composeHtml, ...sig, replyOnTop, sigBottom }, {});
+          try {
+            const [, folder, id] = ORIGINALS[0];
+            const draftId = await nativeDraftKept("Reply", folder, id, "First version");
+            const saved = await mcp().call("saveDraft", { draftId, folderPath: FOLDER.drafts, body: TEXT });
+            assert.equal(saved.success, true, JSON.stringify(saved));
+            assert.equal(await draftRaw(draftId, true), null, "old version removed");
+            const ours = await bodyForm(await draftRaw(saved.messageId));
+            const native = await bodyForm(await nativeDraft("Reply", folder, id, TEXT));
+            assert.equal(ours.type, native.type);
+            assert.equal(ours.form, native.form);
+          } finally {
+            await restoreSettings(prev);
+          }
+        });
       }
     });
 

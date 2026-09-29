@@ -27,6 +27,14 @@ project is kept in this repository.
   - The draft stores the state Thunderbird's own reply or forward draft stores (`origURIs`, `queuedDisposition`), so
     the original is marked as replied or forwarded when the draft is sent, not when it is saved.
   - Reply and forward drafts get the body described under Changed.
+- `saveDraft` takes `draftId` (and optionally its `folderPath`) to edit an existing draft instead of deleting and
+  recreating it, as Thunderbird does when a draft is reopened and saved. Passed fields replace, the others are kept:
+  recipients, subject, body, attachments, Reply-To, priority, References, Content-Language, the return receipt / DSN /
+  delivery format flags and the reply or forward state. The draft keeps the format of its body; `isHtml` changes it only
+  when the whole body is replaced. The old version is removed once the new one is stored. The result has the new
+  `messageId` (Thunderbird gives every saved draft a new one) and `replacedDraftId`. With a new `body`, `keepQuote`
+  (default true) replaces only the typed text and keeps the cite line, quote, forwarded message and signature;
+  `keepAttachments: false` drops the draft's attachments.
 - Test bench on a real Thunderbird: `npm run test:tb` (`scripts/tb-bench.sh`) runs a downloaded Thunderbird headless
   with a throwaway profile and synthetic mail (`test/fixtures/mail`), and runs `test/bench/*.test.cjs` against it
   through `mcp-bridge.cjs`, with Marionette for privileged checks. Works with 140 ESR, 153 ESR and 156. See
