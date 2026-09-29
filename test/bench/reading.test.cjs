@@ -55,10 +55,35 @@ describe("reading", { skip: SKIP }, () => {
       const folder = MailServices.folderLookup.getFolderForURL(args.uri);
       return folder.localizedName ?? folder.prettyName;`, { uri: FOLDER.inbox });
     assert.equal(expected, "Inbox");
-    const res = await mcp().call("searchMessages", { query: "Project kickoff", folderPath: FOLDER.inbox });
+    const res = await mcp().call("searchMessages", { query: "Project kickoff", folderPath: FOLDER.inbox, format: "legacy" });
     const rows = Array.isArray(res) ? res : res.messages;
     assert.ok(rows.length > 0 && rows.every(m => m.folder === expected), JSON.stringify(rows));
     const folders = await mcp().call("listFolders", {});
     assert.equal(folders.find(f => f.path === FOLDER.inbox)?.name, expected);
+  });
+
+  it("getRecentMessages rows carry ccList like searchMessages rows", async () => {
+    const recent = await mcp().call("getRecentMessages", { daysBack: 36500, folderPath: FOLDER.inbox, maxResults: 200 });
+    const found = await mcp().call("searchMessages", { query: "", folderPath: FOLDER.inbox, maxResults: 200 });
+    const row = recent.messages.find(m => m.id === "chain3@alpha.test");
+    assert.equal(row?.ccList, "Bob Alpha <bob@alpha.test>", JSON.stringify(row));
+    assert.deepEqual(row, found.messages.find(m => m.id === "chain3@alpha.test"));
+  });
+
+  it("format legacy returns the 0.8 output", async () => {
+    const current = await mcp().call("searchMessages", { query: "Project kickoff" });
+    const legacy = await mcp().call("searchMessages", { query: "Project kickoff", format: "legacy" });
+    assert.ok(Array.isArray(legacy), JSON.stringify(legacy));
+    assert.deepEqual(legacy.map(m => m.id), current.messages.map(m => m.id));
+    for (const row of legacy) {
+      assert.equal(typeof row.threadId, "number");
+      assert.equal(typeof row.folder, "string");
+      assert.equal(typeof row.flagged, "boolean");
+      assert.ok(Array.isArray(row.tags));
+    }
+    const paged = await mcp().call("getRecentMessages", { daysBack: 36500, offset: 0, format: "legacy" });
+    assert.equal(paged.limit, 50);
+    assert.ok(Array.isArray(paged.messages) && paged.messages.length > 0);
+    assert.equal(typeof paged.messages[0].folder, "string");
   });
 });

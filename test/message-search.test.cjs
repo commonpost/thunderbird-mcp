@@ -17,7 +17,7 @@ const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${apiSource.slice(start, end)}
 this.api = { parseSearchQuery, matchSearchTerms, glodaSearchTerms, compactSearchRow, rowsToTable, listResultAsTable,
-  threadSubjectKey, counterpartEmails, threadPeople, threadKeysOf, conversationMembers, groupSearchRows, buildSearchPage, pageTextField, pageMessageBody, SEARCH_PREVIEW_CHARS,
+  threadSubjectKey, counterpartEmails, threadPeople, threadKeysOf, conversationMembers, groupSearchRows, buildSearchPage, legacySearchPage, pageTextField, pageMessageBody, SEARCH_PREVIEW_CHARS,
   DEFAULT_SEARCH_RESULTS, DEFAULT_GET_MESSAGE_BODY_CHARS, MAX_BODY_CHARS };`, sandbox);
 const api = sandbox.api;
 const plain = v => JSON.parse(JSON.stringify(v));
@@ -300,6 +300,45 @@ describe('conversations (T1, T2)', () => {
     const expected = ['chain1 chain2 chain3 chain4 chain5', 'noref1 noref2 noref3', 'notify1', 'notify2', 'notify3', 'outreach-a outreach-a-reply', 'outreach-b outreach-b-reply'];
     for (const order of orders(MAIL)) assert.deepEqual(groups(order), expected);
   });
+
+  it('links many replies with one subject without rescanning earlier ones', () => {
+    const n = 20000;
+    const items = Array.from({ length: n }, (_, i) => ({ id: `<r${i}@bench.test>`, refs: [], dateTs: i, subjectKey: 'report', hasRe: i > 0 }));
+    const peopleOf = i => ({ key: [`p${i % 2 ? i : 0}@x.test`], all: new Set([`p${i % 2 ? i : 0}@x.test`]) });
+    const started = Date.now();
+    const keys = api.threadKeysOf(items, peopleOf);
+    assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+    assert.equal(keys[2], keys[0]);
+    assert.notEqual(keys[1], keys[0]);
+    assert.equal(api.conversationMembers(items, 4, peopleOf).size, n / 2);
+  });
+});
+
+describe('legacySearchPage (format "legacy")', () => {
+  const row = i => ({
+    id: `m${i}`, subject: `Re: s${i}`, author: 'A <a@x.test>', recipients: 'me@x.test', ccList: '', date: '2026-03-01T00:00:00.000Z',
+    folderPath: 'mailbox://x/Inbox', read: true, flagged: false, tags: [], preview: 'p'.repeat(300),
+    _dateTs: i, _threadId: 7, _folderName: 'Inbox', _legacySubject: `s${i}`,
+  });
+  const rows = Array.from({ length: 3 }, (_, i) => row(i));
+
+  it('returns a plain array of full rows without offset', () => {
+    const page = plain(api.legacySearchPage(rows, { limit: 2 }));
+    assert.equal(page.length, 2);
+    assert.deepEqual(page[0], {
+      id: 'm0', threadId: 7, subject: 's0', author: 'A <a@x.test>', recipients: 'me@x.test', ccList: '', date: '2026-03-01T00:00:00.000Z',
+      folder: 'Inbox', folderPath: 'mailbox://x/Inbox', read: true, flagged: false, tags: [], preview: 'p'.repeat(300),
+    });
+  });
+
+  it('returns the envelope when offset is passed, and keeps dupLocations and linkedBy', () => {
+    const page = plain(api.legacySearchPage([{ ...row(0), dupLocations: ['mailbox://x/Sent'], linkedBy: 'subject' }, row(1)], { offset: 0, limit: 1, incomplete: true }));
+    assert.deepEqual(Object.keys(page), ['messages', 'totalMatches', 'offset', 'limit', 'hasMore', 'incomplete']);
+    assert.equal(page.hasMore, true);
+    assert.deepEqual(page.messages[0].dupLocations, ['mailbox://x/Sent']);
+    assert.equal(page.messages[0].linkedBy, 'subject');
+    assert.equal(plain(api.legacySearchPage(rows, { offset: 2, limit: 5 })).messages[0].id, 'm2');
+  });
 });
 
 describe('buildSearchPage', () => {
@@ -352,6 +391,23 @@ describe('body paging', () => {
     const body = 'b'.repeat(api.MAX_BODY_CHARS + 10);
     assert.equal(api.pageMessageBody({ body }, 0, undefined, 50).body.length, 50);
     assert.equal(api.pageMessageBody({ body }, 0, api.MAX_BODY_CHARS * 2, 50).body.length, api.MAX_BODY_CHARS);
+  });
+
+  it('keeps base64 rawSource pages on 4-character groups', () => {
+    const rawSource = Buffer.from('x'.repeat(100)).toString('base64');
+    const first = plain(api.pageMessageBody({ rawSource, rawEncoding: 'base64' }, 0, 10, 100));
+    assert.equal(first.rawSource.length, 8);
+    assert.equal(first.nextBodyOffset, 8);
+    const next = plain(api.pageMessageBody({ rawSource, rawEncoding: 'base64' }, 10, 3, 100));
+    assert.equal(next.bodyOffset, 8);
+    assert.equal(next.rawSource.length, 4);
+    let joined = '';
+    for (let offset = 0; offset !== undefined;) {
+      const page = plain(api.pageMessageBody({ rawSource, rawEncoding: 'base64' }, offset, 30, 100));
+      joined += Buffer.from(page.rawSource, 'base64').toString();
+      offset = page.nextBodyOffset;
+    }
+    assert.equal(joined, 'x'.repeat(100));
   });
 
   it('does not split a surrogate pair', () => {
