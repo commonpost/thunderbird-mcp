@@ -396,11 +396,13 @@ function findSnapConnectionCandidates(context) {
 // Flatpak app ids trusted as Thunderbird or Betterbird. A closed list, not a
 // directory listing: any other app id under the runtime directory belongs to
 // an unrelated sandboxed application and its connection.json (if it somehow
-// had one) is never read. There is no separate org.mozilla.ThunderbirdBeta
-// id (checked against the Flathub manifest): the beta channel is the same
-// org.mozilla.Thunderbird id, installed from the flathub-beta remote instead
-// of flathub.
-const FLATPAK_APP_IDS = ['org.mozilla.Thunderbird', 'net.thunderbird.Thunderbird', 'eu.betterbird.Betterbird'];
+// had one) is never read. Flathub currently publishes org.mozilla.thunderbird
+// (lowercase) and org.mozilla.thunderbird_esr as separate apps; installing
+// the older org.mozilla.Thunderbird id now redirects to
+// org.mozilla.thunderbird_esr, kept here too for an install from before that
+// change. Matched exactly, case-sensitively; no org.mozilla.ThunderbirdBeta
+// or net.thunderbird.Thunderbird id is published.
+const FLATPAK_APP_IDS = ['org.mozilla.thunderbird', 'org.mozilla.thunderbird_esr', 'org.mozilla.Thunderbird', 'eu.betterbird.Betterbird'];
 
 function findFlatpakConnectionCandidates(context) {
   const { fsImpl, pathImpl, runtimeDir, uid } = context;
