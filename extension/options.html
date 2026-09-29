@@ -281,9 +281,12 @@
     <span id="copyAuthTokenStatus" class="save-status"></span>
   </div>
   <p class="mode-note warning-note">
-    Stable token mode keeps the same token across restarts, stored in your Thunderbird profile
-    while the add-on is enabled. If the token becomes known to someone else it stays valid until
-    you regenerate or clear it. Changes apply next time the MCP server starts.
+    Stable token mode keeps the same token across restarts, stored in your Thunderbird profile.
+    If the token becomes known to someone else it stays valid until you regenerate it or uncheck
+    "Use stable token" below to clear it. Changes apply next time the MCP server starts. Removing
+    the add-on while it is enabled clears the stored token; if you disable the add-on first,
+    uncheck "Use stable token" to clear it before removing the add-on, since removing an
+    already-disabled add-on leaves the token in the profile.
   </p>
   <ul class="account-list">
     <li>

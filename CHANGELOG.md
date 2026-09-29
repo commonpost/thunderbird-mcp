@@ -60,8 +60,9 @@ recommended.
 - The bridge only accepts a connection file that belongs to the current user (no group or other access on POSIX,
   the user's temporary directory on Windows), checked again immediately before it is read.
 - Options: the "Listen on all interfaces" warning now says that the token travels in clear text and that the check
-  of the Host header is off in that mode. The stable token and that setting live in the profile while the add-on
-  is enabled.
+  of the Host header is off in that mode. Removing the add-on while it is still enabled clears the stable token and
+  that setting from the profile; removing an add-on that was disabled first does not, so clear the token yourself
+  (uncheck "Use stable token") before removing a disabled add-on.
 - `mcp-bridge.cjs`: a `sendMail`, `replyToMessage` or `forwardMessage` call made with `skipReview` (direct send, no
   compose window) now waits up to 150 s for Thunderbird's answer instead of 30 s, so the bridge no longer gives up
   before Thunderbird's own 120 s send timeout. Every other call keeps the 30 s limit. If the wait still runs out,
