@@ -962,10 +962,16 @@ async function handleMessage(line) {
   try {
     return await forwardToThunderbird(message);
   } catch (e) {
-    // A direct send's error already says that the outcome is unknown
-    const hint = !isDirectSendCall(message) && /timed out/i.test(e.message) ? ' The operation may still complete in Thunderbird.' : '';
-    return toolErrorResponse(message.id, `${e.message}${hint}`);
+    return forwardFailureResponse(message, e);
   }
+}
+
+function forwardFailureResponse(message, error) {
+  // A direct send's error already says that the outcome is unknown
+  const text = !isDirectSendCall(message) && /timed out/i.test(error.message)
+    ? `${error.message.replace(/\.?$/, '.')} The operation may still complete in Thunderbird.`
+    : error.message;
+  return toolErrorResponse(message.id, text);
 }
 
 // Tool failures the model can act on are results with isError, not JSON-RPC errors.
@@ -1128,6 +1134,11 @@ function compactToolResultJsonText(response) {
   let changed = false;
   const compactedContent = content.map((item) => {
     if (item?.type !== 'text' || typeof item.text !== 'string') {
+      return item;
+    }
+    // Already compact (current extensions): re-serializing would undo the \uXXXX
+    // escapes that keep invisible characters in identifiers visible.
+    if (!item.text.includes('\n')) {
       return item;
     }
     try {
@@ -1325,6 +1336,7 @@ module.exports = {
   findSnapConnectionCandidates,
   formatDiscoveryAttempts,
   compactToolResultJsonText,
+  forwardFailureResponse,
   handleMessage,
   inlineAttachmentPaths,
   isDirectSendCall,

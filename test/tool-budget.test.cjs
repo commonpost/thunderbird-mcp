@@ -82,6 +82,30 @@ describe('tools/list budget', () => {
   });
 });
 
+describe('annotations', () => {
+  const hints = name => byName[name].annotations;
+
+  it('treat sent mail and saved filter rules as irreversible', () => {
+    for (const name of ['sendMail', 'replyToMessage', 'forwardMessage', 'createFilter', 'updateFilter', 'applyFilters']) {
+      assert.equal(hints(name).destructiveHint, true, name);
+      assert.equal(hints(name).openWorldHint, true, name);
+    }
+    for (const name of ['saveDraft', 'createContact', 'createEvent', 'createTask', 'createFolder']) {
+      assert.equal(hints(name).destructiveHint, false, name);
+      assert.equal(hints(name).openWorldHint, false, name);
+    }
+  });
+
+  it('do not call tools with side effects read-only', () => {
+    for (const name of ['getMessage', 'getMessages', 'displayMessage']) {
+      assert.deepEqual({ ...hints(name) }, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }, name);
+    }
+    for (const name of ['searchMessages', 'getRecentMessages', 'listFilters', 'listEvents']) {
+      assert.equal(hints(name).readOnlyHint, true, name);
+    }
+  });
+});
+
 describe('README coverage', () => {
   it('lists every tool in a tool table', () => {
     for (const t of tools) {

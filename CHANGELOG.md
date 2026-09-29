@@ -33,24 +33,39 @@ project is kept in this repository.
 - HTML bodies larger than 2 MiB are no longer given to the DOM parser: they go through the existing tag-stripping
   path instead, which prints no link or image URL.
 
+### Breaking (MCP clients)
+- Tool failures are tool results with `isError: true` and `{ "error": "..." }` instead of JSON-RPC errors, as the
+  MCP spec asks for errors the model can act on: invalid arguments, a disabled tool (with a hint where to enable
+  it), a handler that throws or returns `{ error }`, an attachment path the bridge refuses, Thunderbird not
+  reachable, a timeout (with a note that the operation may still complete, except for a direct send, whose error
+  already says that the outcome is unknown). JSON-RPC errors remain for protocol problems only, with new codes:
+  unknown tool or missing name `-32602`, internal errors `-32603` (the extension used `-32000`), unparsable input
+  `-32700` (the bridge used `-32700` for every failure).
+- Values outside their bounds are rejected with an error that names the bound: `priority` 0-9 (`createTask`,
+  `updateTask`), `percentComplete` 0-100 (`updateTask` clamped 150 to 100 before). Only limits are clamped:
+  `maxResults` of `listEvents` / `listTasks` is an integer from 1 to 500, a larger value becomes 500 and a fraction
+  is floored, while 0 is an error (it meant the default of 100 before).
+- `createEvent.status` is an enum (`tentative`, `confirmed`, `cancelled`, in any case); an empty string, which
+  meant the default, is rejected, so omit the parameter instead.
+- Invisible characters that can hide instructions in mail text (zero-width space, word joiner, invisible
+  operators, BOM, bidi controls, tag characters, supplementary variation selectors) are removed from tool results,
+  and every object that held such text gets `invisibleCharsRemoved` with their count. ZWJ / ZWNJ stay for emoji and
+  scripts that need them. Identifiers, paths and raw source (`id`, `path`, `uri`, `url`, `rawSource` and keys
+  ending in `Id`, `Ids`, `Path`, `Paths`, `Uri`, `Url`) keep them, JSON-escaped (`\u200b`), so they stay visible
+  and still find the same message, folder or contact when passed back.
+
 ### Changed (MCP protocol)
-- Tool failures are tool results with `isError: true` and `{ "error": "..." }`, as the MCP spec asks for errors
-  the model can act on: invalid arguments, a disabled tool (with a hint where to enable it), a handler that throws
-  or returns `{ error }`, an attachment path the bridge refuses, Thunderbird not reachable or a timeout (with a note
-  that the operation may still complete). JSON-RPC errors remain for protocol problems only: unknown tool or
-  missing name `-32602`, internal errors `-32603` (was `-32000`), unparsable input `-32700` (the bridge used
-  `-32700` for every failure).
 - `initialize` returns short server `instructions` (IDs, untrusted mail content, review windows, stale IMAP
   folders), identical in the bridge and the extension.
 - `tools/list` entries carry `title` and all four annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`,
-  `openWorldHint`) set explicitly, since the spec defaults assume a destructive open-world tool.
-- Tool results are compact JSON (no indentation), and invisible characters that can hide instructions in mail text
-  (zero-width space, word joiner, BOM, bidi controls, tag characters, supplementary variation selectors) are
-  removed from them. ZWJ / ZWNJ stay for emoji and scripts that need them.
-- Argument handling: `minimum` / `maximum` are validated, integers given as floats are floored, a limit above the
-  documented maximum is clamped, enum values match case-insensitively, object parameters passed as JSON strings
-  are parsed. Calendar and contact tools declare their bounds (`maxResults`, `priority`, `percentComplete`) and
-  `createEvent.status` is an enum; their descriptions say which ids they take and what they return.
+  `openWorldHint`) set explicitly, since the spec defaults assume a destructive open-world tool. They err on the
+  cautious side: `sendMail`, `replyToMessage`, `forwardMessage`, `createFilter`, `updateFilter` and `applyFilters`
+  are destructive and open-world (a sent message can't be taken back, and filter rules can forward or reply), and
+  `getMessage` / `getMessages` (`saveAttachments` writes files) and `displayMessage` (a displayed message is marked
+  read) are not read-only.
+- Tool results are compact JSON (no indentation). The bridge passes compact results through unchanged.
+- Argument coercion: enum values match case-insensitively, object parameters passed as JSON strings are parsed.
+  Calendar and contact tool descriptions say which ids they take and what they return.
 - README lists `saveDraft` and `listCategories`, which were missing from the tool tables.
 
 ### Fixed

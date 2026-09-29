@@ -2,7 +2,7 @@
 // MCP protocol through the bridge and the running extension: instructions, tool metadata, isError results.
 const { describe, it, after } = require("node:test");
 const assert = require("node:assert/strict");
-const { SKIP, mcp, closeAll, FOLDER } = require("./helpers.cjs");
+const { SKIP, mcp, tbLib, closeAll, FOLDER } = require("./helpers.cjs");
 const bridge = require("../../mcp-bridge.cjs");
 
 describe("MCP protocol", { skip: SKIP }, () => {
@@ -19,6 +19,9 @@ describe("MCP protocol", { skip: SKIP }, () => {
     assert.equal(byName.listAccounts.annotations.readOnlyHint, true);
     assert.equal(byName.deleteMessages.annotations.destructiveHint, true);
     assert.equal(byName.sendMail.annotations.openWorldHint, true);
+    assert.equal(byName.sendMail.annotations.destructiveHint, true);
+    assert.equal(byName.createFilter.annotations.destructiveHint, true);
+    assert.equal(byName.getMessage.annotations.readOnlyHint, false);
     for (const t of result.tools) assert.ok(t.title && !t.group && !t.crud, t.name);
   });
 
@@ -31,5 +34,36 @@ describe("MCP protocol", { skip: SKIP }, () => {
     assert.match(invalid.result.content[0].text, /messageId/);
     const unknown = await mcp().request("tools/call", { name: "noSuchTool", arguments: {} });
     assert.equal(unknown.error.code, -32602);
+  });
+
+  it("removes invisible characters from contact text, counts them, and escapes them in the id", async () => {
+    const uid = "bench-\u200Bhidden-contact";
+    await tbLib(`
+      const book = MailServices.ab.getDirectory("jsaddrbook://abook.sqlite");
+      const card = Cc["@mozilla.org/addressbook/cardproperty;1"].createInstance(Ci.nsIAbCard);
+      card.UID = args.uid;
+      card.displayName = "Bench contact";
+      card.firstName = "Hid\u200Bden\u202E";
+      card.primaryEmail = "hidden@bench.test";
+      book.addCard(card);
+    `, { uid });
+    try {
+      const raw = await mcp().request("tools/call", { name: "searchContacts", arguments: { query: "hidden@bench.test" } });
+      const text = raw.result.content[0].text;
+      assert.doesNotMatch(text, /[\u200B\u202E]/);
+      assert.ok(text.includes('"id":"bench-\\u200bhidden-contact"'), text);
+      const [row] = JSON.parse(text);
+      assert.equal(row.id, uid);
+      assert.equal(row.firstName, "Hidden");
+      assert.equal(row.invisibleCharsRemoved, 2);
+      const contact = await mcp().call("getContact", { contactId: row.id });
+      assert.equal(contact.email, "hidden@bench.test", JSON.stringify(contact));
+    } finally {
+      await tbLib(`
+        const book = MailServices.ab.getDirectory("jsaddrbook://abook.sqlite");
+        const card = book.childCards.find(c => c.UID === args.uid);
+        if (card) book.deleteCards([card]);
+      `, { uid });
+    }
   });
 });

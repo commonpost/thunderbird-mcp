@@ -1005,16 +1005,50 @@ function setExtraMcpContentBlocks(toolResult, blocks) {
 // stay: emoji sequences and Persian / Indic scripts need them.
 const INVISIBLE_UNICODE_RE = /[\u200B\u2060-\u2064\uFEFF\u180E\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]|[\u{E0000}-\u{E007F}]|[\u{E0100}-\u{E01EF}]/gu;
 
-function stripInvisibleUnicode(text) {
-  return String(text).replace(INVISIBLE_UNICODE_RE, "");
+// Identifiers, paths and raw source must come back unchanged: their invisible
+// characters are JSON-escaped (\u200b) instead of removed.
+const EXACT_VALUE_KEY_RE = /^(id|path|uri|url|rawSource)$|(Id|Ids|Path|Paths|Uri|URI|Url|URL)$/;
+
+// Copy of a tool result with invisible characters removed from its text. Every object
+// that held such text gets invisibleCharsRemoved, so removals are never silent;
+// `unattributed` counts removals outside any object (a top-level array of strings).
+function removeInvisibleText(toolResult) {
+  const walk = (value, exact, counter) => {
+    if (typeof value === "string") {
+      if (exact) return value;
+      const removed = value.match(INVISIBLE_UNICODE_RE)?.length || 0;
+      if (!removed) return value;
+      counter.n += removed;
+      return value.replace(INVISIBLE_UNICODE_RE, "");
+    }
+    if (!value || typeof value !== "object") return value;
+    if (typeof value.toJSON === "function") return walk(value.toJSON(), exact, counter);
+    if (Array.isArray(value)) return value.map(item => walk(item, exact, counter));
+    const own = { n: 0 };
+    const copy = {};
+    for (const [key, item] of Object.entries(value)) {
+      copy[key] = walk(item, exact || EXACT_VALUE_KEY_RE.test(key), own);
+    }
+    if (own.n) copy.invisibleCharsRemoved = own.n;
+    return copy;
+  };
+  const top = { n: 0 };
+  return { value: walk(toolResult, false, top), unattributed: top.n };
+}
+
+function escapeInvisibleUnicode(json) {
+  return json.replace(INVISIBLE_UNICODE_RE, ch => ch.split("")
+    .map(unit => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`).join(""));
 }
 
 function buildToolResultContent(toolResult) {
+  const { value, unattributed } = removeInvisibleText(toolResult);
   const content = [{
     type: "text",
     // Compact JSON: indentation costs tokens and helps no model
-    text: stripInvisibleUnicode(JSON.stringify(toolResult)),
+    text: escapeInvisibleUnicode(String(JSON.stringify(value))),
   }];
+  if (unattributed) content.push({ type: "text", text: JSON.stringify({ invisibleCharsRemoved: unattributed }) });
   const extraBlocks = toolResult && toolResult[MCP_EXTRA_CONTENT_BLOCKS];
   if (Array.isArray(extraBlocks)) content.push(...extraBlocks);
   return content;
@@ -1022,12 +1056,19 @@ function buildToolResultContent(toolResult) {
 // END INLINE IMAGE CONTENT HELPERS
 
 // BEGIN MCP TOOL PROTOCOL HELPERS
-const OPEN_WORLD_TOOLS = new Set(["sendMail", "replyToMessage", "forwardMessage"]);
+// Annotations err on the cautious side. Mail leaves through the compose tools and
+// through filter rules that forward or reply; a sent message or a saved rule can't
+// be taken back.
+const OPEN_WORLD_TOOLS = new Set(["sendMail", "replyToMessage", "forwardMessage", "createFilter", "updateFilter", "applyFilters"]);
+const IRREVERSIBLE_CREATE_TOOLS = new Set(["sendMail", "replyToMessage", "forwardMessage", "createFilter"]);
+// saveAttachments writes files; a displayed message is marked read
+const READ_TOOLS_WITH_SIDE_EFFECTS = new Set(["getMessage", "getMessages", "displayMessage"]);
 
 // tools/list entry: group/crud stay internal; every hint is explicit because
 // the spec defaults are pessimistic (destructive, open world).
 function toolListEntry(tool) {
-  const readOnly = tool.crud === "read";
+  const readOnly = tool.crud === "read" && !READ_TOOLS_WITH_SIDE_EFFECTS.has(tool.name);
+  const additive = tool.crud === "read" || (tool.crud === "create" && !IRREVERSIBLE_CREATE_TOOLS.has(tool.name));
   return {
     name: tool.name,
     title: tool.title,
@@ -1035,7 +1076,7 @@ function toolListEntry(tool) {
     inputSchema: tool.inputSchema,
     annotations: {
       readOnlyHint: readOnly,
-      destructiveHint: !readOnly && tool.crud !== "create",
+      destructiveHint: !additive,
       idempotentHint: readOnly,
       openWorldHint: OPEN_WORLD_TOOLS.has(tool.name),
     },
@@ -9146,6 +9187,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
             // END TOOL SCHEMA VALIDATOR
 
+            // BEGIN TOOL ARGUMENT CHECKS
             function validateToolArgs(name, args) {
               const tool = buildTools().find(t => t.name === name);
               const schema = tool?.inputSchema;
@@ -9190,6 +9232,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return errors;
             }
 
+            // Limits are clamped to their maximum; any other value outside its bounds is an error.
+            const CLAMPED_LIMIT_PARAMS = new Set(["maxResults"]);
+
             /**
              * Coerce tool arguments to match expected schema types.
              * MCP clients may send "true"/"false" as strings for booleans,
@@ -9224,8 +9269,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (value.trim() === "") continue;
                   const n = Number(value);
                   if (Number.isFinite(n) && Number.isInteger(n)) args[key] = n;
-                } else if (expected === "integer" && typeof value === "number" && Number.isFinite(value) && !Number.isInteger(value)) {
-                  args[key] = Math.floor(value);
                 } else if (expected === "array" && typeof value === "string") {
                   try {
                     const parsed = JSON.parse(value);
@@ -9240,14 +9283,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) args[key] = parsed;
                   } catch { /* validator reports the type error */ }
                 }
-                // Limits above the documented maximum are clamped, as before the schema declared them.
-                if ((expected === "number" || expected === "integer") && typeof args[key] === "number"
-                    && propSchema.maximum !== undefined && args[key] > propSchema.maximum) {
-                  args[key] = propSchema.maximum;
+                if (CLAMPED_LIMIT_PARAMS.has(key) && typeof args[key] === "number" && Number.isFinite(args[key])) {
+                  if (expected === "integer") args[key] = Math.floor(args[key]);
+                  if (propSchema.maximum !== undefined && args[key] > propSchema.maximum) args[key] = propSchema.maximum;
                 }
               }
               return args;
             }
+            // END TOOL ARGUMENT CHECKS
 
             async function callTool(name, args) {
               switch (name) {
