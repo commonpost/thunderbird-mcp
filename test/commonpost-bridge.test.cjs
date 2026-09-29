@@ -1,10 +1,9 @@
 'use strict';
 
-// Bridge validation:
-//  (a) saveDraft attachments are inlined by the bridge like the other tools;
-//  (b) UNC / device attachment paths are refused before any filesystem access;
-//  (c) connection.json: no symlink; POSIX owner = current uid and mode 0600;
-//      Windows: only under the current user's %TEMP%.
+// Bridge validation: saveDraft attachments are inlined by the bridge like the other tools; UNC
+// and device attachment paths are refused before any filesystem access; connection.json is
+// accepted only as a non-symlink file owned by the current user with mode 0600 on POSIX, or (on
+// Windows, where POSIX modes do not apply) one that resolves under the current user's %TEMP%.
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -15,6 +14,7 @@ const path = require('path');
 const {
   ATTACHMENT_TOOLS,
   checkConnectionFileSafety,
+  checkWindowsTempContainment,
   clearConnectionCache,
   discoverConnectionInfo,
   inlineAttachmentPaths,
@@ -26,7 +26,20 @@ const {
 } = require('../mcp-bridge.cjs');
 const vm = require('vm');
 
-describe('(a) attachment tools', () => {
+// Attachment tests need a directory outside the AppData deny-list (which
+// os.tmpdir() sits under on Windows, since %TEMP% is AppData\Local\Temp)
+// and with no dot-prefixed component, so a path written under it is an
+// ordinary, allowed attachment path rather than one the deny-list itself
+// would refuse before the test's own assertion runs. Kept in sync with the
+// same helper in mcp-bridge.test.cjs.
+function makeAttachmentTestRoot() {
+  if (process.platform === 'win32') {
+    return fs.mkdtempSync(path.join(os.homedir(), 'cp-test-'));
+  }
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'cp-bridge-'));
+}
+
+describe('attachment tools', () => {
   it('saveDraft is inlined like sendMail, replyToMessage and forwardMessage', () => {
     for (const tool of ['sendMail', 'replyToMessage', 'forwardMessage', 'saveDraft']) {
       assert.ok(ATTACHMENT_TOOLS.has(tool), tool);
@@ -34,7 +47,7 @@ describe('(a) attachment tools', () => {
   });
 
   it('a saveDraft path attachment becomes inline base64', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-bridge-'));
+    const dir = makeAttachmentTestRoot();
     try {
       const file = path.join(dir, 'note.txt');
       fs.writeFileSync(file, 'bonjour');
@@ -47,7 +60,7 @@ describe('(a) attachment tools', () => {
   });
 });
 
-describe('(b) UNC and device paths', () => {
+describe('UNC and device paths', () => {
   const refused = [
     '\\\\server.example\\share\\report.pdf',
     '\\\\?\\C:\\Users\\user\\Documents\\a.pdf',
@@ -84,7 +97,41 @@ describe('(b) UNC and device paths', () => {
   });
 });
 
-describe('(c) connection.json safety on POSIX', { skip: typeof process.getuid !== 'function' }, () => {
+// On Windows, os.tmpdir() (%TEMP%) sits under AppData\Local, which the
+// deny-list treats like the rest of AppData; a caller who just picks a file
+// from there hits this without doing anything unusual, so that one case
+// gets an error that explains why and what to do, not the generic note the
+// other sensitive-path reasons (a dotfile, a credential filename) keep.
+describe('AppData / %TEMP% attachment message', () => {
+  const appDataPath = path.join('C:', 'Users', 'alice', 'AppData', 'Local', 'Temp', 'report.txt');
+  const credentialPath = path.join('C:', 'Users', 'alice', '.ssh', 'id_rsa');
+
+  it('explains the AppData rule and what to do, before touching the filesystem', async () => {
+    await assert.rejects(
+      inlineAttachmentPaths({ attachments: [appDataPath] }),
+      /files under AppData \(on Windows this includes %TEMP%\) can't be attached; copy the file to another folder, for example Documents/
+    );
+  });
+
+  it('keeps the generic note for a reason that is not the AppData rule', async () => {
+    await assert.rejects(inlineAttachmentPaths({ attachments: [credentialPath] }), (error) => {
+      assert.match(error.message, /^Sensitive attachment path blocked:/);
+      assert.doesNotMatch(error.message, /AppData/);
+      return true;
+    });
+  });
+
+  it('the extension gives the same explanation', () => {
+    const api = fs.readFileSync(path.resolve(__dirname, '../extension/mcp_server/api.js'), 'utf8');
+    const block = api.slice(api.indexOf('// BEGIN SENSITIVE ATTACHMENT PATH HELPERS'), api.indexOf('// END SENSITIVE ATTACHMENT PATH HELPERS'));
+    // The source splits the message across two concatenated string literals;
+    // check the two halves rather than the one-line text the bridge produces.
+    assert.match(block, /files under AppData \(on Windows this includes %TEMP%\) can't be attached/);
+    assert.match(block, /copy the file to another folder, for example Documents/);
+  });
+});
+
+describe('connection.json safety on POSIX', { skip: typeof process.getuid !== 'function' }, () => {
   let root;
   let file;
   const context = () => ({ fsImpl: fs, pathImpl: path, osImpl: os, platform: 'linux', uid: process.getuid() });
@@ -148,7 +195,7 @@ describe('(c) connection.json safety on POSIX', { skip: typeof process.getuid !=
   });
 });
 
-describe('(c) connection.json safety on Windows (simulated)', () => {
+describe('connection.json safety on Windows (simulated)', () => {
   // Fake Windows filesystem: lstat + realpath over a map of paths.
   function winContext({ entries, temp = 'C:\\Users\\user\\AppData\\Local\\Temp', real = {} }) {
     const key = (p) => path.win32.resolve(p).toLowerCase();
@@ -204,7 +251,7 @@ describe('(c) connection.json safety on Windows (simulated)', () => {
 // connection.json is read through one verified descriptor
 // (no path re-open after the checks) and a UNC path is refused before any
 // filesystem access.
-describe('(c) connection.json read through a verified descriptor (POSIX)', { skip: typeof process.getuid !== 'function' }, () => {
+describe('connection.json read through a verified descriptor (POSIX)', { skip: typeof process.getuid !== 'function' }, () => {
   let root;
   let file;
   const context = (fsImpl = fs) => ({ fsImpl, pathImpl: path, osImpl: os, platform: 'linux', uid: process.getuid() });
@@ -306,7 +353,64 @@ describe('(c) connection.json read through a verified descriptor (POSIX)', { ski
   });
 });
 
-describe('(c) connection.json UNC path on Windows (simulated)', () => {
+// The %TEMP% containment check runs once during discovery
+// (checkConnectionFileSafety) and again right before the bytes are read
+// (readConnectionFileVerified, via checkWindowsTempContainment): a junction
+// along the path can be retargeted in between, so the first pass alone
+// cannot be trusted by read time.
+describe('connection.json Windows %TEMP% is re-checked at read time (simulated)', () => {
+  const temp = 'C:\\Users\\user\\AppData\\Local\\Temp';
+  const goodPath = 'C:\\Users\\user\\AppData\\Local\\Temp\\commonpost-mcp\\connection.json';
+  const outside = 'C:\\Users\\Public\\other\\connection.json';
+  const content = Buffer.from(JSON.stringify({ port: 8765, token: 'd'.repeat(64) }), 'utf8');
+
+  // `real` is mutable so a test can move it mid-flight, modelling a junction
+  // retargeted between the discovery-time check and the actual read.
+  function winReadContext(real) {
+    const stat = { isSymbolicLink: () => false, isFile: () => true, dev: 1, ino: 1, size: content.length };
+    const fsImpl = {
+      lstatSync: () => stat,
+      openSync: () => 3,
+      fstatSync: () => stat,
+      readSync: (fd, buffer, offset, length) => {
+        const n = Math.min(length, content.length);
+        content.copy(buffer, offset, 0, n);
+        return n;
+      },
+      closeSync: () => {},
+      realpathSync: (p) => (p === temp ? temp : real.current),
+    };
+    fsImpl.realpathSync.native = fsImpl.realpathSync;
+    return { fsImpl, pathImpl: path.win32, osImpl: { tmpdir: () => temp }, platform: 'win32', uid: null };
+  }
+
+  it('accepts a read while the real path stays under %TEMP%', () => {
+    const real = { current: goodPath };
+    const ctx = winReadContext(real);
+    assert.equal(checkConnectionFileSafety(goodPath, ctx), null);
+    assert.deepEqual(JSON.parse(readConnectionFileVerified(goodPath, ctx)), JSON.parse(content.toString()));
+  });
+
+  it('refuses the read when the real path moved outside %TEMP% since the earlier check (junction race)', () => {
+    const real = { current: goodPath };
+    const ctx = winReadContext(real);
+    // Passes the earlier, discovery-time check...
+    assert.equal(checkConnectionFileSafety(goodPath, ctx), null);
+    // ...then the junction is retargeted before the verified read runs.
+    real.current = outside;
+    assert.throws(() => readConnectionFileVerified(goodPath, ctx), /not under the current user's %TEMP%/);
+  });
+
+  it('checkWindowsTempContainment itself is the function both call sites share', () => {
+    const real = { current: outside };
+    const ctx = winReadContext(real);
+    assert.match(checkWindowsTempContainment(goodPath, ctx), /not under the current user's %TEMP%/);
+    real.current = goodPath;
+    assert.equal(checkWindowsTempContainment(goodPath, ctx), null);
+  });
+});
+
+describe('connection.json UNC path on Windows (simulated)', () => {
   const untouchable = new Proxy({}, { get: (_t, prop) => () => { throw new Error(`filesystem touched: ${String(prop)}`); } });
   const ctx = { fsImpl: untouchable, pathImpl: path.win32, osImpl: { tmpdir: () => 'C:\\Users\\user\\AppData\\Local\\Temp' },
     platform: 'win32', uid: null };
@@ -375,7 +479,7 @@ this.isSensitiveFilePath = isSensitiveFilePath; this.windowsPathAmbiguity = wind
   return sandbox;
 }
 
-describe('(b2) Windows name forms and compatibility junctions', () => {
+describe('Windows name forms and compatibility junctions', () => {
   it('windowsPathAmbiguity names each ambiguous form', () => {
     for (const [label, p, re] of WIN_AMBIGUOUS) assert.match(windowsPathAmbiguity(p) || '', re, label);
     for (const p of WIN_PLAIN) assert.equal(windowsPathAmbiguity(p), null, p);
@@ -410,7 +514,7 @@ describe('(b2) Windows name forms and compatibility junctions', () => {
   });
 });
 
-describe('(b2) the real path of an attachment is checked (POSIX)', { skip: process.platform === 'win32' }, () => {
+describe('the real path of an attachment is checked (POSIX)', { skip: process.platform === 'win32' }, () => {
   let root;
   beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-real-')); });
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -438,5 +542,37 @@ describe('(b2) the real path of an attachment is checked (POSIX)', { skip: proce
     fs.writeFileSync(path.join(root, 'target.txt'), 'x');
     fs.symlinkSync(path.join(root, 'target.txt'), path.join(root, 'link.txt'));
     await assert.rejects(inlineAttachmentPaths({ attachments: [path.join(root, 'link.txt')] }), /symlink/);
+  });
+});
+
+// A directory JUNCTION, unlike a symlink, needs no elevated privilege on
+// Windows -- so unlike the POSIX-only describe above, this defense is
+// checked on every platform: an entirely innocuous lexical path (no dotfile,
+// no AppData, no credential filename anywhere in it) that reaches a denied
+// file only once the link is resolved must still be refused.
+describe('the real path of an attachment is checked through a directory link (innocuous name)', () => {
+  let root;
+  beforeEach(() => { root = makeAttachmentTestRoot(); });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('an innocuous path reached through a linked directory is refused by its real path', async (t) => {
+    fs.mkdirSync(path.join(root, '.secret'));
+    fs.writeFileSync(path.join(root, '.secret', 'notes.txt'), 'secret');
+    fs.mkdirSync(path.join(root, 'docs'));
+    const linkPath = path.join(root, 'docs', 'lien');
+    try {
+      fs.symlinkSync(path.join(root, '.secret'), linkPath, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      if (error.code === 'EPERM' || error.code === 'EACCES') {
+        t.skip(`directory link unavailable: ${error.code}`);
+        return;
+      }
+      throw error;
+    }
+    const lexical = path.join(linkPath, 'notes.txt');
+    // docs, lien, notes.txt: nothing here matches the lexical deny-list.
+    assert.equal(isSensitiveFilePath(lexical), false, lexical);
+    await assert.rejects(inlineAttachmentPaths({ attachments: [lexical] }),
+      /Sensitive attachment path blocked: .*notes\.txt \(resolves to .*\.secret.*notes\.txt\)/);
   });
 });

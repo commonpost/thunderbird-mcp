@@ -12,16 +12,6 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.resolve(__dirname, '../extension/mcp_server/api.js'), 'utf8');
 
-function functionSource(name) {
-  const indent = '            ';
-  const start = source.indexOf(`\n${indent}function ${name}(`);
-  assert.ok(start >= 0, `${name} not found in api.js`);
-  const close = `\n${indent}}\n`;
-  const end = source.indexOf(close, start);
-  assert.ok(end > start, `end of ${name} not found in api.js`);
-  return source.slice(start, end + close.length);
-}
-
 // Node has no DOMParser: a tiny stand-in that handles the markup used below
 // (tags, quoted attributes, text, void tags; no entity decoding).
 class FakeDOMParser {
@@ -33,6 +23,7 @@ class FakeDOMParser {
     const make = (tagName, attrs) => ({
       nodeType: 1, tagName: tagName.toUpperCase(), childNodes: [], parentElement: null,
       getAttribute: (n) => (n in attrs ? attrs[n] : null),
+      hasAttribute: (n) => n in attrs,
       get textContent() { return this.childNodes.map((c) => c.textContent).join(''); },
     });
     const body = make('body', {});
@@ -47,7 +38,10 @@ class FakeDOMParser {
         if (stack.length > 1) stack.pop();
       } else {
         const attrs = {};
-        for (const a of m[3].matchAll(/([a-zA-Z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) attrs[a[1]] = a[2] ?? a[3];
+        // A bare boolean attribute (no "=value", e.g. "hidden") is captured too.
+        for (const a of m[3].matchAll(/([a-zA-Z-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'))?/g)) {
+          attrs[a[1]] = a[2] ?? a[3] ?? '';
+        }
         const node = make(m[2], attrs);
         node.parentElement = top;
         top.childNodes.push(node);
@@ -58,11 +52,17 @@ class FakeDOMParser {
   }
 }
 
+// stripHtml, htmlExceedsDomLimit, safeEmailUrl and htmlToMarkdown now share
+// helpers declared alongside them (hidden-content removal): load the whole
+// marked block instead of each function's own brace-matched body.
 function load({ withDom }) {
   const sandbox = withDom ? { DOMParser: FakeDOMParser } : {};
   vm.createContext(sandbox);
-  const names = ['stripHtml', 'htmlExceedsDomLimit', 'safeEmailUrl', 'htmlToMarkdown'];
-  vm.runInContext(`${names.map(functionSource).join('\n')}\nthis.api = { ${names.join(', ')} };`, sandbox);
+  const start = source.indexOf('// BEGIN HTML HIDDEN CONTENT HELPERS');
+  const end = source.indexOf('// END HTML HIDDEN CONTENT HELPERS');
+  assert.ok(start >= 0 && end > start, 'HTML HIDDEN CONTENT HELPERS marker missing');
+  const names = ['stripHtml', 'htmlExceedsDomLimit', 'safeEmailUrl', 'htmlToMarkdown', 'isHiddenElementNode'];
+  vm.runInContext(`${source.slice(start, end)}\nthis.api = { ${names.join(', ')} };`, sandbox);
   return sandbox.api;
 }
 
@@ -183,5 +183,44 @@ describe('size cap before the DOM parse', () => {
   it('still returns an empty string for empty input', () => {
     assert.equal(withDom.htmlToMarkdown(''), '');
     assert.equal(withDom.htmlToMarkdown(null), '');
+  });
+});
+
+describe('hidden content is removed from the DOM walk, not just the regex fallback', () => {
+  it('drops an element hidden by the hidden attribute or CSS, and counts it', () => {
+    const cases = [
+      '<p>keep</p><div hidden><p>secret</p></div>',
+      '<p>keep</p><div style="display:none"><p>secret</p></div>',
+      '<p>keep</p><div style="visibility: hidden"><p>secret</p></div>',
+      '<p>keep</p><span style="font-size:0">secret</span>',
+      '<p>keep</p><span style="opacity:0">secret</span>',
+      '<p>keep</p><template><p>secret</p></template>',
+    ];
+    for (const html of cases) {
+      const counter = { n: 0 };
+      const text = withDom.htmlToMarkdown(html, counter);
+      assert.ok(text.includes('keep'), html);
+      assert.ok(!text.includes('secret'), `${html} was not removed: ${text}`);
+      assert.equal(counter.n, 1, html);
+    }
+  });
+
+  it('a hidden ancestor takes its whole subtree with it, counted once', () => {
+    const counter = { n: 0 };
+    const text = withDom.htmlToMarkdown(
+      '<div hidden><p>firstsecret</p><p>secondsecret<a href="https://x.example/">linksecret</a></p></div>keep',
+      counter
+    );
+    assert.ok(text.includes('keep'), text);
+    assert.ok(!text.includes('secret'), text);
+    assert.equal(counter.n, 1);
+  });
+
+  it('leaves ordinary visible content alone', () => {
+    const counter = { n: 0 };
+    const text = withDom.htmlToMarkdown('<p>visible</p><span style="color:red">also visible</span>', counter);
+    assert.ok(text.includes('visible'));
+    assert.ok(text.includes('also visible'));
+    assert.equal(counter.n, 0);
   });
 });

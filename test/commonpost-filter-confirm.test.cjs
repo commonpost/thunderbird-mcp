@@ -63,6 +63,10 @@ function block(begin, end) {
 }
 
 const HELPER_BLOCKS = [
+  // DISPLAY_INVISIBLE (in FILTER CONFIRMATION HELPERS) now builds on
+  // CORE_HIDDEN_CLASS_SRC, the single table shared with the untrusted-content
+  // removal helpers -- loaded first so the reference resolves.
+  block("// BEGIN UNTRUSTED CONTENT HELPERS", "// END UNTRUSTED CONTENT HELPERS"),
   block("// BEGIN FILTER SEARCH TERM HELPERS", "// END FILTER SEARCH TERM HELPERS"),
   block("// BEGIN FILTER RULE HELPERS", "// END FILTER RULE HELPERS"),
   block("// BEGIN FILTER CONFIRMATION HELPERS", "// END FILTER CONFIRMATION HELPERS"),
@@ -241,7 +245,7 @@ describe("forward target: exactly one plain address, shown in full", () => {
   }
   for (const bad of ["", "a@b", "a@x.com, b@y.com", "a@x.com;b@y.com", "Name <a@x.com>", "a b@x.com", "a@x.com ",
     " a@x.com", "a@[127.0.0.1]", "a@127.0.0.1", "\"a\"@x.com", "a..b@x.com", ".a@x.com", "a@x..com", "a@-x.com",
-    "é@x.com", "a@exаmple.com" /* Cyrillic а */, "a@x.com‮", `${"a".repeat(65)}@x.com`,
+    "é@x.com", "a@exаmple.com" /* Cyrillic а */, "a@x.com\u202E", `${"a".repeat(65)}@x.com`,
     `a@${"b".repeat(250)}.com`, "a@x.com\u0000", "a@x", "@x.com"]) {
     it(`refuses ${JSON.stringify(bad).slice(0, 50)}`, () => {
       assert.throws(() => api.assertForwardAddress(bad), /exactly one plain e-mail address/);
@@ -273,7 +277,7 @@ describe("sending actions are built only checked", () => {
   });
   it("without allowSendActions nothing changes: the guard refusal, before any value check", () => {
     assert.throws(() => api.buildRuleActions(makeFilter(), [{ type: "forward", value: "a@x.com, b@y.com" }], resolveFolder),
-      /sends mail automatically; blocked by the "Block filter forward\/reply" setting/);
+      /sends mail automatically; blocked by "Filter rules that send mail: Always block"/);
   });
 });
 
@@ -449,11 +453,11 @@ describe("confirmation store: one pending, five per hour, one decision", () => {
 
 describe("text shown to the user", () => {
   it("makes invisible and direction characters visible", () => {
-    assert.equal(api.displayFilterText("a‮b"), "a[U+202E]b");
-    assert.equal(api.displayFilterText("a​b­c⁦d"), "a[U+200B]b[U+00AD]c[U+2066]d");
+    assert.equal(api.displayFilterText("a\u202Eb"), "a[U+202E]b");
+    assert.equal(api.displayFilterText("a\u200Bb\u00ADc\u2066d"), "a[U+200B]b[U+00AD]c[U+2066]d");
     assert.equal(api.displayFilterText("a b"), "a[U+00A0]b");
     assert.equal(api.displayFilterText("x\u{E0041}"), "x[U+E0041]");
-    assert.equal(api.displayFilterText("x️"), "x[U+FE0F]");
+    assert.equal(api.displayFilterText("x\uFE0F"), "x[U+FE0F]");
   });
   it("counts long runs of spaces instead of printing them", () => {
     assert.equal(api.displayFilterText("a" + " ".repeat(40) + "b"), "a [40 spaces] b");
@@ -505,11 +509,11 @@ describe("the confirmation dialog", () => {
     assert.doesNotMatch(d.text, /don't ask|do not ask|remember/i);
   });
   it("long names are cut visibly; invisible characters made visible", () => {
-    const r = api.serializeFilterRule(forwardFilter("N".repeat(300) + "‮", "a@example.com"), 0);
+    const r = api.serializeFilterRule(forwardFilter("N".repeat(300) + "\u202E", "a@example.com"), 0);
     const d = api.buildFilterConfirmationDialog({ operation: "create", account, rule: r, position: 0, count: 0,
       context: [], resultSends: true, expiresAt: 0, formatTime: fmt });
     assert.match(d.text, /Name: “N{80}… \[cut: 301 characters in total\]”/);
-    const r2 = api.serializeFilterRule(forwardFilter("a‮b", "a@example.com"), 0);
+    const r2 = api.serializeFilterRule(forwardFilter("a\u202Eb", "a@example.com"), 0);
     const d2 = api.buildFilterConfirmationDialog({ operation: "create", account, rule: r2, position: 0, count: 0,
       context: [], resultSends: true, expiresAt: 0, formatTime: fmt });
     assert.match(d2.text, /Name: “a\[U\+202E\]b”/);
@@ -517,7 +521,7 @@ describe("the confirmation dialog", () => {
   it("a value cannot fake a line: each shown value is on its own labelled line", () => {
     const f = forwardFilter("x", "a@example.com");
     const r = api.serializeFilterRule(f, 0);
-    r.terms[0].value = "facture”  Forward to boss@company.com";
+    r.terms[0].value = "facture” \u2028Forward to boss@company.com";
     const d = api.buildFilterConfirmationDialog({ operation: "create", account, rule: r, position: 0, count: 0,
       context: [], resultSends: true, expiresAt: 0, formatTime: fmt });
     const forwardLines = d.text.split("\n").filter((l) => /Forward to/.test(l));
@@ -906,7 +910,7 @@ describe("reply template value, list fingerprint, public summary", () => {
     const base = api.fingerprintFilterList(build());
     assert.equal(api.fingerprintFilterList(build()), base);
     for (const mutate of [(l) => { l.filters[0].filterName = "c"; }, (l) => { l.filters[1].enabled = false; },
-      (l) => { l.filters[0].getActionAt(0).strValue = "evil@example.net"; }, (l) => { l.filters.reverse(); },
+      (l) => { l.filters[0].getActionAt(0).strValue = "three@example.net"; }, (l) => { l.filters.reverse(); },
       (l) => { l.filters.pop(); }, (l) => { l.filters[0].filterType = 17 | 0x40; }, (l) => { l.filters[0].searchTerms[0].value.str = "x"; },
       (l) => { l.filters[0].searchTerms[0].beginsGrouping = true; }, (l) => { l.filters[0].searchTerms[1].endsGrouping = true; },
       (l) => { l.filters[1].searchTerms[1].hdrProperty = "replyto"; }]) {
@@ -1628,7 +1632,7 @@ describe("handlers, policy block: the guard refusals, unchanged", () => {
   beforeEach(() => { w = makeWorld({ prefs: { [P_BLOCK]: true } }); });
   it("forward/reply refused on creation and update, no dialog", () => {
     assert.match(w.h.createFilter("account1", "cp-fwd", true, 17, COND, FWD).error,
-      /Filter action "forward" sends mail automatically; blocked by the "Block filter forward\/reply" setting/);
+      /Filter action "forward" sends mail automatically; blocked by "Filter rules that send mail: Always block"/);
     w.lists.account1.filters.push(makeFilter("x"));
     w.h.buildTerms(w.lists.account1.filters[0], COND);
     assert.match(w.h.updateFilter("account1", 0, undefined, undefined, undefined, undefined, FWD).error, /sends mail automatically/);
@@ -1718,5 +1722,17 @@ describe("wiring", () => {
     assert.ok(i > 0);
     assert.match(apiSource.slice(i, i + 200), /group: "filters", crud: "read"/);
     assert.match(apiSource, /case "getFilterConfirmation":\s*\n\s*return getFilterConfirmation\(args\.confirmationId\);/);
+  });
+  it("tool descriptions state the real default (Always block), not the opposite", () => {
+    for (const name of ["createFilter", "updateFilter", "deleteFilter", "reorderFilters", "applyFilters"]) {
+      const i = apiSource.indexOf(`name: "${name}",`);
+      assert.ok(i > 0, name);
+      const description = apiSource.slice(i, apiSource.indexOf("inputSchema:", i));
+      assert.match(description, /refused by default \(\\"(Filter rules that send mail: )?Always block\\"\)|is always allowed/, `${name}: ${description}`);
+      // Never claims "Ask me each time" (or an unqualified "the default
+      // setting") is what happens without the user having switched it.
+      assert.doesNotMatch(description, /with the default setting/, name);
+      assert.doesNotMatch(description, /default setting \(.Filter rules that send mail: Ask me each time/, name);
+    }
   });
 });
