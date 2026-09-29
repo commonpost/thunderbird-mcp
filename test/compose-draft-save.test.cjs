@@ -1,6 +1,6 @@
 "use strict";
 // saveComposeFieldsAsDraft: drafts go through a window-less nsIMsgCompose, whose state
-// listener is removed however the save ends; nsIMsgSend is the fallback.
+// listener is removed however the save ends; nsIMsgSend is the fallback. An edited draft is replaced.
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -85,6 +85,10 @@ function load({ initThrows = false, sendMsg } = {}) {
 const identity = { email: "me@example.test" };
 const fields = (extra = {}) => ({ deliveryFormat: 0, attachments: [], addAttachment(a) { this.attachments.push(a); }, removeAttachments() { this.attachments = []; }, ...extra });
 const tick = () => new Promise(r => setImmediate(r));
+const draftHdr = () => {
+  const hdr = { deleted: 0, folder: { getUriForMsg: () => "mailbox-message://drafts#3", deleteMessages(list) { hdr.deleted += list.length; } } };
+  return hdr;
+};
 
 describe("saveComposeFieldsAsDraft", () => {
   it("saves through nsIMsgCompose and returns the new draft", async () => {
@@ -162,5 +166,33 @@ describe("saveComposeFieldsAsDraft", () => {
       assert.equal(composeFields.attachments.length, 0, "attachments are added again by nsIMsgSend");
       for (const compose of composes) assert.equal(compose.listeners.size, 0);
     }
+  });
+
+  it("replaces an edited draft as a Draft compose: no original, no reply type, the new draft returned", async () => {
+    const { save, composes } = load({
+      sendMsg: (compose) => { compose.compFields.draftId = "mailbox-message://drafts#8"; setImmediate(() => compose.done(0)); return Promise.resolve(); },
+    });
+    const composeFields = fields({ to: "a@example.test" });
+    const old = draftHdr();
+    const result = await save(composeFields, identity, [], true, "mailbox-message://inbox#1", CompType.Reply, old);
+    const [compose] = composes;
+    assert.equal(compose.params.type, CompType.Draft);
+    assert.equal(compose.params.originalMsgURI, "");
+    assert.equal(compose.params.composeFields.draftId, "mailbox-message://drafts#3");
+    assert.equal(compose.type, undefined);
+    assert.equal(compose.compFields.to, undefined, "no reply recipients copied");
+    assert.equal(result.messageId, "saved-8@example.test");
+    assert.equal(old.deleted, 0, "Thunderbird removes the old version itself");
+  });
+
+  it("the nsIMsgSend fallback saves an edited draft as new and removes the old version", async () => {
+    const { save, directSends } = load({ initThrows: true });
+    const composeFields = fields();
+    const old = draftHdr();
+    const result = await save(composeFields, identity, [], false, "mailbox-message://inbox#1", CompType.Reply, old);
+    assert.equal(result.messageId, "generated@example.test");
+    assert.equal(composeFields.draftId, "");
+    assert.deepEqual(directSends[0].slice(3), [null, CompType.New, 4, "text/plain"]);
+    assert.equal(old.deleted, 1);
   });
 });

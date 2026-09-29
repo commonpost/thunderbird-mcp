@@ -12,6 +12,14 @@ project is kept in this repository.
   then the steps to update the add-on and the bridge, with a line that says whether the release changes the bridge,
   then the list of changes as before. `scripts/release-notes.cjs` writes it from `CHANGELOG.md` and `BRIDGE_VERSION`;
   from 0.13.0 on, a release whose CHANGELOG section has no summary is refused by the Version sync check.
+- `saveDraft` takes `draftId` (and optionally its `folderPath`) to edit an existing draft instead of deleting and
+  recreating it, as Thunderbird does when a draft is reopened and saved. Passed fields replace, the others are kept:
+  recipients, subject, body, attachments, Reply-To, priority, References, Content-Language, the return receipt / DSN /
+  delivery format flags and the reply or forward state. The draft keeps the format of its body; `isHtml` changes it only
+  when the whole body is replaced. The old version is removed once the new one is stored. The result has the new
+  `messageId` (Thunderbird gives every saved draft a new one) and `replacedDraftId`. With a new `body`, `keepQuote`
+  (default true) replaces only the typed text and keeps the cite line, quote, forwarded message and signature;
+  `keepAttachments: false` drops the draft's attachments. By @mazixs in #30.
 
 ### Changed
 

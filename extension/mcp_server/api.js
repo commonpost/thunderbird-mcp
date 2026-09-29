@@ -4884,6 +4884,209 @@ function plainEditorHtml(hunks, wrapLength) {
   const style = wrapLength > 0 ? `font-family: -moz-fixed; white-space: pre-wrap; width: ${wrapLength}ch;` : "white-space: pre-wrap;";
   return `<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body style="${style}">${body}</body></html>`;
 }
+
+const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
+const RAW_TEXT_TAGS = new Set(["script", "style", "textarea", "title"]);
+// Forward delimiter of drafts without a container (older ones): "-------- Forwarded Message --------"
+const FORWARD_DELIMITER = /-{5,}[^<\n]{1,60}-{5,}/;
+
+// Kind of a block Thunderbird's compose window inserts, from its start tag, or null.
+function draftBlockKind(tag) {
+  const cls = (tag.match(/\bclass\s*=\s*["']([^"']*)["']/i) || [])[1] || "";
+  if (/\bmoz-signature\b/.test(cls)) return "signature";
+  if (/\bmoz-forward-container\b/.test(cls)) return "forward";
+  if (/\bmoz-cite-prefix\b/.test(cls) || /^<blockquote\b[^>]*\btype\s*=\s*["']?cite\b/i.test(tag)) return "cite";
+  return null;
+}
+
+// Top-level cite / forward / signature blocks of an HTML body between from and to: [{ start, end, kind }].
+function htmlDraftBlocks(html, from, to) {
+  const blocks = [];
+  const stack = [];
+  let open = null;
+  const re = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][\w-]*)\b[^>]*>/g;
+  re.lastIndex = from;
+  let m;
+  while ((m = re.exec(html)) && m.index < to) {
+    if (!m[2]) continue;
+    const name = m[2].toLowerCase();
+    if (m[1]) {
+      const at = stack.lastIndexOf(name);
+      if (at < 0) continue;
+      stack.length = at;
+      if (open && !stack.length) {
+        blocks.push({ ...open, end: re.lastIndex });
+        open = null;
+      }
+      continue;
+    }
+    if (!stack.length && !open) {
+      const kind = draftBlockKind(m[0]);
+      if (kind) open = { start: m.index, kind };
+    }
+    if (VOID_TAGS.has(name) || m[0].endsWith("/>")) continue;
+    if (RAW_TEXT_TAGS.has(name)) {
+      const close = html.toLowerCase().indexOf(`</${name}`, re.lastIndex);
+      if (close >= 0) re.lastIndex = close;
+    }
+    stack.push(name);
+  }
+  if (open) blocks.push({ ...open, end: to });
+  if (!blocks.some(b => b.kind !== "signature")) {
+    const fwd = html.slice(from, to).search(FORWARD_DELIMITER);
+    if (fwd >= 0 && !blocks.some(b => from + fwd >= b.start && from + fwd < b.end)) {
+      const start = from + fwd;
+      return [...blocks.filter(b => b.end <= start), { start, end: to, kind: "forward" }];
+    }
+  }
+  return blocks;
+}
+
+/**
+ * Top-level blocks of a plain body (offsets): a cite line with its "> " lines, a forward from its
+ * delimiter to the end, a signature from "-- " (or the identity signature) to the next block.
+ */
+function plainDraftBlocks(text, knownSignature) {
+  const lines = [];
+  for (let pos = 0; pos < text.length;) {
+    const nl = text.indexOf("\n", pos);
+    const end = nl < 0 ? text.length : nl + 1;
+    lines.push({ start: pos, end, text: text.slice(pos, nl < 0 ? end : nl).replace(/\r$/, "") });
+    pos = end;
+  }
+  const blocks = [];
+  const quoted = i => i < lines.length && lines[i].text.startsWith(">");
+  for (let i = 0; i < lines.length; i++) {
+    if (quoted(i)) {
+      let first = i;
+      // Cite line right above the quote; a delimiter line may stand above it after blank lines
+      if (i > 0 && lines[i - 1].text.trim()) first = i - 1;
+      let k = first - 1;
+      while (k >= 0 && !lines[k].text.trim()) k--;
+      if (k >= 0 && k < first && FORWARD_DELIMITER.test(lines[k].text)) first = k;
+      let last = i;
+      while (quoted(last + 1)) last++;
+      const prev = blocks[blocks.length - 1];
+      if (prev && prev.kind === "signature" && prev.end > lines[first].start) prev.end = lines[first].start;
+      blocks.push({ start: lines[first].start, end: lines[last].end, kind: "cite" });
+      i = last;
+    } else if (FORWARD_DELIMITER.test(lines[i].text)) {
+      let k = i + 1;
+      while (k < lines.length && !lines[k].text.trim()) k++;
+      if (quoted(k)) continue;
+      blocks.push({ start: lines[i].start, end: text.length, kind: "forward" });
+      break;
+    } else if (lines[i].text === "-- " && !blocks.some(b => b.kind === "signature" && b.end > lines[i].start)) {
+      blocks.push({ start: lines[i].start, end: text.length, kind: "signature" });
+    }
+  }
+  const sig = String(knownSignature || "").replace(/\r\n?/g, "\n").trim();
+  // Without "-- " (reply_on_top with the signature above the quote, suppress_signature_separator)
+  if (sig && !blocks.some(b => b.kind === "signature")) {
+    for (let at = text.lastIndexOf(sig); at >= 0; at = at ? text.lastIndexOf(sig, at - 1) : -1) {
+      if ((at === 0 || text[at - 1] === "\n") && !blocks.some(b => at >= b.start && at < b.end)) {
+        const next = blocks.find(b => b.start > at);
+        blocks.push({ start: at, end: next ? next.start : text.length, kind: "signature" });
+        blocks.sort((x, y) => x.start - y.start);
+        break;
+      }
+    }
+  }
+  return blocks;
+}
+
+/**
+ * Draft body around the text the user typed: { head, user, tail, kept } with head + user + tail
+ * === body. Thunderbird's blocks (cite line + quote, forward container, signature) stay in head / tail.
+ * The user's text is the first gap between blocks with content; without one, the caret position of the
+ * compose window: above the first block, or below the quote when the body starts with it (bottom-post).
+ */
+function splitDraftBody(body, isHtml, knownSignature) {
+  const text = String(body || "");
+  let from = 0;
+  let to = text.length;
+  if (isHtml) {
+    const open = text.match(/<body\b[^>]*>/i);
+    if (open) from = open.index + open[0].length;
+    const close = text.toLowerCase().lastIndexOf("</body>");
+    if (close >= from) to = close;
+  }
+  const blocks = isHtml ? htmlDraftBlocks(text, from, to) : plainDraftBlocks(text, knownSignature);
+  if (!blocks.length) return { head: text.slice(0, from), user: text.slice(from, to), tail: text.slice(to), kept: false };
+  const sep = isHtml ? /^(?:\s|<br\b[^>]*>)*/i : /^\s*/;
+  const sepEnd = isHtml ? /(?:\s|<br\b[^>]*>)*$/i : /\s*$/;
+  const gaps = [];
+  let prev = from;
+  for (const b of [...blocks, { start: to, end: to }]) {
+    gaps.push([prev, b.start]);
+    prev = b.end;
+  }
+  const split = (at, end) => ({ head: text.slice(0, at), user: text.slice(at, end), tail: text.slice(end), kept: true });
+  for (const [a, b] of gaps) {
+    const gap = text.slice(a, b);
+    const lead = gap.match(sep)[0].length;
+    if (lead === gap.length) continue;
+    const trail = gap.slice(lead).match(sepEnd)[0].length;
+    return split(a + lead, b - trail);
+  }
+  const [a0, b0] = gaps[0];
+  if (a0 < b0 || blocks[0].kind !== "cite") return split(a0, a0);
+  let i = 0;
+  while (i + 1 < blocks.length && blocks[i + 1].kind === "cite") i++;
+  const [a] = gaps[i + 1];
+  return split(a, a);
+}
+
+/**
+ * Fields of a draft update: passed values win, the rest come from the old draft.
+ * Attachments are appended unless keepAttachments is false.
+ */
+function mergeDraftFields(update, existing) {
+  const pick = key => (update[key] !== undefined ? update[key] : existing[key]);
+  return {
+    to: pick("to") || "",
+    cc: pick("cc") || "",
+    bcc: pick("bcc") || "",
+    subject: pick("subject") || "",
+    body: pick("body") || "",
+    // A new body without isHtml is typed text, an unchanged body keeps its format
+    isHtml: update.isHtml !== undefined ? update.isHtml : (update.body !== undefined ? undefined : existing.isHtml),
+    keptAttachments: update.keepAttachments === false ? [] : (existing.attachments || []),
+    references: existing.references || "",
+    replyTo: existing.replyTo || "",
+    priority: existing.priority || "",
+  };
+}
+
+// X-Priority of a reopened draft (mimedrft.cpp: NS_MsgGetPriorityFromString, NS_MsgGetUntranslatedPriorityName).
+function draftPriorityName(raw) {
+  const value = String(raw || "");
+  const digit = ["1", "2", "3", "4", "5"].find(d => value.includes(d));
+  if (digit) return ["Highest", "High", "Normal", "Low", "Lowest"][digit - 1];
+  if (/highest/i.test(value)) return "Highest";
+  if (/high|urgent/i.test(value)) return "High";
+  if (/normal/i.test(value)) return "Normal";
+  if (/lowest/i.test(value)) return "Lowest";
+  if (/low|non-urgent/i.test(value)) return "Low";
+  return "None";
+}
+
+// Compose fields a reopened draft takes from X-Mozilla-Draft-Info (mimedrft.cpp mime_parse_stream_complete).
+function draftInfoFields(draftInfo) {
+  if (!draftInfo) return {};
+  const param = name => String(draftInfo).match(new RegExp(`(?:^|;)\\s*${name}=([^;\\s]*)`, "i"))?.[1];
+  const receipt = param("receipt");
+  const fields = {
+    attachVCard: param("vcard") === "1",
+    returnReceipt: !!receipt && receipt !== "0",
+    DSN: param("DSN") === "1",
+    attachmentReminder: param("attachmentreminder") === "1",
+  };
+  if (fields.returnReceipt) fields.receiptHeaderType = (parseInt(receipt, 10) || 0) - 1;
+  const deliveryFormat = param("deliveryformat");
+  if (deliveryFormat !== undefined) fields.deliveryFormat = parseInt(deliveryFormat, 10) || 0;
+  return fields;
+}
 // END COMPOSE HELPERS
 
 // BEGIN BRIDGE COMPAT
@@ -5383,16 +5586,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "saveDraft",
         group: "messages", crud: "create",
         title: "Save Draft",
-        description: "Save a composed message to the identity's Drafts folder without sending or opening a compose window, as Thunderbird's compose window saves it; returns messageId + folderPath. Useful when a human will review and send the message later from Thunderbird.",
+        description: "Save a composed message to the identity's Drafts folder without sending or opening a compose window, as Thunderbird's compose window saves it; returns messageId + folderPath. Useful when a human will review and send the message later from Thunderbird. With draftId, rewrite that draft instead: passed fields replace, omitted ones (body, recipients, attachments, reply headers) are kept, and the old version is removed.",
         inputSchema: {
           type: "object",
           properties: {
+            draftId: { type: "string", description: "messageId of an existing draft to edit (from saveDraft, replyToMessage/forwardMessage mode draft, or a search in Drafts)" },
+            folderPath: { type: "string", description: "Drafts folder URI of draftId; searched in all Drafts folders when omitted" },
+            keepAttachments: { type: "boolean", default: true, description: "With draftId: keep the draft's attachments (new ones are added)" },
+            keepQuote: { type: "boolean", default: true, description: "With draftId and body: replace only the typed text, keeping cite line, quote, forwarded message and signature" },
             to: { type: "string", description: "Recipient email address(es), comma-separated. Optional -- a draft can have no recipient." },
             subject: { type: "string", description: "Email subject line (optional)" },
             body: { type: "string", description: "Email body (optional)" },
             cc: { type: "string", description: "CC recipients (comma-separated)" },
             bcc: { type: "string", description: "BCC recipients (comma-separated)" },
-            isHtml: { type: "boolean", description: "Set to true if body contains HTML markup (default: false)" },
+            isHtml: { type: "boolean", description: "Set to true if body contains HTML markup (default: false). With draftId the draft keeps its format; isHtml changes it only when the whole body is replaced" },
             from: { type: "string", description: "Sender identity (email address or identity ID from listAccounts)" },
             attachments: {
               type: "array",
@@ -7955,21 +8162,23 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * window's Save does. Resolves { msgCompose, status } (status null on
              * timeout); throws when the API is unusable.
              */
-            async function composeDraftSave(composeFields, identity, useHtml, originalMsgURI, compType) {
+            async function composeDraftSave(composeFields, identity, useHtml, originalMsgURI, compType, replaceURI) {
               const params = Cc["@mozilla.org/messengercompose/composeparams;1"]
                 .createInstance(Ci.nsIMsgComposeParams);
-              params.type = Ci.nsIMsgCompType.New;
+              // A Draft compose removes the draft in composeFields.draftId once the new one is stored
+              // and carries its origURIs / queuedDisposition over (nsMsgCompose::CreateMessage)
+              params.type = replaceURI ? Ci.nsIMsgCompType.Draft : Ci.nsIMsgCompType.New;
               params.format = useHtml ? Ci.nsIMsgCompFormat.HTML : Ci.nsIMsgCompFormat.PlainText;
               params.identity = identity;
               params.composeFields = composeFields;
-              params.originalMsgURI = originalMsgURI || "";
-              const isReply = compType === Ci.nsIMsgCompType.Reply || compType === Ci.nsIMsgCompType.ReplyAll;
+              params.originalMsgURI = replaceURI ? "" : (originalMsgURI || "");
+              const isReply = !replaceURI && (compType === Ci.nsIMsgCompType.Reply || compType === Ci.nsIMsgCompType.ReplyAll);
               const replyFields = isReply
                 ? { from: composeFields.from, to: composeFields.to, cc: composeFields.cc, bcc: composeFields.bcc, replyTo: composeFields.replyTo }
                 : null;
               const msgCompose = MailServices.compose.initCompose(params);
               // Reply / forward type only after init, otherwise CreateMessage rewrites subject and References
-              if (compType != null) msgCompose.type = compType;
+              if (!replaceURI && compType != null) msgCompose.type = compType;
               // Reply recipients already hold the identity's auto Cc / Bcc / Reply-To (computeReplyRecipients)
               if (replyFields) Object.assign(msgCompose.compFields, replyFields);
 
@@ -8013,23 +8222,27 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * Saves composeFields as a draft of identity like the compose window
              * does. For a reply / forward (originalMsgURI + compType) the draft keeps
              * the original, which Thunderbird marks when the draft is sent.
+             * replaceHdr is a draft being edited, removed after the save.
              * Returns the new messageId + folderPath.
              */
-            async function saveComposeFieldsAsDraft(composeFields, identity, attachDescs, useHtml, originalMsgURI, compType) {
+            async function saveComposeFieldsAsDraft(composeFields, identity, attachDescs, useHtml, originalMsgURI, compType, replaceHdr) {
+              const replaceURI = replaceHdr ? replaceHdr.folder.getUriForMsg(replaceHdr) : "";
               try {
                 if (composeFields.deliveryFormat === Ci.nsIMsgCompSendFormat.Unset) {
                   composeFields.deliveryFormat = Services.prefs.getIntPref("mail.default_send_format", Ci.nsIMsgCompSendFormat.Auto);
                 }
               } catch { /* TB without nsIMsgCompSendFormat */ }
               for (const att of descsToMsgAttachments(attachDescs)) composeFields.addAttachment(att);
+              if (replaceURI) composeFields.draftId = replaceURI;
 
               let saved;
               try {
-                saved = await composeDraftSave(composeFields, identity, useHtml, originalMsgURI, compType);
+                saved = await composeDraftSave(composeFields, identity, useHtml, originalMsgURI, compType, replaceURI);
               } catch (e) {
                 console.warn("commonpost-mcp: nsIMsgCompose draft save failed, using nsIMsgSend:", e);
                 composeFields.removeAttachments();
-                return saveDraftViaSend(composeFields, identity, attachDescs, useHtml, originalMsgURI, compType);
+                composeFields.draftId = "";
+                return saveDraftViaSend(composeFields, identity, attachDescs, useHtml, originalMsgURI, compType, replaceHdr);
               }
 
               const { msgCompose, status } = saved;
@@ -8040,7 +8253,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
               const fields = msgCompose.compFields;
               let hdr = null;
-              if (fields.draftId) {
+              if (fields.draftId && fields.draftId !== replaceURI) {
                 try { hdr = MailServices.messageServiceFromURI(fields.draftId).messageURIToMsgHdr(fields.draftId); } catch { /* not in the db yet */ }
               }
               const result = { success: true, messageId: String(hdr?.messageId || fields.messageId || "").replace(/^<|>$/g, "") };
@@ -8049,15 +8262,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return result;
             }
 
-            // Fallback when window-less nsIMsgCompose fails: nsIMsgSend, as saveDraft did before.
-            async function saveDraftViaSend(composeFields, identity, attachDescs, useHtml, originalMsgURI, compType) {
+            // Fallback when window-less nsIMsgCompose fails: nsIMsgSend, as saveDraft did before; an edited draft is removed by hand.
+            async function saveDraftViaSend(composeFields, identity, attachDescs, useHtml, originalMsgURI, compType, replaceHdr) {
               composeFields.messageId = generateMessageId(identity);
               const result = await sendMessageDirectly(
                 composeFields,
                 identity,
                 attachDescs,
-                originalMsgURI || null,
-                compType ?? Ci.nsIMsgCompType.New,
+                replaceHdr ? null : (originalMsgURI || null),
+                replaceHdr ? Ci.nsIMsgCompType.New : (compType ?? Ci.nsIMsgCompType.New),
                 Ci.nsIMsgCompDeliverMode.SaveAsDraft,
                 useHtml ? "text/html" : "text/plain"
               );
@@ -8065,6 +8278,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const saved = { success: true, messageId: composeFields.messageId.replace(/^<|>$/g, "") };
               const draftsFolder = getDraftsFolder(identity);
               if (draftsFolder) saved.folderPath = draftsFolder.URI;
+              if (replaceHdr) {
+                try {
+                  replaceHdr.folder.deleteMessages([replaceHdr], null, true, false, null, false);
+                } catch (e) {
+                  saved.warning = `New draft saved, but the old version could not be removed: ${e}`;
+                }
+              }
               return saved;
             }
             // END COMPOSE DRAFT SAVE
@@ -8450,11 +8670,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
 
             // Body saved or sent without a window: as given (UTF-8, no entity encoding), plus the identity signature for New.
-            function newMessageBody(body, isHtml, useHtml, identity) {
+            // plainHunks: the plain body as layoutComposeText hunks when not all of it is typed text
+            function newMessageBody(body, isHtml, useHtml, identity, withSignature = true, plainHunks = null) {
               const prefs = composeLayoutPrefs(identity);
-              const signature = signatureFor(identity, Ci.nsIMsgCompType.New, useHtml, false, prefs);
+              const signature = withSignature ? signatureFor(identity, Ci.nsIMsgCompType.New, useHtml, false, prefs) : "";
               const text = String(body || "");
-              if (!useHtml) return plainEditorOutput(layoutComposeText("new", { user: text, signature }, prefs));
+              if (!useHtml) return plainEditorOutput(layoutComposeText("new", { user: plainHunks || text, signature }, prefs));
               if (isHtml && /<html[\s>]/i.test(text)) {
                 const end = text.toLowerCase().lastIndexOf("</body>");
                 return composeHtmlOutput(end >= 0 ? text.slice(0, end) + signature + text.slice(end) : text + signature);
@@ -12441,6 +12662,153 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
+            // A message in a Drafts folder: explicit folderPath, else every accessible Drafts folder.
+            function locateDraft(draftId, folderPath) {
+              const id = normalizeMessageIdForDedup(draftId);
+              if (folderPath) {
+                const result = getAccessibleFolder(folderPath);
+                if (result.error) return result;
+                if (!result.folder.isSpecialFolder(Ci.nsMsgFolderFlags.Drafts, true)) {
+                  return { error: "folderPath is not a Drafts folder. draftId must be a draft (saveDraft result or a message in Drafts)." };
+                }
+                return findMessage(id, folderPath);
+              }
+              for (const account of getAccessibleAccounts()) {
+                let folders;
+                try { folders = account.incomingServer.rootFolder.getFoldersWithFlags(Ci.nsMsgFolderFlags.Drafts); } catch { continue; }
+                for (const folder of folders) {
+                  const found = findMessage(id, folder.URI);
+                  if (!found.error) return found;
+                }
+              }
+              return { error: `Draft not found: ${draftId}. Pass the messageId returned by saveDraft (and its folderPath).` };
+            }
+
+            /**
+             * saveDraft with draftId: the draft as Thunderbird reopens it (mimedrft.cpp
+             * mime_parse_stream_complete), with the passed fields replacing its own, saved
+             * again as a Draft compose, which removes the old version once the new one is stored.
+             */
+            async function updateDraft(args) {
+              try {
+                const located = locateDraft(args.draftId, args.folderPath);
+                if (located.error) return located;
+                const { msgHdr, folder } = located;
+
+                const mimeMsg = await loadMimeMessage(msgHdr);
+                if (!mimeMsg) return { error: "Could not read the existing draft; nothing was changed" };
+                // HTML part of multipart/alternative drafts keeps the formatting
+                const content = extractBodyContent(mimeMsg, true);
+                const existingIsHtml = !!(content.text && content.isHtml);
+                let existingBody = content.text || extractPlainTextBody(mimeMsg);
+                // BuildBodyMessageAndSignature restores flowed wrapping of plain drafts
+                if (!existingIsHtml && Services.prefs.getIntPref("mailnews.wraplength", 72)) existingBody = joinFlowedLines(existingBody);
+                const header = (name, all) => {
+                  const values = mimeMsg.headers?.[name] || [];
+                  return String((all ? values.join(", ") : values[0]) || "");
+                };
+                // The window shows recipients decoded; decoded names with commas stay quoted
+                const mailboxes = (name, all) => formatMailboxes(parseMailboxes(header(name, all)));
+                const attachments = [];
+                for (const att of mimeMsg.allUserAttachments || []) {
+                  try {
+                    attachments.push({ url: att.url, name: att.name, contentType: att.contentType });
+                  } catch {
+                    // Skip unreadable draft attachments
+                  }
+                }
+                const merged = mergeDraftFields(args, {
+                  to: mailboxes("to", true),
+                  cc: mailboxes("cc", true),
+                  bcc: mailboxes("bcc", true),
+                  // CreateMessage takes a reopened draft's subject from the database, a stripped "Re:" as "Re: "
+                  subject: (msgHdr.flags & Ci.nsMsgMessageFlags.HasRe ? "Re: " : "") + (msgHdr.mime2DecodedSubject || ""),
+                  body: existingBody,
+                  isHtml: existingIsHtml,
+                  attachments,
+                  references: header("references", true),
+                  replyTo: mailboxes("reply-to"),
+                  priority: header("x-priority") ? draftPriorityName(header("x-priority")) : "",
+                });
+
+                const msgComposeParams = Cc["@mozilla.org/messengercompose/composeparams;1"]
+                  .createInstance(Ci.nsIMsgComposeParams);
+                const composeFields = Cc["@mozilla.org/messengercompose/composefields;1"]
+                  .createInstance(Ci.nsIMsgCompFields);
+                msgComposeParams.type = Ci.nsIMsgCompType.New;
+                msgComposeParams.composeFields = composeFields;
+
+                // A reopened draft keeps its From and takes the identity of X-Identity-Key,
+                // unless the caller picks another identity
+                let from = args.from;
+                const keyed = from ? null : MailServices.accounts.allIdentities
+                  .find(id => id.key === header("x-identity-key").trim());
+                if (keyed && isIdentityAllowed(keyed)) {
+                  msgComposeParams.identity = keyed;
+                } else {
+                  if (!from) {
+                    const authorEmail = parseMailboxes(header("from") || msgHdr.author)[0]?.email || "";
+                    if (authorEmail && findIdentity(authorEmail)) from = authorEmail;
+                  }
+                  const identityResult = setComposeIdentity(msgComposeParams, from, folder.server);
+                  if (identityResult && identityResult.error) return identityResult;
+                }
+                if (!args.from && header("from")) composeFields.from = mailboxes("from");
+
+                composeFields.to = merged.to;
+                composeFields.cc = merged.cc;
+                composeFields.bcc = merged.bcc;
+                composeFields.subject = merged.subject;
+                // What CreateCompositionFields restores; In-Reply-To comes from References again (MimeMessage)
+                if (merged.replyTo) composeFields.replyTo = merged.replyTo;
+                if (merged.priority) composeFields.priority = merged.priority;
+                if (merged.references) composeFields.references = merged.references;
+                if (header("content-language")) composeFields.contentLanguage = header("content-language");
+                try {
+                  Object.assign(composeFields, draftInfoFields(header("x-mozilla-draft-info")));
+                } catch { /* TB without one of the fields */ }
+
+                // A new body replaces only the user's text: quote, forwarded message and signature stay.
+                // A reopened plain draft goes in with InsertTextWithQuotations, the new text is typed.
+                let { body, isHtml } = merged;
+                let plainHunks = args.body === undefined && !existingIsHtml ? [{ text: body, quotes: true }] : null;
+                if (args.body !== undefined && args.keepQuote !== false) {
+                  const identity = msgComposeParams.identity;
+                  const prefs = composeLayoutPrefs(identity);
+                  const knownSig = existingIsHtml ? "" : signatureFor(identity, Ci.nsIMsgCompType.New, false, true, { ...prefs, suppressSigSep: true });
+                  const parts = splitDraftBody(existingBody, existingIsHtml, knownSig);
+                  if (parts.kept) {
+                    let user;
+                    if (existingIsHtml) user = userBodyHtml(args.body, args.isHtml, prefs.paragraphMode);
+                    else user = args.isHtml ? htmlToPlainText(args.body, false, true, false).replace(/\n+$/, "") : String(args.body || "");
+                    body = parts.head + user + parts.tail;
+                    isHtml = existingIsHtml;
+                    if (!existingIsHtml) plainHunks = [{ text: parts.head, quotes: true }, user, { text: parts.tail, quotes: true }];
+                  }
+                }
+
+                // A reopened draft is edited in the format of its body (mimedrft.cpp); isHtml switches a replaced body
+                const { useHtml, format } = resolveComposeFormat(msgComposeParams.identity, isHtml ?? existingIsHtml, Ci.nsIMsgCompType.New);
+                msgComposeParams.format = format;
+                composeFields.body = newMessageBody(body, isHtml, useHtml, msgComposeParams.identity, false, plainHunks);
+
+                const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(args.attachments);
+                const replacedDraftId = msgHdr.messageId;
+                const result = await saveComposeFieldsAsDraft(
+                  composeFields, msgComposeParams.identity, [...merged.keptAttachments, ...fileDescs], useHtml, null, null, msgHdr
+                );
+                if (result.success) {
+                  let msg = "Draft updated";
+                  if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
+                  result.message = msg;
+                  result.replacedDraftId = replacedDraftId;
+                }
+                return result;
+              } catch (e) {
+                return { error: e.toString() };
+              }
+            }
+
             /**
              * Replies to a message with quoted original. mode "window" (default)
              * opens a compose window for review, "draft" saves the reply to Drafts,
@@ -14530,6 +14898,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "sendMail":
                   return await composeMail(args.to, args.subject, args.body, args.cc, args.bcc, args.isHtml, args.from, args.attachments, args.skipReview);
                 case "saveDraft":
+                  if (args.draftId) return await updateDraft(args);
                   return await saveDraft(args.to, args.subject, args.body, args.cc, args.bcc, args.isHtml, args.from, args.attachments);
                 case "replyToMessage":
                   return await replyToMessage(args.messageId, args.folderPath, args.body, args.replyAll, args.isHtml, args.to, args.cc, args.bcc, args.from, args.attachments, args.skipReview, args.mode);

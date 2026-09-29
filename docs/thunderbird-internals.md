@@ -170,8 +170,20 @@ unstuff); that is Thunderbird's behavior too.
 
 ### Reopened drafts
 
-A draft reopened and saved again keeps Reply-To, priority and the flags stored in `X-Mozilla-Draft-Info`. When
-editing a draft that contains a quote, only the gap before Thunderbird's markers (`moz-cite-prefix`,
+A draft reopened (`CreateCompositionFields` in `mimedrft.cpp`, then `nsMsgCompose::CreateMessage` with type `Draft`)
+and saved unchanged, as the bench checks:
+
+- From, To / Cc / Bcc as stored, Reply-To, Fcc, References, priority, Content-Language, the flags of
+  `X-Mozilla-Draft-Info` and the identity of `X-Identity-Key` are kept.
+- The subject comes from the message database, not the header: a stripped `Re:` comes back as one `Re: `, so
+  "Re: Re: x" becomes "Re: x".
+- `In-Reply-To` is not read; `MimeMessage` derives it again from the last References entry.
+- The editor opens in the format of the body part (`text/html` or `text/plain`), whatever the identity default.
+- The draft gets a new Message-ID, and the old version is removed through `draftId`.
+- A draft without `origURIs` gets the URI of its old version (the window's `originalMsgURI`), which is removed right
+  after; it has no effect.
+
+When editing a draft that contains a quote, only the gap before Thunderbird's markers (`moz-cite-prefix`,
 `blockquote type=cite`, `moz-forward-container`, `moz-signature`, the forward delimiter) should be replaced, not the
 whole body.
 
