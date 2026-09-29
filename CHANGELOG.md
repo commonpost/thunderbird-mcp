@@ -6,8 +6,21 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Breaking
+
+- `replyToMessage` with `skipReview` now needs explicit `to` and `from`, and `forwardMessage` with `skipReview` an
+  explicit `from`. A direct send no longer takes any address from the original message, which anyone can write: it
+  goes only to the caller's `to` / `cc` / `bcc` plus the sending identity's own automatic Cc / Bcc, with that
+  identity's Reply-To (a direct reply-all no longer adds the original's To / Cc). The result of a direct send lists
+  the `from`, `to`, `cc`, `bcc` and `replyTo` it went out with. By @mazixs in #26.
+
 ### Changed
 
+- Without `from`, `replyToMessage` and `forwardMessage` use the identity Thunderbird's own Reply / Forward picks
+  (`MailUtils.getIdentityForHeader`, as `ComposeMessage` in `mailCommands.js` calls it) instead of the account's
+  default identity: the identity the message was addressed to (To / Cc, then Delivered-To), the identity that sent
+  it for a reply to your own message, and for a catch-all identity the address the message was sent to. Identities
+  of accounts the MCP may not access are never picked. By @mazixs in #26.
 - README: a "Quick install" section at the top, in five steps, with the Claude Code command (Windows example included) and a bold reminder that the bridge is not updated with the extension. It also corrects the old advice to replace the bridge's `package.json` too: the release ships only `mcp-bridge.cjs`, which needs nothing else.
 - README: a new "Other MCP clients" section with the configuration file, location and format of Claude Desktop, VS Code, Cursor, OpenAI Codex CLI and Gemini CLI, checked against each client's documentation, and when and how to set `COMMONPOST_MCP_CONNECTION_FILE` (only if the bridge cannot find the connection file). The bridge is not tied to any client, and `mcpServers` is not the key every client uses.
 - RELEASING: the verification step now says that a rebase merge rewrites the commit date, so the reproducible hash built from the pull request branch cannot match the release; compare with a rebuild from a checkout of the tag.
