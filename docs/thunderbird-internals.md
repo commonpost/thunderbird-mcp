@@ -207,7 +207,7 @@ whole body.
 
 - Gloda's own domain query (as `GlodaAutoComplete` does) is
   `NOUN_IDENTITY.kind("email").valueLike(WILDCARD, "@example.com")`, i.e. SQL `LIKE '%@example.com'`: an exact,
-  case-insensitive suffix. `oscar@example.community` does not match `@example.com`, unlike a substring match.
+  case-insensitive suffix. `oscar@example.com.test` does not match `@example.com`, unlike a substring match.
   `involves(...)` then returns incoming and sent mail (From/To/Cc/Bcc).
 - Contacts often have no organization field, so "company -> contact -> domain" tends to find nothing; the domain is
   easier to get from mail (search the company name, read the sender addresses). Companies often use more than one

@@ -4317,12 +4317,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       settle({ success: true });
                     }).catch(e => {
                       timer.cancel();
-                      settle({ error: e.toString() });
+                      settle({ error: String(e) });
                     });
                   }
                 } catch (e) {
                   timer.cancel();
-                  settle({ error: e.toString() });
+                  settle({ error: String(e) });
                 }
               });
             }
