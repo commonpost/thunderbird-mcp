@@ -1,5 +1,5 @@
 /**
- * Compose decisions: mode resolution, reply recipients, References and body layout (nsMsgCompose.cpp / mimedrft.cpp ports).
+ * Compose decisions: mode resolution, reply recipients, References, draft merge, body layout (nsMsgCompose.cpp / mimedrft.cpp ports).
  */
 
 const { describe, it } = require('node:test');
@@ -17,9 +17,10 @@ const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${apiSource.slice(start, end)}
 this.api = { resolveComposeMode, composeModeRefusal, DIRECT_SEND_BLOCKED_ERROR, DRAFT_TOOL_DISABLED_ERROR, computeReplyRecipients, switchIdentityRecipients, buildReplyReferences, referenceIds,
+  mergeDraftFields, draftPriorityName, draftInfoFields,
   buildCitePrefix, divWrappedHtml, citeText, removePlaintextTag, stripDocumentTags, plainTextToForwardHtml, forwardHeaderRows,
   forwardHeaderTableHtml, forwardPlainText, joinFlowedLines, replaceFileURLs, frameSignature, frameImageSignature,
-  userBodyHtml, wrapHtmlDocument, layoutComposeHtml, layoutComposeText, removeQueryPart, tagEmbeddedObjects, serializerMetaCharset, plainEditorHtml };`, sandbox);
+  userBodyHtml, wrapHtmlDocument, layoutComposeHtml, layoutComposeText, splitDraftBody, removeQueryPart, tagEmbeddedObjects, serializerMetaCharset, plainEditorHtml };`, sandbox);
 const api = sandbox.api;
 const plain = v => JSON.parse(JSON.stringify(v));
 
@@ -207,6 +208,63 @@ describe('buildReplyReferences', () => {
     const chain = Array.from({ length: 60 }, (_, i) => `id${i}-${'x'.repeat(20)}@example.com`);
     const refs = api.buildReplyReferences(chain, 'orig@example.com');
     assert.equal(refs, [...chain, 'orig@example.com'].map(id => `<${id}>`).join(' '));
+  });
+});
+
+describe('mergeDraftFields', () => {
+  const existing = {
+    to: 'a@x.test', cc: 'b@x.test', bcc: '', subject: 'Old', body: '<p>Hi</p>', isHtml: true,
+    attachments: [{ url: 'mailbox:///d?number=1&part=1.2', name: 'a.pdf' }],
+    references: '<root@x>',
+  };
+
+  it('keeps everything that is not passed', () => {
+    const m = plain(api.mergeDraftFields({ subject: 'New' }, existing));
+    assert.equal(m.subject, 'New');
+    assert.equal(m.to, 'a@x.test');
+    assert.equal(m.body, '<p>Hi</p>');
+    assert.equal(m.isHtml, true);
+    assert.equal(m.keptAttachments.length, 1);
+    assert.equal(m.references, '<root@x>');
+  });
+
+  it('lets explicit empty strings clear fields', () => {
+    const m = api.mergeDraftFields({ cc: '' }, existing);
+    assert.equal(m.cc, '');
+  });
+
+  it('a new body is typed text unless isHtml says otherwise', () => {
+    assert.equal(api.mergeDraftFields({ body: 'plain' }, existing).isHtml, undefined);
+    assert.equal(api.mergeDraftFields({ body: 'plain', isHtml: false }, existing).isHtml, false);
+  });
+
+  it('drops old attachments only with keepAttachments false', () => {
+    assert.equal(api.mergeDraftFields({ keepAttachments: false }, existing).keptAttachments.length, 0);
+  });
+
+  it('keeps Reply-To and priority of the draft', () => {
+    const m = api.mergeDraftFields({ body: 'x' }, { ...existing, replyTo: 'Desk <desk@x.test>', priority: 'High' });
+    assert.equal(m.replyTo, 'Desk <desk@x.test>');
+    assert.equal(m.priority, 'High');
+  });
+});
+
+describe('reopened draft fields (mimedrft.cpp)', () => {
+  it('draftPriorityName reads digits first, then names', () => {
+    assert.equal(api.draftPriorityName('2 (High)'), 'High');
+    assert.equal(api.draftPriorityName('1 (Highest)'), 'Highest');
+    assert.equal(api.draftPriorityName('Lowest'), 'Lowest');
+    assert.equal(api.draftPriorityName('low'), 'Low');
+    assert.equal(api.draftPriorityName('urgent'), 'High');
+    assert.equal(api.draftPriorityName('whatever'), 'None');
+  });
+
+  it('draftInfoFields restores the flags of X-Mozilla-Draft-Info', () => {
+    assert.deepEqual(plain(api.draftInfoFields('internal/draft; vcard=1; receipt=2; DSN=1; uuencode=0; attachmentreminder=1; deliveryformat=4')),
+      { attachVCard: true, returnReceipt: true, DSN: true, attachmentReminder: true, receiptHeaderType: 1, deliveryFormat: 4 });
+    assert.deepEqual(plain(api.draftInfoFields('internal/draft; vcard=0; receipt=0; DSN=0; uuencode=0')),
+      { attachVCard: false, returnReceipt: false, DSN: false, attachmentReminder: false });
+    assert.deepEqual(plain(api.draftInfoFields('')), {});
   });
 });
 
@@ -408,6 +466,87 @@ describe('compose body layout (ConvertAndLoadComposeWindow)', () => {
 
   it('wraps the body in a UTF-8 document', () => {
     assert.equal(api.wrapHtmlDocument('x'), '<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body>x</body></html>');
+  });
+});
+
+describe('splitDraftBody', () => {
+  const join = p => p.head + p.user + p.tail;
+  const check = (body, isHtml, user, known) => {
+    const p = api.splitDraftBody(body, isHtml, known);
+    assert.equal(join(p), body);
+    assert.equal(p.user, user);
+    return p;
+  };
+  // Serialized as Thunderbird saves a draft
+  const nativeBottom = [
+    '<!DOCTYPE html>', '<html>', '  <head>', '    <meta http-equiv="content-type" content="text/html; charset=UTF-8">', '  </head>', '  <body>',
+    '    <div class="moz-cite-prefix">On 3/12/26 12:00 PM, Hana Eta wrote:<br>', '    </div>',
+    '    <blockquote type="cite" cite="mid:m@x">', '      <div class="moz-signature">-- <br>Hana</div>', '    </blockquote>',
+    '    <p>Thanks, <b>noted</b>.<br>', '    </p>',
+    '    <div class="moz-signature">-- <br>', '      Bench <b>User</b></div>', '  </body>', '</html>', ''].join('\n');
+
+  it('HTML bottom-post: the text between the quote and the signature', () => {
+    const p = check(nativeBottom, true, '<p>Thanks, <b>noted</b>.<br>\n    </p>');
+    assert.ok(p.kept);
+    assert.ok(p.head.includes('<blockquote') && p.head.includes('Hana</div>'));
+    assert.ok(p.tail.startsWith('\n    <div class="moz-signature">'));
+  });
+
+  it('HTML top-post: the text above the quote, separators kept', () => {
+    const body = '<html><body>Hi<br>there<br><br><div class="moz-cite-prefix">A wrote:<br></div><blockquote type="cite">Q</blockquote><br><div class="moz-signature">-- <br>S</div></body></html>';
+    const p = check(body, true, 'Hi<br>there');
+    assert.ok(p.tail.startsWith('<br><br><div class="moz-cite-prefix">'));
+  });
+
+  it('HTML without typed text: the caret position of the window', () => {
+    let p = check('<html><body><br><br><div class="moz-cite-prefix">A:<br></div><blockquote type="cite">Q</blockquote></body></html>', true, '');
+    assert.equal(p.head, '<html><body>');
+    p = check('<html><body><div class="moz-cite-prefix">A:<br></div><blockquote type="cite">Q</blockquote><br><br><div class="moz-signature">S</div></body></html>', true, '');
+    assert.ok(p.head.endsWith('</blockquote>') && p.tail.startsWith('<br><br><div class="moz-signature">'));
+    check('<html><body><div class="moz-cite-prefix">A:<br></div><blockquote type="cite">Q</blockquote><p><br></p></body></html>', true, '<p><br></p>');
+  });
+
+  it('HTML forward: the forward container and the signature stay', () => {
+    const body = '<html><body><p>FYI</p><div class="moz-forward-container"><br><br>-------- Forwarded Message --------<table><tr><td><div>x</div></td></tr></table><br><br>B</div><br><div class="moz-signature">S</div></body></html>';
+    const p = check(body, true, '<p>FYI</p>');
+    assert.ok(p.tail.startsWith('<div class="moz-forward-container">') && p.tail.endsWith('S</div></body></html>'));
+    // Older drafts without a container
+    check('<html><body>FYI<br><br>-------- Forwarded Message --------<br>Subject: X</body></html>', true, 'FYI');
+  });
+
+  it('HTML: blocks nested in user markup or comments do not count', () => {
+    const wrapped = '<html><body><div>Hi<blockquote type="cite">Q</blockquote></div></body></html>';
+    const p = api.splitDraftBody(wrapped, true);
+    assert.equal(p.kept, false);
+    assert.equal(p.user, '<div>Hi<blockquote type="cite">Q</blockquote></div>');
+    check('<body><!-- <div class="moz-signature"> -->Hi<br><div class="moz-signature">S</div></body>', true, '<!-- <div class="moz-signature"> -->Hi');
+    check('<body>Hi<style>.a{content:"<div class=moz-signature>"}</style><div class="moz-signature">S</div></body>', true, 'Hi<style>.a{content:"<div class=moz-signature>"}</style>');
+  });
+
+  it('plain bottom-post and top-post', () => {
+    check('On 1/2/26, A wrote:\n> Hi\n> there\nThanks\n\n-- \nBench\n', false, 'Thanks');
+    check('Thanks\nBob\n\nOn 1/2/26, A wrote:\n> Hi\n\n-- \nS\n', false, 'Thanks\nBob');
+    check('\nOn 1/2/26, A wrote:\n> Hi\n\n\n-- \nS\n', false, '');
+    const p = api.splitDraftBody('On 1/2/26, A wrote:\n> Hi\n\n\n-- \nS\n', false);
+    assert.equal(p.head, 'On 1/2/26, A wrote:\n> Hi\n');
+  });
+
+  it('plain signature without "-- " is found from the identity signature', () => {
+    check('Thanks\n\nBench\nUser\n\nOn 1/2/26, A wrote:\n> Hi\n', false, 'Thanks', '\nBench\nUser\n');
+    check('Thanks\n\nBench\nUser\n\nOn 1/2/26, A wrote:\n> Hi\n', false, 'Thanks\n\nBench\nUser', '');
+  });
+
+  it('plain forward and the original-message delimiter above a quote', () => {
+    check('FYI\n\n-------- Forwarded Message --------\nSubject: X\n\n-- \norig sig\n', false, 'FYI');
+    check('-------- Original Message --------\n> Hi\n\nOk\n', false, 'Ok');
+    check('\n\n-------- Original Message --------\n\n> Hi\n\nOk\n', false, 'Ok');
+  });
+
+  it('a draft without blocks is replaced as a whole', () => {
+    assert.deepEqual(plain(api.splitDraftBody('<html><body>Just text: here</body></html>', true)),
+      { head: '<html><body>', user: 'Just text: here', tail: '</body></html>', kept: false });
+    assert.equal(api.splitDraftBody('Note: call Bob\nTomorrow', false).kept, false);
+    assert.equal(api.splitDraftBody('', false).kept, false);
   });
 });
 
