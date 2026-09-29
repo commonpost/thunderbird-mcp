@@ -6,6 +6,13 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Breaking
+- `replyToMessage` with `skipReview` now needs explicit `to` and `from`, and `forwardMessage` with `skipReview` an
+  explicit `from`. A direct send no longer takes any address from the original message, which anyone can write: it
+  goes only to the caller's `to` / `cc` / `bcc` plus the sending identity's own automatic Cc / Bcc, with that
+  identity's Reply-To (a direct reply-all no longer adds the original's To / Cc). The result of a direct send lists
+  the `from`, `to`, `cc`, `bcc` and `replyTo` it went out with.
+
 ### Added
 - Test bench on a real Thunderbird: `npm run test:tb` (`scripts/tb-bench.sh`) runs a downloaded Thunderbird headless
   with a throwaway profile and synthetic mail (`test/fixtures/mail`), and runs `test/bench/*.test.cjs` against it
@@ -15,6 +22,11 @@ project is kept in this repository.
   searches and filters mail, with the Thunderbird source of each rule and what was verified on a real Thunderbird.
 
 ### Changed
+- Without `from`, `replyToMessage` and `forwardMessage` use the identity Thunderbird's own Reply / Forward picks
+  (`MailUtils.getIdentityForHeader`, as `ComposeMessage` in `mailCommands.js` calls it) instead of the account's
+  default identity: the identity the message was addressed to (To / Cc, then Delivered-To), the identity that sent
+  it for a reply to your own message, and for a catch-all identity the address the message was sent to. Identities
+  of accounts the MCP may not access are never picked.
 - `mcp-bridge.cjs`: a `sendMail`, `replyToMessage` or `forwardMessage` call made with `skipReview` (direct send, no
   compose window) now waits up to 150 s for Thunderbird's answer instead of 30 s, so the bridge no longer gives up
   before Thunderbird's own 120 s send timeout. Every other call keeps the 30 s limit. If the wait still runs out,
