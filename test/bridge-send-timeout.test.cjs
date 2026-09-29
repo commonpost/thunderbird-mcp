@@ -9,6 +9,7 @@ const http = require('node:http');
 const net = require('node:net');
 
 const {
+  forwardFailureResponse,
   isDirectSendCall,
   requestOptionsFor,
   requestTimeouts,
@@ -189,5 +190,43 @@ describe('connection lost during a direct send', () => {
     } finally {
       ok.close();
     }
+  });
+});
+
+describe('tool result for a failed forward', () => {
+  async function timeoutFrom(message) {
+    const server = await new Promise((resolve) => {
+      const s = http.createServer(() => { /* never answers */ });
+      s.listen(0, '127.0.0.1', () => resolve(s));
+    });
+    try {
+      const options = { ...requestOptionsFor(message), timeoutMs: 50 };
+      return await tryRequest('127.0.0.1', '{}', server.address().port, 'a'.repeat(64), options).then(
+        () => assert.fail('expected a timeout'), (err) => err);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+  const errorText = (response) => JSON.parse(response.result.content[0].text).error;
+
+  it('adds that the operation may still complete to an ordinary timeout', async () => {
+    const message = call('searchMessages', { query: 'x' });
+    const response = forwardFailureResponse(message, await timeoutFrom(message));
+    assert.equal(response.id, 1);
+    assert.equal(response.result.isError, true);
+    assert.equal(errorText(response), 'Request to Thunderbird timed out. The operation may still complete in Thunderbird.');
+  });
+
+  it('keeps only the outcome-unknown advice for a direct send', async () => {
+    const message = call('sendMail', { skipReview: true });
+    const text = errorText(forwardFailureResponse(message, await timeoutFrom(message)));
+    assert.match(text, /outcome is UNKNOWN/);
+    assert.doesNotMatch(text, /may still complete/);
+  });
+
+  it('passes other failures through unchanged', () => {
+    const response = forwardFailureResponse(call('sendMail', {}), new Error('Connection failed: connect ECONNREFUSED'));
+    assert.equal(errorText(response), 'Connection failed: connect ECONNREFUSED');
   });
 });
