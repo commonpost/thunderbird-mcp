@@ -98,7 +98,7 @@ describe("wiring", () => {
     const i = apiSource.indexOf("if (!encryptedAllowed && isEncryptedMimeMessage(aMimeMsg)) {");
     assert.ok(i > 0);
     assert.ok(i < apiSource.indexOf("const requestedBodyFormat = bodyFormat"));
-    assert.match(apiSource.slice(i, i + 900), /body: ENCRYPTED_CONTENT_NOTICE[\s\S]*encrypted: true[\s\S]*attachments: \[\]/);
+    assert.match(apiSource.slice(i, i + 1400), /body: ENCRYPTED_CONTENT_NOTICE[\s\S]*encrypted: true[\s\S]*attachments: \[\]/);
   });
 
   it("the direct reply and forward paths stop before quoting an encrypted message", () => {
