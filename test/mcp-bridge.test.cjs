@@ -584,6 +584,53 @@ describe('Bridge discovery', () => {
     assert.equal(readConnectionInfo(options), null);
   });
 
+  // N7, real Snap + Flatpak run (2026-09-29): Flathub currently publishes
+  // org.mozilla.thunderbird (lowercase) and org.mozilla.thunderbird_esr as
+  // separate apps; installing the older org.mozilla.Thunderbird id now
+  // redirects to org.mozilla.thunderbird_esr. One test per accepted id, plus
+  // the exact-case and unknown-id refusals the same real run asked for.
+  for (const appId of ['org.mozilla.thunderbird', 'org.mozilla.thunderbird_esr', 'org.mozilla.Thunderbird', 'eu.betterbird.Betterbird']) {
+    it(`flatpak scan accepts ${appId}`, WIN32_REAL_POSIX_FS_SKIP, () => {
+      const options = makeTestOptions(root, {
+        platform: 'linux',
+        runtimeDir: path.join(root, 'runtime'),
+      });
+      writeConnectionFile(
+        path.join(options.runtimeDir, 'app', appId, 'commonpost-mcp', 'connection.json'),
+        { port: 21001, token: `${appId}-token` }
+      );
+      const connInfo = readConnectionInfo(options);
+      assert.equal(connInfo && connInfo.token, `${appId}-token`, appId);
+    });
+  }
+
+  it('flatpak scan refuses an unknown app id (e.g. org.mozilla.firefox)', () => {
+    const options = makeTestOptions(root, {
+      platform: 'linux',
+      runtimeDir: path.join(root, 'runtime'),
+    });
+    assert.ok(!FLATPAK_APP_IDS.includes('org.mozilla.firefox'));
+    writeConnectionFile(
+      path.join(options.runtimeDir, 'app', 'org.mozilla.firefox', 'commonpost-mcp', 'connection.json'),
+      { port: 29995, token: 'firefox-token' }
+    );
+    assert.equal(readConnectionInfo(options), null);
+  });
+
+  it('flatpak scan is case-sensitive: a differently-cased, unlisted id is refused', () => {
+    const options = makeTestOptions(root, {
+      platform: 'linux',
+      runtimeDir: path.join(root, 'runtime'),
+    });
+    const wrongCase = 'ORG.MOZILLA.THUNDERBIRD';
+    assert.ok(!FLATPAK_APP_IDS.includes(wrongCase));
+    writeConnectionFile(
+      path.join(options.runtimeDir, 'app', wrongCase, 'commonpost-mcp', 'connection.json'),
+      { port: 29994, token: 'wrong-case-token' }
+    );
+    assert.equal(readConnectionInfo(options), null);
+  });
+
   it('macOS scan finds current uid files and ignores other owners', WIN32_REAL_POSIX_FS_SKIP, () => {
     // Pin a synthetic uid rather than process.getuid(). On Windows the real
     // fs.statSync reports uid=0 for every file regardless of the caller, so we

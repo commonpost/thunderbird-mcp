@@ -165,7 +165,7 @@ The bridge re-discovers `connection.json` on every cache miss. It tries these lo
 2. Native temp dir: `<os.tmpdir()>/commonpost-mcp/connection.json`
 3. macOS fallback: `/var/folders/*/*/T/commonpost-mcp/connection.json` owned by the current user
 4. Linux Snap: only from a process that is really the confined Thunderbird snap (`/proc/<pid>/exe` resolves under `/snap/thunderbird/` and `SNAP_NAME=thunderbird` is in its environment), read from its live `TMPDIR`; the official snap's own `~/Downloads/thunderbird.tmp` fallback is tried only once such a process was actually seen
-5. Linux Flatpak / Betterbird Flatpak: the real `/run/user/<uid>` (verified by `lstat`, never trusted from `$XDG_RUNTIME_DIR`), under a closed list of app ids (`org.mozilla.Thunderbird`, `net.thunderbird.Thunderbird`, `eu.betterbird.Betterbird`)
+5. Linux Flatpak / Betterbird Flatpak: the real `/run/user/<uid>` (verified by `lstat`, never trusted from `$XDG_RUNTIME_DIR`), under a closed list of app ids (`org.mozilla.thunderbird`, `org.mozilla.thunderbird_esr`, `org.mozilla.Thunderbird`, `eu.betterbird.Betterbird`)
 
 This covers native installs, the official Thunderbird snap, Thunderbird Flatpak (including its beta channel, which shares the same app id installed from a different remote), and Betterbird Flatpak, without changing the extension side. If multiple sandbox candidates exist at once, the bridge tries the newest file first. Set `COMMONPOST_MCP_CONNECTION_FILE` to force a single explicit path.
 
