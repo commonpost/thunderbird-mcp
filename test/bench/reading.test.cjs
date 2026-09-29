@@ -20,13 +20,13 @@ describe("reading", { skip: SKIP }, () => {
     }
   });
 
-  it("returns the HTML part of multipart/alternative as Markdown", { todo: "needs the web globals import (#13)" }, async () => {
+  it("returns the HTML part of multipart/alternative as Markdown", async () => {
     const msg = await mcp().call("getMessage", { messageId: "html-alt@eta.test", folderPath: FOLDER.inbox });
     assert.match(msg.body, /\*\*Q1\*\*/);
     assert.match(msg.body, /\[report\]\(https:\/\/example\.com\/q1\)/);
   });
 
-  it("returns inline images as MCP image content", { todo: "needs the web globals import (#13)" }, async () => {
+  it("returns inline images as MCP image content", async () => {
     const msg = await mcp().request("tools/call", {
       name: "getMessage",
       arguments: { messageId: "inline-image@phi.test", folderPath: FOLDER.inbox, includeInlineImages: true },
