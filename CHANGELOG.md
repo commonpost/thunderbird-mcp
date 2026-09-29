@@ -26,7 +26,7 @@ project is kept in this repository.
     computed one.
   - The draft stores the state Thunderbird's own reply or forward draft stores (`origURIs`, `queuedDisposition`), so
     the original is marked as replied or forwarded when the draft is sent, not when it is saved.
-  - The body is quoted by the tool, as for a direct send.
+  - A reply draft gets the body described under Changed; a forward draft's body is still quoted by the tool.
 - Test bench on a real Thunderbird: `npm run test:tb` (`scripts/tb-bench.sh`) runs a downloaded Thunderbird headless
   with a throwaway profile and synthetic mail (`test/fixtures/mail`), and runs `test/bench/*.test.cjs` against it
   through `mcp-bridge.cjs`, with Marionette for privileged checks. Works with 140 ESR, 153 ESR and 156. See
@@ -35,6 +35,14 @@ project is kept in this repository.
   searches and filters mail, with the Thunderbird source of each rule and what was verified on a real Thunderbird.
 
 ### Changed
+- A reply without a window (`mode: "draft"` or `"send"`), `saveDraft` and `sendMail` with `skipReview` get the body
+  Thunderbird's compose window would save with the same text typed at its caret: the localized cite line
+  (`mailnews.reply_header_type`), the quote from Thunderbird's own quoting (`nsIMsgQuote`) with the original's HTML
+  formatting, the identity's signature (text, HTML, file or image) placed by its reply position and signature
+  settings, HTML in UTF-8, plain text as `format=flowed` wrapped at `mailnews.wraplength`. Before, a reply quoted the
+  plain-text body by hand under an English "On ..., ... wrote:" line without a signature, a new message got no
+  signature, a plain body went out labeled `format=flowed` without being flowed, and an HTML body (`isHtml: true`)
+  had every non-ASCII character written as a `&#...;` reference, which made a Cyrillic body several times larger.
 - `saveDraft` saves through `nsIMsgCompose`, as Thunderbird's compose window does, and returns the new draft's
   `messageId` and `folderPath`. If `nsIMsgCompose` cannot be used, it falls back to the previous `nsIMsgSend` path.
 - `forwardMessage` no longer requires `to`, except with `mode: "send"` (or `skipReview`).
