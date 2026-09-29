@@ -32,6 +32,16 @@ describe('direct-send timeout selection', () => {
     }
   });
 
+  it('uses 150 s for replyToMessage and forwardMessage with mode send', () => {
+    for (const name of ['replyToMessage', 'forwardMessage']) {
+      for (const args of [{ mode: 'send' }, { mode: 'send', skipReview: false }]) {
+        const message = call(name, args);
+        assert.equal(isDirectSendCall(message), true, `${name} ${JSON.stringify(args)}`);
+        assert.deepEqual(requestOptionsFor(message), { timeoutMs: 150000, directSend: true });
+      }
+    }
+  });
+
   it('treats any truthy skipReview as a possible direct send, like the extension does', () => {
     assert.equal(isDirectSendCall(call('sendMail', { skipReview: 'false' })), true);
   });
@@ -43,6 +53,10 @@ describe('direct-send timeout selection', () => {
       call('sendMail', { skipReview: false }),
       call('sendMail', undefined),
       call('replyToMessage', { skipReview: 0 }),
+      call('replyToMessage', { mode: 'draft' }),
+      call('forwardMessage', { mode: 'window' }),
+      call('forwardMessage', { mode: 'SEND' }),
+      call('searchMessages', { mode: 'send' }),
       call('searchMessages', { skipReview: true }),
       call('createEvent', { skipReview: true }),
       { jsonrpc: '2.0', id: 2, method: 'tools/list' },

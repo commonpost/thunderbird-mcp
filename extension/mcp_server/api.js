@@ -1960,6 +1960,169 @@ function assertFilterListGuard(filterList, operation, targetIndex) {
 }
 // END FILTER RULE HELPERS
 
+// Reply/forward/draft decisions. Pure: XPCOM glue lives in getAPI().
+// BEGIN COMPOSE HELPERS
+const COMPOSE_MODES = ["window", "draft", "send"];
+
+// Explicit mode wins; legacy skipReview means "send".
+function resolveComposeMode(mode, skipReview) {
+  if (COMPOSE_MODES.includes(mode)) return mode;
+  return skipReview ? "send" : "window";
+}
+
+const mailboxKey = mailbox => String(mailbox?.email || "").toLowerCase();
+
+// RemoveDuplicateAddresses (MimeJSComponents): drops mailboxes already seen or listed in `remove`.
+function removeDuplicateMailboxes(list, remove = []) {
+  const seen = new Set(remove.map(mailboxKey));
+  return list.filter(mailbox => {
+    const key = mailboxKey(mailbox);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * Reply recipients, ported 1:1 from QuotingOutputStreamListener::OnStopRequest
+ * (nsMsgCompose.cpp, Thunderbird 156). Lists are [{ name, email }].
+ * original: { from, to, cc, bcc, replyTo, mailReplyTo, mailFollowupTo, listPost }
+ *   (listPost: the address inside List-Post's <mailto:...>, or the raw value).
+ * ctx: { ownEmails: identity emails in account order (reply-to-self check),
+ *   senderEmail, autoCc, autoBcc, identityReplyTo, overrideListReplyTo }.
+ * Returns { to, cc, bcc, replyTo, from, replyToSelf, selfEmail }; from is set only for a reply to self.
+ */
+function computeReplyRecipients(original, ctx, replyAll) {
+  const o = { from: [], to: [], cc: [], bcc: [], replyTo: [], mailReplyTo: [], mailFollowupTo: [], listPost: "", ...original };
+  const toEmails = o.to.map(mailboxKey);
+  const ccEmails = o.cc.map(mailboxKey);
+  const ownEmails = (ctx.ownEmails || []).map(email => String(email).toLowerCase());
+  const fromEmail = mailboxKey(o.from[0]);
+
+  // Own message, unless another identity of ours is in To (without Bcc) or Cc
+  let replyToSelf = false;
+  let selfEmail = "";
+  if (fromEmail && ownEmails.includes(fromEmail)) {
+    replyToSelf = true;
+    selfEmail = fromEmail;
+    for (const email of ownEmails) {
+      if (toEmails.includes(email)) {
+        replyToSelf = o.bcc.length > 0;
+        break;
+      }
+      if (ccEmails.includes(email)) {
+        replyToSelf = false;
+        break;
+      }
+    }
+  }
+
+  // Reply-To pointing at the list (Reply-To munging): answer the author instead
+  const listMunged = ctx.overrideListReplyTo !== false && !!o.listPost &&
+    o.replyTo.some(m => `${m.name || ""} <${m.email || ""}>`.includes(o.listPost));
+
+  // Starting point: what CreateMessage put in from the identity
+  let from = [];
+  let to;
+  let cc = [...(ctx.autoCc || [])];
+  let bcc = [...(ctx.autoBcc || [])];
+  let replyTo = [...(ctx.identityReplyTo || [])];
+  let removeDup = false;
+
+  if (!replyAll) {
+    if (replyToSelf) {
+      from = o.from;
+      to = o.to;
+      replyTo = o.replyTo;
+    } else if (o.mailReplyTo.length) {
+      to = o.mailReplyTo;
+      removeDup = true;
+    } else if (o.replyTo.length) {
+      to = listMunged ? o.from : o.replyTo;
+      removeDup = true;
+    } else {
+      to = o.from;
+    }
+  } else if (replyToSelf) {
+    from = o.from;
+    to = o.to;
+    cc = o.cc;
+    if (o.bcc.length) bcc = o.bcc;
+    replyTo = o.replyTo;
+    removeDup = true;
+  } else if (!o.mailFollowupTo.length) {
+    const first = o.replyTo.length ? (listMunged ? [...o.replyTo, ...o.from] : o.replyTo) : o.from;
+    to = [...first, ...o.to];
+    cc = [...cc, ...o.cc];
+    removeDup = true;
+  } else {
+    to = o.mailFollowupTo;
+    removeDup = true;
+  }
+
+  if (removeDup) {
+    const myEmail = from[0]?.email || ctx.senderEmail || "";
+    if (!replyToSelf) to = removeDuplicateMailboxes(to, [{ email: myEmail }]);
+    // Own address stays in Cc only when the identity auto-Ccs itself
+    const keepMeInCc = (ctx.autoCc || []).some(m => m.email === myEmail);
+    cc = removeDuplicateMailboxes(cc, keepMeInCc ? to : [...to, { email: myEmail }]);
+    bcc = removeDuplicateMailboxes(bcc, cc);
+    if (bcc.length) bcc = removeDuplicateMailboxes(bcc, to);
+  }
+  return { to, cc, bcc, replyTo, from, replyToSelf, selfEmail: replyToSelf ? selfEmail : "" };
+}
+
+/**
+ * LoadIdentity (MsgComposeCommands.js) when the compose window switches identity:
+ * the old identity's Reply-To / auto Cc / auto Bcc are removed (first match each),
+ * the new ones added, auto Cc / Bcc only if not already addressed.
+ * fields: { to, cc, bcc, replyTo } lists; prev / next: { replyTo, cc, bcc } header strings
+ * (cc / bcc empty unless enabled); parse: header -> [{ name, email }].
+ */
+function switchIdentityRecipients(fields, prev, next, parse) {
+  const out = { ...fields };
+  const removeFirst = (list, header) => {
+    const result = [...list];
+    for (const m of parse(header)) {
+      const index = result.findIndex(r => r.name === m.name && r.email === m.email);
+      if (index >= 0) result.splice(index, 1);
+    }
+    return result;
+  };
+  if (next.replyTo !== prev.replyTo) {
+    if (prev.replyTo) out.replyTo = removeFirst(out.replyTo, prev.replyTo);
+    if (next.replyTo) out.replyTo = [...out.replyTo, ...parse(next.replyTo)];
+  }
+  const toCc = new Set([...fields.to, ...fields.cc].map(m => m.email));
+  let newCc = [];
+  if (next.cc !== prev.cc) {
+    if (prev.cc) out.cc = removeFirst(out.cc, prev.cc);
+    newCc = parse(next.cc).filter(m => !toCc.has(m.email));
+    out.cc = [...out.cc, ...newCc];
+  }
+  if (next.bcc !== prev.bcc) {
+    const addressed = new Set([...toCc, ...newCc.map(m => m.email), ...fields.bcc.map(m => m.email)]);
+    if (prev.bcc) out.bcc = removeFirst(out.bcc, prev.bcc);
+    out.bcc = [...out.bcc, ...parse(next.bcc).filter(m => !addressed.has(m.email))];
+  }
+  return out;
+}
+
+// References for a reply: the original chain plus the original id (last, In-Reply-To is taken from it). Not trimmed:
+// MimeMessage keeps the header under 998 characters when it writes the message, as for Thunderbird's own reply.
+function buildReplyReferences(originalReferences, originalMessageId) {
+  const clean = raw => String(raw || "").trim().replace(/^<|>$/g, "");
+  const own = clean(originalMessageId);
+  const ids = [];
+  for (const raw of originalReferences || []) {
+    const id = clean(raw);
+    if (id && id !== own && !ids.includes(id)) ids.push(id);
+  }
+  if (own) ids.push(own);
+  return ids.map(id => `<${id}>`).join(" ");
+}
+// END COMPOSE HELPERS
+
 // eslint-disable-next-line no-unused-vars -- read by Thunderbird: the Experiment API namespace "commonpostMcp" (schema.json)
 var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
   getAPI(context) {
@@ -2182,7 +2345,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "saveDraft",
         group: "messages", crud: "create",
         title: "Save Draft",
-        description: "Save a composed message to the identity's Drafts folder without sending or opening a compose window. Useful when a human will review and send the message later from Thunderbird.",
+        description: "Save a composed message to the identity's Drafts folder without sending or opening a compose window, as Thunderbird's compose window saves it; returns messageId + folderPath. Useful when a human will review and send the message later from Thunderbird.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2440,7 +2603,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "replyToMessage",
         group: "messages", crud: "create",
         title: "Reply to Message",
-        description: "Reply in a compose window with quoted original text for review. The skipReview safety block is on by default; direct sending is honored only when the user explicitly disables that preference.",
+        description: "Reply with quoted original text. mode: window (compose window for review, default), draft (save to Drafts with the recipients Thunderbird computes: Reply-To, Mail-Followup-To, mailing lists, identity auto Cc/Bcc; returns messageId + folderPath), send (direct, needs to and from; blocked unless the user disables the skipReview safety block).",
         inputSchema: {
           type: "object",
           properties: {
@@ -2449,11 +2612,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             body: { type: "string", description: "Reply body text" },
             replyAll: { type: "boolean", description: "Reply to all recipients (default: false)" },
             isHtml: { type: "boolean", description: "Set to true if body contains HTML markup (default: false)" },
-            to: { type: "string", description: "Override the recipients Thunderbird computes (required with skipReview)" },
+            mode: { type: "string", enum: ["window", "draft", "send"], description: "window (default), draft or send" },
+            to: { type: "string", description: "Override the recipients Thunderbird computes (required with mode send)" },
             cc: { type: "string", description: "CC recipients (comma-separated)" },
             bcc: { type: "string", description: "BCC recipients (comma-separated)" },
-            from: { type: "string", description: "Sender identity (email address or identity ID from listAccounts); default: the identity the message was addressed to, as in Thunderbird. Required with skipReview." },
-            skipReview: { type: "boolean", description: "Request direct sending without a compose window; needs to and from, nothing is taken from the original message. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)." },
+            from: { type: "string", description: "Sender identity (email address or identity ID from listAccounts); default: the identity the message was addressed to, as in Thunderbird. Required with mode send." },
+            skipReview: { type: "boolean", description: "Legacy: true means mode send (default: false)" },
             attachments: {
               type: "array",
               maxItems: MAX_ATTACHMENTS_PER_MESSAGE,
@@ -2487,19 +2651,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "forwardMessage",
         group: "messages", crud: "create",
         title: "Forward Message",
-        description: "Forward in a compose window with original content for review. The skipReview safety block is on by default; direct sending is honored only when the user explicitly disables that preference.",
+        description: "Forward with the original content and attachments. mode: window (compose window for review, default), draft (save to Drafts, to optional; returns messageId + folderPath), send (direct, needs to and from; blocked unless the user disables the skipReview safety block).",
         inputSchema: {
           type: "object",
           properties: {
             messageId: { type: "string", description: "The message ID to forward (from searchMessages results)" },
             folderPath: { type: "string", description: "The folder URI path (from searchMessages results)" },
-            to: { type: "string", description: "Recipient email address" },
+            to: { type: "string", description: "Recipient email address (required with mode send)" },
             body: { type: "string", description: "Additional text to prepend (optional)" },
+            mode: { type: "string", enum: ["window", "draft", "send"], description: "window (default), draft or send" },
             isHtml: { type: "boolean", description: "Set to true if body contains HTML markup (default: false)" },
             cc: { type: "string", description: "CC recipients (comma-separated)" },
             bcc: { type: "string", description: "BCC recipients (comma-separated)" },
-            from: { type: "string", description: "Sender identity (email address or identity ID from listAccounts); default: the identity the message was addressed to, as in Thunderbird. Required with skipReview." },
-            skipReview: { type: "boolean", description: "Request direct sending without a compose window; needs from. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)." },
+            from: { type: "string", description: "Sender identity (email address or identity ID from listAccounts); default: the identity the message was addressed to, as in Thunderbird. Required with mode send." },
+            skipReview: { type: "boolean", description: "Legacy: true means mode send (default: false)" },
             attachments: {
               type: "array",
               maxItems: MAX_ATTACHMENTS_PER_MESSAGE,
@@ -2526,7 +2691,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               },
             },
           },
-          required: ["messageId", "folderPath", "to"],
+          required: ["messageId", "folderPath"],
         },
       },
       {
@@ -3634,6 +3799,103 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               });
             }
 
+            function mimeHeaderValue(mimeMsg, name) {
+              try {
+                if (typeof mimeMsg?.get === "function") return mimeMsg.get(name) || "";
+                return mimeMsg?.headers?.[name]?.[0] || "";
+              } catch {
+                return "";
+              }
+            }
+
+            // Raw header (as bytes, RFC 2047) -> [{ name, email }]; raw 8-bit is read as UTF-8, as nsMsgCompose does.
+            function parseMailboxes(header) {
+              const value = String(header || "");
+              try {
+                const list = /[^\x00-\xff]/.test(value)
+                  ? MailServices.headerParser.parseEncodedHeaderW(value)
+                  : MailServices.headerParser.parseEncodedHeader(value, "UTF-8");
+                return list.map(a => ({ name: a.name || "", email: a.email || "" }));
+              } catch {
+                return [];
+              }
+            }
+
+            function formatMailboxes(list) {
+              const parser = MailServices.headerParser;
+              return parser.makeMimeHeader(list.map(m => parser.makeMailboxObject(m.name, m.email)));
+            }
+
+            // Identities checked for a reply to an own message (nsMsgCompose.cpp OnStopRequest).
+            function replySelfIdentities(msgHdr) {
+              let identities = [];
+              try {
+                if (Services.prefs.getBoolPref("mailnews.reply_to_self_check_all_ident", true)) {
+                  identities = MailServices.accounts.allIdentities;
+                } else if (msgHdr.accountKey) {
+                  identities = MailServices.accounts.getAccount(msgHdr.accountKey)?.identities || [];
+                } else {
+                  identities = MailServices.accounts.getIdentitiesForServer(msgHdr.folder.server);
+                }
+              } catch { /* no identities */ }
+              return [...identities].filter(identity => identity.email);
+            }
+
+            /**
+             * computeReplyRecipients for a message, with the identity's auto Cc / Bcc / Reply-To.
+             * A reply to an own message switches to the identity that wrote it, as the reply
+             * window does, unless keepIdentity (explicit from). Returns the fields plus identity
+             * and from ("" = the identity's address).
+             */
+            function replyRecipientsFor(msgHdr, mimeMsg, identity, replyAll, senderFrom, keepIdentity) {
+              const header = (name, all) => {
+                const values = mimeMsg?.headers?.[name] || [];
+                return all ? values.join(", ") : (values[0] || "");
+              };
+              let listPost = header("list-post", true);
+              try {
+                if (listPost.includes("=?")) listPost = MailServices.mimeConverter.decodeMimeHeader(listPost, null, false, true) || listPost;
+              } catch { /* keep the raw value */ }
+              const start = listPost.indexOf("<mailto:");
+              const end = start >= 0 ? listPost.indexOf(">", start) : -1;
+              if (end > start) listPost = listPost.slice(start + "<mailto:".length, end);
+              const autoHeaders = id => ({
+                replyTo: id?.replyTo || "",
+                cc: id?.doCc && id?.doCcList ? id.doCcList : "",
+                bcc: id?.doBcc && id?.doBccList ? id.doBccList : "",
+              });
+              const auto = autoHeaders(identity);
+              const selfIdentities = replySelfIdentities(msgHdr);
+              const recipients = computeReplyRecipients({
+                from: parseMailboxes(header("from", true) || msgHdr.author),
+                to: parseMailboxes(header("to", true) || msgHdr.recipients),
+                cc: parseMailboxes(header("cc", true) || msgHdr.ccList),
+                bcc: parseMailboxes(header("bcc", true) || msgHdr.bccList),
+                replyTo: parseMailboxes(header("reply-to", false)),
+                mailReplyTo: parseMailboxes(header("mail-reply-to", true)),
+                mailFollowupTo: parseMailboxes(header("mail-followup-to", true)),
+                listPost,
+              }, {
+                ownEmails: selfIdentities.map(id => id.email),
+                senderEmail: parseMailboxes(senderFrom)[0]?.email || identity?.email || "",
+                autoCc: parseMailboxes(auto.cc),
+                autoBcc: parseMailboxes(auto.bcc),
+                identityReplyTo: parseMailboxes(auto.replyTo),
+                overrideListReplyTo: Services.prefs.getBoolPref("mail.override_list_reply_to", true),
+              }, replyAll);
+              let fields = { to: recipients.to, cc: recipients.cc, bcc: recipients.bcc, replyTo: recipients.replyTo };
+              let from = senderFrom || "";
+              if (recipients.replyToSelf) {
+                const self = selfIdentities.find(id => id.email.toLowerCase() === recipients.selfEmail);
+                if (self && self !== identity && !keepIdentity && isIdentityAllowed(self)) {
+                  fields = switchIdentityRecipients(fields, auto, autoHeaders(self), parseMailboxes);
+                  identity = self;
+                  from = "";
+                }
+              }
+              return { ...fields, identity, from };
+            }
+
             /** Creates an nsIFile instance for the given path. */
             function createLocalFile(path) {
               const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
@@ -3946,7 +4208,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               if (identity?.replyTo) composeFields.replyTo = identity.replyTo;
             }
 
-            function directSendAddresses(composeFields) {
+            // A reply draft gets the recipients Thunderbird's Reply / Reply All computes; to / cc given by the caller replace them.
+            function setReplyDraftRecipients(msgComposeParams, msgHdr, mimeMsg, replyAll, to, cc, bcc, keepIdentity) {
+              const composeFields = msgComposeParams.composeFields;
+              const recipients = replyRecipientsFor(msgHdr, mimeMsg, msgComposeParams.identity, replyAll, composeFields.from, keepIdentity);
+              const identity = recipients.identity;
+              msgComposeParams.identity = identity;
+              composeFields.from = recipients.from;
+              composeFields.to = to || formatMailboxes(recipients.to);
+              composeFields.cc = cc ? mergeAddressHeaders(getIdentityAutoRecipientHeader(identity, "cc"), cc) : formatMailboxes(recipients.cc);
+              composeFields.bcc = bcc ? mergeAddressHeaders(getIdentityAutoRecipientHeader(identity, "bcc"), bcc) : formatMailboxes(recipients.bcc);
+              composeFields.replyTo = formatMailboxes(recipients.replyTo);
+            }
+
+            function composeAddresses(composeFields) {
               const out = {};
               for (const field of ["from", "to", "cc", "bcc", "replyTo"]) {
                 if (composeFields[field]) out[field] = composeFields[field];
@@ -4405,6 +4680,140 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               });
             }
             // END DIRECT SEND
+
+            function getDraftsFolder(identity) {
+              let uri = "";
+              try { uri = identity?.draftsFolderURI || identity?.draftFolder || ""; } catch { /* no pref */ }
+              if (!uri) return null;
+              try { return MailServices.folderLookup.getFolderForURL(uri); } catch { return null; }
+            }
+
+            function generateMessageId(identity) {
+              const domain = String(identity?.email || "").split("@")[1] || "localhost";
+              return `<${Services.uuid.generateUUID().toString().replace(/[{}]/g, "")}@${domain}>`;
+            }
+
+            // BEGIN COMPOSE DRAFT SAVE
+            const DRAFT_SAVE_TIMEOUT_MS = 120000;
+
+            /**
+             * Saves composeFields through a window-less nsIMsgCompose, as the compose
+             * window's Save does. Resolves { msgCompose, status } (status null on
+             * timeout); throws when the API is unusable.
+             */
+            async function composeDraftSave(composeFields, identity, useHtml, originalMsgURI, compType) {
+              const params = Cc["@mozilla.org/messengercompose/composeparams;1"]
+                .createInstance(Ci.nsIMsgComposeParams);
+              params.type = Ci.nsIMsgCompType.New;
+              params.format = useHtml ? Ci.nsIMsgCompFormat.HTML : Ci.nsIMsgCompFormat.PlainText;
+              params.identity = identity;
+              params.composeFields = composeFields;
+              params.originalMsgURI = originalMsgURI || "";
+              const isReply = compType === Ci.nsIMsgCompType.Reply || compType === Ci.nsIMsgCompType.ReplyAll;
+              const replyFields = isReply
+                ? { from: composeFields.from, to: composeFields.to, cc: composeFields.cc, bcc: composeFields.bcc, replyTo: composeFields.replyTo }
+                : null;
+              const msgCompose = MailServices.compose.initCompose(params);
+              // Reply / forward type only after init, otherwise CreateMessage rewrites subject and References
+              if (compType != null) msgCompose.type = compType;
+              // Reply recipients already hold the identity's auto Cc / Bcc / Reply-To (computeReplyRecipients)
+              if (replyFields) Object.assign(msgCompose.compFields, replyFields);
+
+              let processDone;
+              const done = new Promise(resolve => { processDone = resolve; });
+              const stateListener = {
+                QueryInterface: ChromeUtils.generateQI(["nsIMsgComposeStateListener"]),
+                NotifyComposeFieldsReady() {},
+                NotifyComposeBodyReady() {},
+                ComposeProcessDone(status) { processDone(status); },
+                SaveInFolderDone() {},
+              };
+              const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+              msgCompose.RegisterStateListener(stateListener);
+              try {
+                // No progress object: it would open sendProgress.xhtml (mailnews.show_send_progress).
+                // 140 ESR takes a msgWindow before progress, later versions do not.
+                const send = (msgCompose.sendMsg || msgCompose.SendMsg).bind(msgCompose);
+                const sendArgs = [Ci.nsIMsgCompDeliverMode.SaveAsDraft, identity, accountKeyForIdentity(identity), null];
+                let sent;
+                try {
+                  sent = send(...sendArgs);
+                } catch (e) {
+                  if (!(e?.result === 0x80570001 || String(e).includes("Not enough arguments"))) throw e;
+                  sent = send(...sendArgs, null);
+                }
+                const timeout = new Promise(resolve => {
+                  timer.initWithCallback({ notify() { resolve(null); } }, DRAFT_SAVE_TIMEOUT_MS, Ci.nsITimer.TYPE_ONE_SHOT);
+                });
+                // A rejected send promise produces no ComposeProcessDone
+                const failed = Promise.resolve(sent).then(() => done, e => (typeof e?.result === "number" ? e.result : 0x80004005));
+                const status = await Promise.race([done, failed, timeout]);
+                return { msgCompose, status };
+              } finally {
+                timer.cancel();
+                msgCompose.UnregisterStateListener(stateListener);
+              }
+            }
+
+            /**
+             * Saves composeFields as a draft of identity like the compose window
+             * does. For a reply / forward (originalMsgURI + compType) the draft keeps
+             * the original, which Thunderbird marks when the draft is sent.
+             * Returns the new messageId + folderPath.
+             */
+            async function saveComposeFieldsAsDraft(composeFields, identity, attachDescs, useHtml, originalMsgURI, compType) {
+              try {
+                if (composeFields.deliveryFormat === Ci.nsIMsgCompSendFormat.Unset) {
+                  composeFields.deliveryFormat = Services.prefs.getIntPref("mail.default_send_format", Ci.nsIMsgCompSendFormat.Auto);
+                }
+              } catch { /* TB without nsIMsgCompSendFormat */ }
+              for (const att of descsToMsgAttachments(attachDescs)) composeFields.addAttachment(att);
+
+              let saved;
+              try {
+                saved = await composeDraftSave(composeFields, identity, useHtml, originalMsgURI, compType);
+              } catch (e) {
+                console.warn("commonpost-mcp: nsIMsgCompose draft save failed, using nsIMsgSend:", e);
+                composeFields.removeAttachments();
+                return saveDraftViaSend(composeFields, identity, attachDescs, useHtml, originalMsgURI, compType);
+              }
+
+              const { msgCompose, status } = saved;
+              if (status === null) return { error: `Draft save timed out after ${DRAFT_SAVE_TIMEOUT_MS / 1000}s` };
+              if (!Components.isSuccessCode(status)) return { error: `Draft save failed (status: 0x${(status >>> 0).toString(16)})` };
+              // RemoveCurrentDraftMessage sets draftId to the new draft right after ComposeProcessDone
+              await new Promise(resolve => Services.tm.dispatchToMainThread(resolve));
+
+              const fields = msgCompose.compFields;
+              let hdr = null;
+              if (fields.draftId) {
+                try { hdr = MailServices.messageServiceFromURI(fields.draftId).messageURIToMsgHdr(fields.draftId); } catch { /* not in the db yet */ }
+              }
+              const result = { success: true, messageId: String(hdr?.messageId || fields.messageId || "").replace(/^<|>$/g, "") };
+              const folder = hdr?.folder || getDraftsFolder(identity);
+              if (folder) result.folderPath = folder.URI;
+              return result;
+            }
+
+            // Fallback when window-less nsIMsgCompose fails: nsIMsgSend, as saveDraft did before.
+            async function saveDraftViaSend(composeFields, identity, attachDescs, useHtml, originalMsgURI, compType) {
+              composeFields.messageId = generateMessageId(identity);
+              const result = await sendMessageDirectly(
+                composeFields,
+                identity,
+                attachDescs,
+                originalMsgURI || null,
+                compType ?? Ci.nsIMsgCompType.New,
+                Ci.nsIMsgCompDeliverMode.SaveAsDraft,
+                useHtml ? "text/html" : "text/plain"
+              );
+              if (!result.success) return result;
+              const saved = { success: true, messageId: composeFields.messageId.replace(/^<|>$/g, "") };
+              const draftsFolder = getDraftsFolder(identity);
+              if (draftsFolder) saved.folderPath = draftsFolder.URI;
+              return saved;
+            }
+            // END COMPOSE DRAFT SAVE
 
             function escapeHtml(s) {
               return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -7718,15 +8127,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
                 const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(attachments);
 
-                return sendMessageDirectly(
-                  composeFields,
-                  msgComposeParams.identity,
-                  fileDescs,
-                  null,
-                  Ci.nsIMsgCompType.New,
-                  Ci.nsIMsgCompDeliverMode.SaveAsDraft,
-                  useHtml ? "text/html" : "text/plain"
-                ).then(result => {
+                return saveComposeFieldsAsDraft(composeFields, msgComposeParams.identity, fileDescs, useHtml).then(result => {
                   if (result.success) {
                     let msg = "Draft saved";
                     if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
@@ -7739,9 +8140,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
+            const DIRECT_SEND_BLOCKED_ERROR = "User preference blocks direct sending (mode \"send\" or skipReview). Use mode \"draft\" to save a draft, or \"window\" (the default) to open a review window.";
+
             /**
-             * Replies to a message with quoted original. Opens a compose window
-             * for review, or sends directly when skipReview is true.
+             * Replies to a message with quoted original. mode "window" (default)
+             * opens a compose window for review, "draft" saves the reply to Drafts,
+             * "send" (or legacy skipReview) sends it directly.
              *
              * Review path uses Thunderbird's native reply compose flow so it can
              * build the quoted original, place the identity signature according
@@ -7750,14 +8154,16 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * and manually marks the original as replied after a successful send.
              * A direct send takes the sender and the recipients from the caller
              * only: the original message, which anyone can write, never picks them.
+             * A draft gets the recipients Thunderbird computes, for the user to review.
              */
-            async function replyToMessage(messageId, folderPath, body, replyAll, isHtml, to, cc, bcc, from, attachments, skipReview) {
+            async function replyToMessage(messageId, folderPath, body, replyAll, isHtml, to, cc, bcc, from, attachments, skipReview, mode) {
               try {
-                if (skipReview && isSkipReviewBlocked()) {
-                  return { error: "User preference blocks skipReview. Retry with skipReview: false (or omitted) to open the review window instead." };
+                const composeMode = resolveComposeMode(mode, skipReview);
+                if (composeMode === "send" && isSkipReviewBlocked()) {
+                  return { error: DIRECT_SEND_BLOCKED_ERROR };
                 }
-                if (skipReview && (!to || !from)) {
-                  return { error: "skipReview needs explicit to and from: a direct reply takes no address from the original message. Pass them, or omit skipReview to review the reply in a compose window." };
+                if (composeMode === "send" && (!to || !from)) {
+                  return { error: "mode \"send\" (or skipReview) needs explicit to and from: a direct reply takes no address from the original message. Pass them, or use mode \"draft\" or \"window\" to review the reply first." };
                 }
                 const found = findMessage(messageId, folderPath);
                 if (found.error) {
@@ -7790,7 +8196,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
                 // Resolve compose mode against caller intent + identity pref.
                 // The skipReview branch reads useHtml below to shape the body.
-                const { useHtml: replyUseHtml, format: replyFormat } =
+                let { useHtml: replyUseHtml, format: replyFormat } =
                   resolveComposeFormat(msgComposeParams.identity, isHtml, compType);
                 msgComposeParams.format = replyFormat;
 
@@ -7802,14 +8208,27 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 const reviewTo = to;
                 const reviewCc = cc;
 
-                if (skipReview) {
+                if (composeMode !== "window") {
                   const originalBody = extractPlainTextBody(mimeMsg);
-                  setDirectSendRecipients(composeFields, msgComposeParams.identity, to, cc, bcc);
+                  if (composeMode === "send") {
+                    setDirectSendRecipients(composeFields, msgComposeParams.identity, to, cc, bcc);
+                  } else {
+                    const pickedIdentity = msgComposeParams.identity;
+                    setReplyDraftRecipients(msgComposeParams, msgHdr, mimeMsg, !!replyAll, to, cc, bcc, !!from);
+                    // A reply to an own message switched to the identity that wrote it
+                    if (msgComposeParams.identity !== pickedIdentity) {
+                      ({ useHtml: replyUseHtml } = resolveComposeFormat(msgComposeParams.identity, isHtml, compType));
+                    }
+                  }
 
                   const origSubject = msgHdr.mime2DecodedSubject || msgHdr.subject || "";
                   composeFields.subject = /^re:/i.test(origSubject) ? origSubject : `Re: ${origSubject}`;
-                  composeFields.references = `<${messageId}>`;
-                  composeFields.setHeader("In-Reply-To", `<${messageId}>`);
+                  // The original's References and Message-ID, as Thunderbird's reply (a message without Message-ID has only
+                  // a generated "md5:" id and adds none); MimeMessage derives In-Reply-To from the last one
+                  composeFields.references = mimeMsg
+                    ? buildReplyReferences(mimeHeaderValue(mimeMsg, "references").match(/<[^>]*>/g), mimeHeaderValue(mimeMsg, "message-id"))
+                    : buildReplyReferences(Array.from({ length: msgHdr.numReferences }, (_, i) => msgHdr.getStringReference(i)),
+                      msgHdr.messageId.startsWith("md5:") ? "" : msgHdr.messageId);
 
                   const dateStr = msgHdr.date ? new Date(msgHdr.date / 1000).toLocaleString() : "";
                   const author = msgHdr.mime2DecodedAuthor || msgHdr.author || "";
@@ -7834,6 +8253,18 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     composeFields.body = `${body || ""}\n\nOn ${dateStr}, ${author} wrote:\n${quotedLines}`;
                   }
 
+                  if (composeMode === "draft") {
+                    // The original is marked as replied when the draft is sent
+                    const result = await saveComposeFieldsAsDraft(composeFields, msgComposeParams.identity, fileDescs, replyUseHtml, msgURI, compType);
+                    if (result.success) {
+                      let msg = "Reply draft saved";
+                      if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
+                      result.message = msg;
+                      Object.assign(result, composeAddresses(composeFields), { subject: composeFields.subject });
+                    }
+                    return result;
+                  }
+
                   const result = await sendMessageDirectly(composeFields, msgComposeParams.identity, fileDescs, msgURI, compType, Ci.nsIMsgCompDeliverMode.Now, replyUseHtml ? "text/html" : "text/plain");
                   if (result.success) {
                     let repliedDisposition = null;
@@ -7845,7 +8276,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     let msg = "Reply sent";
                     if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
                     result.message = msg;
-                    Object.assign(result, directSendAddresses(composeFields));
+                    Object.assign(result, composeAddresses(composeFields));
                   }
                   return result;
                 }
@@ -7874,7 +8305,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
 
             /**
-             * Forwards a message with original content and attachments.
+             * Forwards a message with original content and attachments. mode
+             * "window" (default) opens a compose window for review, "draft" saves
+             * the forward to Drafts, "send" (or legacy skipReview) sends it directly.
              *
              * Review path uses Thunderbird's native ForwardInline compose flow so
              * TB builds the forward body with a proper <blockquote type="cite">
@@ -7889,13 +8322,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * marks the original as forwarded after a successful send. Like a
              * direct reply, it takes the sender from the caller only.
              */
-            async function forwardMessage(messageId, folderPath, to, body, isHtml, cc, bcc, from, attachments, skipReview) {
+            async function forwardMessage(messageId, folderPath, to, body, isHtml, cc, bcc, from, attachments, skipReview, mode) {
               try {
-                if (skipReview && isSkipReviewBlocked()) {
-                  return { error: "User preference blocks skipReview. Retry with skipReview: false (or omitted) to open the review window instead." };
+                const composeMode = resolveComposeMode(mode, skipReview);
+                if (composeMode === "send" && isSkipReviewBlocked()) {
+                  return { error: DIRECT_SEND_BLOCKED_ERROR };
                 }
-                if (skipReview && !from) {
-                  return { error: "skipReview needs an explicit from: a direct forward does not take the sender from the original message. Pass it, or omit skipReview to review the forward in a compose window." };
+                if (composeMode === "send" && (!to || !from)) {
+                  return { error: "mode \"send\" (or skipReview) needs explicit to and from: a direct forward does not take the sender from the original message. Pass them, or use mode \"draft\" or \"window\" to review the forward first." };
                 }
                 const found = findMessage(messageId, folderPath);
                 if (found.error) {
@@ -7936,12 +8370,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   resolveComposeFormat(msgComposeParams.identity, isHtml, compType);
                 msgComposeParams.format = fwdFormat;
 
-                if (skipReview) {
+                if (composeMode !== "window") {
                   const originalBody = extractPlainTextBody(mimeMsg);
                   setDirectSendRecipients(composeFields, msgComposeParams.identity, to, cc, bcc);
 
                   const origSubject = msgHdr.mime2DecodedSubject || msgHdr.subject || "";
                   composeFields.subject = /^fwd:/i.test(origSubject) ? origSubject : `Fwd: ${origSubject}`;
+                  // Thunderbird references only the forwarded message
+                  if (!msgHdr.messageId.startsWith("md5:")) composeFields.references = `<${msgHdr.messageId}>`;
 
                   const dateStr = msgHdr.date ? new Date(msgHdr.date / 1000).toLocaleString() : "";
                   const fwdAuthor = msgHdr.mime2DecodedAuthor || msgHdr.author || "";
@@ -7990,6 +8426,18 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   }
                   const allDescs = [...origDescs, ...fileDescs];
 
+                  if (composeMode === "draft") {
+                    // The original is marked as forwarded when the draft is sent
+                    const result = await saveComposeFieldsAsDraft(composeFields, msgComposeParams.identity, allDescs, fwdUseHtml, msgURI, compType);
+                    if (result.success) {
+                      let msg = `Forward draft saved with ${allDescs.length} attachment(s)`;
+                      if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
+                      result.message = msg;
+                      Object.assign(result, composeAddresses(composeFields), { subject: composeFields.subject });
+                    }
+                    return result;
+                  }
+
                   const result = await sendMessageDirectly(composeFields, msgComposeParams.identity, allDescs, msgURI, compType, Ci.nsIMsgCompDeliverMode.Now, fwdUseHtml ? "text/html" : "text/plain");
                   if (result.success) {
                     let forwardedDisposition = null;
@@ -8001,7 +8449,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     let msg = `Forward sent with ${allDescs.length} attachment(s)`;
                     if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
                     result.message = msg;
-                    Object.assign(result, directSendAddresses(composeFields));
+                    Object.assign(result, composeAddresses(composeFields));
                   }
                   return result;
                 }
@@ -9244,9 +9692,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "saveDraft":
                   return await saveDraft(args.to, args.subject, args.body, args.cc, args.bcc, args.isHtml, args.from, args.attachments);
                 case "replyToMessage":
-                  return await replyToMessage(args.messageId, args.folderPath, args.body, args.replyAll, args.isHtml, args.to, args.cc, args.bcc, args.from, args.attachments, args.skipReview);
+                  return await replyToMessage(args.messageId, args.folderPath, args.body, args.replyAll, args.isHtml, args.to, args.cc, args.bcc, args.from, args.attachments, args.skipReview, args.mode);
                 case "forwardMessage":
-                  return await forwardMessage(args.messageId, args.folderPath, args.to, args.body, args.isHtml, args.cc, args.bcc, args.from, args.attachments, args.skipReview);
+                  return await forwardMessage(args.messageId, args.folderPath, args.to, args.body, args.isHtml, args.cc, args.bcc, args.from, args.attachments, args.skipReview, args.mode);
                 case "getRecentMessages":
                   return getRecentMessages(args.folderPath, args.daysBack, args.maxResults, args.offset, args.unreadOnly, args.flaggedOnly, args.includeSubfolders);
                 case "displayMessage":

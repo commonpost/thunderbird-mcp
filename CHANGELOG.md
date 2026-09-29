@@ -14,6 +14,19 @@ project is kept in this repository.
   the `from`, `to`, `cc`, `bcc` and `replyTo` it went out with.
 
 ### Added
+- `replyToMessage` and `forwardMessage` take `mode`: `window` (the default, the review window as before), `draft` or
+  `send`. `mode: "send"` is a direct send, the same as `skipReview: true`, with the same rules: explicit `to` and
+  `from`, subject to **Block `skipReview`**, and the bridge waits up to 150 s for it. `mode: "draft"` saves the
+  reply or forward to the identity's Drafts folder without opening a window and returns its `messageId` and
+  `folderPath`. It sends nothing, so **Block `skipReview`** does not block it.
+  - A reply draft gets the recipients Thunderbird's Reply / Reply All computes (`nsMsgCompose.cpp`, ported to a
+    pure function): Reply-To and Mail-Reply-To, Mail-Followup-To for Reply All, the author instead of a mailing list
+    that rewrites Reply-To, the recipients of your own message from the identity that sent it, your own addresses
+    dropped, and the identity's automatic Cc / Bcc and Reply-To. A `to` or `cc` from the caller replaces the
+    computed one.
+  - The draft stores the state Thunderbird's own reply or forward draft stores (`origURIs`, `queuedDisposition`), so
+    the original is marked as replied or forwarded when the draft is sent, not when it is saved.
+  - The body is quoted by the tool, as for a direct send.
 - Test bench on a real Thunderbird: `npm run test:tb` (`scripts/tb-bench.sh`) runs a downloaded Thunderbird headless
   with a throwaway profile and synthetic mail (`test/fixtures/mail`), and runs `test/bench/*.test.cjs` against it
   through `mcp-bridge.cjs`, with Marionette for privileged checks. Works with 140 ESR, 153 ESR and 156. See
@@ -22,13 +35,20 @@ project is kept in this repository.
   searches and filters mail, with the Thunderbird source of each rule and what was verified on a real Thunderbird.
 
 ### Changed
+- `saveDraft` saves through `nsIMsgCompose`, as Thunderbird's compose window does, and returns the new draft's
+  `messageId` and `folderPath`. If `nsIMsgCompose` cannot be used, it falls back to the previous `nsIMsgSend` path.
+- `forwardMessage` no longer requires `to`, except with `mode: "send"` (or `skipReview`).
+- A reply's References header is the original's References plus its Message-ID, as Thunderbird's reply builds it
+  (it used to be the original's Message-ID only); Thunderbird trims a chain longer than the header limit when it
+  writes the message, as for its own reply. A reply to a message without Message-ID gets no References. In-Reply-To
+  is no longer set by the tool: Thunderbird derives it from the last References entry.
 - Without `from`, `replyToMessage` and `forwardMessage` use the identity Thunderbird's own Reply / Forward picks
   (`MailUtils.getIdentityForHeader`, as `ComposeMessage` in `mailCommands.js` calls it) instead of the account's
   default identity: the identity the message was addressed to (To / Cc, then Delivered-To), the identity that sent
   it for a reply to your own message, and for a catch-all identity the address the message was sent to. Identities
   of accounts the MCP may not access are never picked.
-- `mcp-bridge.cjs`: a `sendMail`, `replyToMessage` or `forwardMessage` call made with `skipReview` (direct send, no
-  compose window) now waits up to 150 s for Thunderbird's answer instead of 30 s, so the bridge no longer gives up
+- `mcp-bridge.cjs`: a `sendMail`, `replyToMessage` or `forwardMessage` call made with `skipReview`, or a
+  `replyToMessage` or `forwardMessage` call with `mode: "send"` (direct send, no compose window), now waits up to 150 s for Thunderbird's answer instead of 30 s, so the bridge no longer gives up
   before Thunderbird's own 120 s send timeout. Every other call keeps the 30 s limit. If the wait still runs out,
   the error says the outcome is unknown and asks to check the Sent folder and the Outbox before retrying, so the
   message is not sent twice. The same goes for a direct send whose connection to Thunderbird is lost after it was

@@ -214,13 +214,15 @@ describe("identity for replies and forwards", { skip: SKIP }, () => {
 
   it("a direct send needs to and from", async () => {
     await allowDirectSend(true);
-    const base = { messageId: idOf("replyTo"), folderPath: FOLDER.inbox, body: "c3", skipReview: true };
-    for (const args of [{}, { to: "xena@chi.test" }, { from: "work@bench.test" }]) {
-      const reply = await mcp().call("replyToMessage", { ...base, ...args });
-      assert.match(reply.error || "", /needs explicit to and from/, JSON.stringify(args));
+    for (const send of [{ skipReview: true }, { mode: "send" }]) {
+      const base = { messageId: idOf("replyTo"), folderPath: FOLDER.inbox, body: "c3", ...send };
+      for (const args of [{}, { to: "xena@chi.test" }, { from: "work@bench.test" }]) {
+        const reply = await mcp().call("replyToMessage", { ...base, ...args });
+        assert.match(reply.error || "", /needs explicit to and from/, JSON.stringify({ ...send, ...args }));
+        const forward = await mcp().call("forwardMessage", { ...base, ...args });
+        assert.match(forward.error || "", /needs explicit to and from/, JSON.stringify({ ...send, ...args }));
+      }
     }
-    const forward = await mcp().call("forwardMessage", { ...base, to: "zed@example.test" });
-    assert.match(forward.error || "", /needs an explicit from/);
   });
 
   it("a direct reply goes only to the given addresses and the identity's auto Cc / Reply-To", async () => {
