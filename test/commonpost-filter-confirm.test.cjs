@@ -67,6 +67,10 @@ const HELPER_BLOCKS = [
   // CORE_HIDDEN_CLASS_SRC, the single table shared with the untrusted-content
   // removal helpers -- loaded first so the reference resolves.
   block("// BEGIN UNTRUSTED CONTENT HELPERS", "// END UNTRUSTED CONTENT HELPERS"),
+  // folderDisplayName (nsIMsgFolder.localizedName, prettyName gone since
+  // Thunderbird 141, upstream #25): the real handlers below read a
+  // folder's display name through it.
+  block("// BEGIN FOLDER NAME HELPERS", "// END FOLDER NAME HELPERS"),
   block("// BEGIN FILTER SEARCH TERM HELPERS", "// END FILTER SEARCH TERM HELPERS"),
   block("// BEGIN FILTER RULE HELPERS", "// END FILTER RULE HELPERS"),
   block("// BEGIN FILTER CONFIRMATION HELPERS", "// END FILTER CONFIRMATION HELPERS"),
