@@ -26,10 +26,21 @@ project is kept in this repository.
   settings, HTML in UTF-8, plain text as `format=flowed` wrapped at `mailnews.wraplength`. Before, a reply quoted the
   plain-text body by hand under an English "On ..., ... wrote:" line without a signature, a new message got no
   signature, a plain body went out labeled `format=flowed` without being flowed, and an HTML body (`isHtml: true`)
-  had every non-ASCII character written as a `&#...;` reference, which made a Cyrillic body several times larger. A
-  forward draft's body is still quoted by the tool. By @mazixs in #28.
+  had every non-ASCII character written as a `&#...;` reference, which made a Cyrillic body several times larger. By
+  @mazixs in #28.
   While encrypted content is not allowed, Thunderbird's own quote, which decrypts, is taken only for a message that
   was read and holds no encrypted part: a reply to a message that could not be read in time quotes nothing, as before.
+- A forward without a window (`mode: "draft"` or `"send"`) gets the body Thunderbird's forward window would save with
+  the same text typed at its caret: the localized forward header (`mail.show_headers`), the forwarded body with the
+  original's HTML formatting, and the identity's signature placed by its forward and position settings. Before, a
+  forward quoted the plain-text body by hand under an English "Forwarded Message" header without a signature. By
+  @mazixs in #29.
+  - A plain-text forward keeps the signature below the forwarded message, as Thunderbird 140 and 158+ do.
+    Thunderbird 150-157 drop it (bug 2063939, a regression from Gecko bug 2019689); the tool does not copy that bug.
+- The subject of a forward without a window is `mail.forward_subject_prefix` (default `Fwd`) and the original's
+  subject as the message database keeps it, as Thunderbird's forward makes it: a forward of "Re: x" is "Fwd: x", and
+  of "Fwd: x" is "Fwd: Fwd: x". Before, the prefix was always `Fwd` and was not added to a subject that had it. By
+  @mazixs in #29.
 
 ### Fixed
 

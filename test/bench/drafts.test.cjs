@@ -19,6 +19,7 @@ async function detailsOf(h) {
   const count = name => (block.match(new RegExp("^" + name + ":", "gim")) || []).length;
   return {
     ...draftState(h),
+    subject: head.subject || "",
     references: head.references || "", inReplyTo: head["in-reply-to"] || "", forwardedId: head["x-forwarded-message-id"] || "",
     counts: { references: count("References"), inReplyTo: count("In-Reply-To") },
   };
@@ -54,7 +55,7 @@ const originalFlags = () => tbLib(
 );
 
 const pick = (o, keys) => Object.fromEntries(keys.map(k => [k, o[k]]));
-const COMPARED = ["origURIs", "queuedDisposition", "references", "inReplyTo", "forwardedId", "counts"];
+const COMPARED = ["origURIs", "queuedDisposition", "subject", "references", "inReplyTo", "forwardedId", "counts"];
 
 describe("drafts", { skip: SKIP }, () => {
   beforeEach(clearDrafts);
@@ -95,6 +96,23 @@ describe("drafts", { skip: SKIP }, () => {
       assert.deepEqual(await originalFlags(), { replied: false, forwarded: false });
     });
   }
+
+  it("forward subject as Thunderbird's: mail.forward_subject_prefix before the stored subject, without its Re:", async () => {
+    const id = "chain3@alpha.test";
+    try {
+      for (const prefix of ["Fwd", "WG"]) {
+        await tbLib('Services.prefs.setStringPref("mail.forward_subject_prefix", args.prefix);', { prefix });
+        const native = await nativeDraft("ForwardInline", id);
+        assert.equal(native.subject, `${prefix}: Project kickoff`);
+        const saved = await mcp().call("forwardMessage", { messageId: id, folderPath: FOLDER.inbox, mode: "draft", body: "drafts body" });
+        assert.equal(saved.success, true, JSON.stringify(saved));
+        assert.equal(saved.subject, native.subject);
+        assert.equal((await draftDetails(saved.messageId)).subject, native.subject);
+      }
+    } finally {
+      await tbLib('Services.prefs.clearUserPref("mail.forward_subject_prefix");');
+    }
+  });
 
   it("mode draft is not a direct send: allowed while direct sends are blocked", async () => {
     await tbLib('Services.prefs.clearUserPref("extensions.commonpost-mcp.blockSkipReview");');

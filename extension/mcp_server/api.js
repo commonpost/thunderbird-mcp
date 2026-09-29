@@ -4492,6 +4492,115 @@ function stripDocumentTags(html) {
   return out + text.slice(from);
 }
 
+// mimedrft.cpp convert_plaintext_body_to_html: escaped text, ">" levels as cite blockquotes, "-- " opens the signature.
+function plainTextToForwardHtml(text) {
+  const escaped = escapeHtml(text || "");
+  const isFlowed = [...escaped.matchAll(/ (?=[\r\n])/g)].some(({ index: i }) =>
+    !(escaped.slice(i - 2, i) === "--" && (i === 2 || /[\r\n]/.test(escaped[i - 3] || ""))));
+  const lines = escaped.split(/\r\n|\r|\n/);
+  const endsWithBreak = lines[lines.length - 1] === "";
+  if (endsWithBreak) lines.pop();
+  const out = [];
+  let prevLevel = 0;
+  let haveSig = false;
+  lines.forEach((line, index) => {
+    const terminated = endsWithBreak || index < lines.length - 1;
+    let p = 0;
+    let level = 0;
+    while (line.startsWith("&gt;", p)) {
+      p += 4;
+      if (!isFlowed && line[p] === " ") p++;
+      level++;
+    }
+    if (level > 0 && isFlowed && line[p] === " ") p++;
+    if (level > 0 && haveSig) {
+      out.push("</pre>");
+      haveSig = false;
+    }
+    for (; prevLevel < level; prevLevel++) out.push(isFlowed ? '<blockquote type="cite">' : '<blockquote type="cite"><pre wrap class="moz-quote-pre">');
+    for (; prevLevel > level; prevLevel--) out.push(isFlowed ? "</blockquote>" : "</pre></blockquote>");
+    const rest = line.slice(p);
+    let forceBR = false;
+    if (level === 0 && terminated && rest === "-- ") {
+      haveSig = true;
+      forceBR = true;
+      out.push('<pre class="moz-signature">');
+    }
+    out.push(rest);
+    if (terminated && (!isFlowed || !rest.endsWith(" ") || forceBR)) out.push("<br>");
+  });
+  for (; prevLevel > 0; prevLevel--) out.push(isFlowed ? "</blockquote>" : "</pre></blockquote>");
+  if (haveSig) out.push("</pre>");
+  return out.join("");
+}
+
+const FORWARD_HEADER_FIELDS = {
+  normal: ["subject", "resentComments", "resentDate", "resentFrom", "resentTo", "resentCc", "date", "from", "replyTo", "organization", "to", "cc", "newsgroups", "followupTo"],
+  micro: ["from", "subject", "resentFrom", "to", "cc", "newsgroups"],
+};
+
+/**
+ * Rows of the forwarded-message header (mimedrft.cpp mime_insert_normal_headers /
+ * mime_insert_micro_headers): [label, value]; Bcc is never shown. values: decoded header
+ * values (null = absent), labels: localized names from mime.properties.
+ */
+const FORWARD_ADDRESS_FIELDS = new Set(["resentFrom", "resentTo", "resentCc", "from", "replyTo", "to", "cc"]);
+function forwardHeaderRows(values, labels, micro) {
+  const fields = [...FORWARD_HEADER_FIELDS[micro ? "micro" : "normal"]];
+  // References only for news
+  if (!micro && values.newsgroups != null) fields.push("references");
+  // An empty address list is skipped, other present headers are shown even when empty
+  return fields.filter(key => values[key] != null && (values[key] !== "" || !FORWARD_ADDRESS_FIELDS.has(key)))
+    .map(key => [labels[key], values[key]]);
+}
+
+// MIME_HEADER_TABLE / HEADER_*_JUNK (mimedrft.cpp)
+function forwardHeaderTableHtml(rows) {
+  const cells = rows.map(([label, value]) => `<TR><TH VALIGN=BASELINE ALIGN=RIGHT NOWRAP>${label}: </TH><TD>${escapeHtml(value)}</TD></TR>`).join("");
+  return `<TABLE CELLPADDING=0 CELLSPACING=0 BORDER=0 class="moz-email-headers-table">${cells}</TABLE>`;
+}
+
+// Plain forward of a plain original (mimedrft.cpp, htmlEdit false).
+function forwardPlainText(delimiter, rows, body) {
+  return `\n\n${delimiter}${rows.map(([label, value]) => `\n${label}: ${value}`).join("")}\n\n${body || ""}`;
+}
+
+/**
+ * BuildBodyMessageAndSignature (nsMsgCompose.cpp), plain text with wrapping on: an unquoted
+ * line ending in a space is joined with the next one. Ported with its quirks.
+ */
+function joinFlowedLines(body) {
+  let out = String(body || "");
+  let quote = false;
+  for (let i = 0; i < out.length; i++) {
+    if (i === 0 || out[i - 1] === "\n") {
+      if (out[i] === ">") {
+        quote = true;
+        continue;
+      }
+      const s = out.substr(i, 10);
+      if (s.startsWith("-- \r") || s.startsWith("-- \n")) {
+        i += 4;
+        continue;
+      }
+      if (s.startsWith("- -- \r") || s.startsWith("- -- \n")) {
+        i += 6;
+        continue;
+      }
+    }
+    if (out[i] === "\n" && i > 1) {
+      if (quote) {
+        quote = false;
+        continue;
+      }
+      let j = i - 1;
+      if (out[j] === "\r") j--;
+      if (out[j] === " ") out = out.slice(0, j + 1) + out.slice(i + 1);
+    }
+  }
+  return out;
+}
+
 /**
  * nsMsgCompose::ReplaceFileURLs: file:// URLs (quoted, or up to a space / ">") become data: URLs.
  * toDataURL(fileURL) returns the data: URL or throws.
@@ -4653,8 +4762,8 @@ function wrapHtmlDocument(inner) {
 
 /**
  * Body as Thunderbird's compose window lays it out (ConvertAndLoadComposeWindow), with the
- * user's text where the caret ends up. kind: "reply" | "new".
- * parts: { user, prefix, quote, citeRef, signature } (HTML, or text for the plain variant);
+ * user's text where the caret ends up. kind: "reply" | "forward" | "new".
+ * parts: { user, prefix, quote, citeRef, forward, signature } (HTML, or text for the plain variant);
  * prefs: { replyOnTop, sigBottom, paragraphMode, sigAboveQuote } (sigAboveQuote: a reply
  * signature is configured above the quote, which drops one of the two breaks).
  * reply_on_top 2 (select the quote) is laid out like 0: typing would replace the selected quote.
@@ -4677,6 +4786,9 @@ function layoutComposeHtml(kind, parts, prefs) {
   const user = parts.user || "";
   const sig = parts.signature || "";
   const typed = prefs.paragraphMode ? (u, rest) => u + rest : typedBefore;
+  // NotifyComposeBodyReadyForwardInline (MsgComposeCommands.js) puts a <br> (in paragraph mode <p><br></p>,
+  // the user's paragraph) at the top of a forward
+  if (kind === "forward") return typed(user, (prefs.paragraphMode ? "" : "<br>") + (sigOnTop ? `${sig}${parts.forward}` : `${parts.forward}${sig}`));
   const cite = (parts.prefix ? divWrappedHtml(parts.prefix, "moz-cite-prefix") : "") +
     (parts.quote ? `<blockquote type="cite"${parts.citeRef ? ` cite="${escapeHtml(parts.citeRef)}"` : ""}>${parts.quote}</blockquote>` : "");
   if (kind !== "reply" || !cite) return typed(user, sig);
@@ -4699,6 +4811,8 @@ function layoutComposeText(kind, parts, prefs) {
   const sig = parts.signature ? `\n${parts.signature}` : "";
   const quoted = text => ({ text: text || "", quotes: true });
   const hunks = (...items) => items.flat().map(h => (typeof h === "string" ? { text: h } : h)).filter(h => h.text);
+  // Plain forward with the signature below: Thunderbird 150-157 drop it (bug 2063939), 140 and 158+ insert it
+  if (kind === "forward") return hunks(user, sigOnTop && sig ? `\n${sig}` : "\n", quoted(parts.forward), sigOnTop ? "" : sig);
   const prefix = parts.prefix ? `${parts.prefix}\n` : "";
   const quote = parts.quote ? quoted(citeText(parts.quote)) : "";
   if (kind !== "reply" || !(prefix || quote)) return hunks(user, sig);
@@ -7945,6 +8059,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
+            function mimeString(id) {
+              try {
+                return Services.strings.createBundle("chrome://messenger/locale/mime.properties").GetStringFromName(String(id));
+              } catch {
+                return "";
+              }
+            }
+
+            // MIME_MHTML_* ids in mime.properties
+            const FORWARD_HEADER_LABEL_IDS = {
+              subject: 1000, resentComments: 1001, resentDate: 1002, resentFrom: 1004, resentTo: 1005, resentCc: 1006, date: 1007,
+              from: 1009, replyTo: 1010, organization: 1011, to: 1012, cc: 1013, newsgroups: 1014, followupTo: 1015, references: 1016,
+            };
+
             // Identity and editor prefs that place the quote and the signature.
             function composeLayoutPrefs(identity) {
               const read = (fn, fallback) => {
@@ -8190,6 +8318,89 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
+            // Raw header value decoded as MIME_DecodeMimeHeader does (RFC 2047, 8-bit in the message charset).
+            function decodeRawHeader(value, charset) {
+              const v = String(value ?? "");
+              if (!v) return v;
+              try {
+                return /[^\x00-\xff]/.test(v)
+                  ? MailServices.mimeConverter.decodeMimeHeader(v, charset, false, true)
+                  : MailServices.mimeConverter.decodeMimeHeaderToUTF8(v, charset, false, true);
+              } catch {
+                return v;
+              }
+            }
+
+            // Header values mime_insert_normal_headers reads (null = absent), addresses in display form.
+            function forwardHeaderValues(mimeMsg, msgHdr) {
+              const charset = msgHdr.charset || "UTF-8";
+              const raw = (name, all) => {
+                const values = mimeMsg?.headers?.[name];
+                if (!values?.length) return null;
+                return all ? values.join(", ") : values[0];
+              };
+              const text = (name, all) => {
+                const v = raw(name, all);
+                return v == null ? null : (decodeRawHeader(v, charset) || v);
+              };
+              const addresses = (name, fallback) => {
+                const v = raw(name, true) || (fallback ? raw(fallback, true) : null);
+                if (v == null) return null;
+                try {
+                  const list = /[^\x00-\xff]/.test(v)
+                    ? MailServices.headerParser.parseEncodedHeaderW(v)
+                    : MailServices.headerParser.parseEncodedHeader(v, charset);
+                  return list.map(a => a.toString()).join(", ");
+                } catch {
+                  return v;
+                }
+              };
+              if (!mimeMsg?.headers) {
+                return {
+                  subject: msgHdr.mime2DecodedSubject || "", date: new Date(msgHdr.date / 1000).toUTCString(),
+                  from: msgHdr.mime2DecodedAuthor || "", to: msgHdr.mime2DecodedRecipients || "", cc: msgHdr.ccList || "",
+                };
+              }
+              return {
+                subject: text("subject"), resentComments: text("resent-comments"), resentDate: text("resent-date", true),
+                resentFrom: addresses("resent-from", "resent-sender"), resentTo: addresses("resent-to"), resentCc: addresses("resent-cc"),
+                date: text("date", true), from: addresses("from", "sender"), replyTo: addresses("reply-to"),
+                organization: text("organization"), to: addresses("to"), cc: addresses("cc"),
+                newsgroups: text("newsgroups", true), followupTo: text("followup-to", true), references: text("references", true),
+              };
+            }
+
+            /**
+             * Forwarded message as mimedrft.cpp builds it for ForwardInline: delimiter, header rows
+             * and the original body (HTML part preferred), in the compose format; HTML wrapped in
+             * moz-forward-container (ConvertAndLoadComposeWindow).
+             */
+            function forwardBodyFor(mimeMsg, msgHdr, useHtml) {
+              const labels = Object.fromEntries(Object.entries(FORWARD_HEADER_LABEL_IDS).map(([k, id]) => [k, mimeString(id)]));
+              const rows = forwardHeaderRows(forwardHeaderValues(mimeMsg, msgHdr), labels, Services.prefs.getIntPref("mail.show_headers", 1) === 0);
+              const delimiter = localizedPref("mailnews.forward_header_originalmessage", mimeString(1041));
+              let original = extractBodyContent(mimeMsg, true);
+              if (!original.text) original = { text: extractPlainTextBody(mimeMsg), isHtml: false };
+              const wrapping = Services.prefs.getIntPref("mailnews.wraplength", 72) !== 0;
+              if (!useHtml && !original.isHtml) {
+                const text = forwardPlainText(delimiter, rows, original.text.replace(/\r\n?/g, "\n"));
+                return wrapping ? joinFlowedLines(text) : text;
+              }
+              const html = `${delimiter}${forwardHeaderTableHtml(rows)}\n<BR><BR>` +
+                (original.isHtml ? stripDocumentTags(original.text) : plainTextToForwardHtml(original.text));
+              if (!useHtml) {
+                // Headers go in as HTML, then the whole body is converted like nsMsgCompFields::ConvertBodyToPlainText
+                const flowed = Services.prefs.getBoolPref("mailnews.send_plaintext_flowed", true);
+                const text = htmlToPlainText(`<HTML><BODY><BR><BR>${html}`, flowed, true, true);
+                return wrapping ? joinFlowedLines(text) : text;
+              }
+              let container = removePlaintextTag(`<div class="moz-forward-container"><BR><BR>${html}</div>`);
+              if (Services.prefs.getBoolPref("mail.html_sanitize.drop_conditional_css", true)) {
+                container = stripDocumentTags(Cc["@mozilla.org/parserutils;1"].getService(Ci.nsIParserUtils).removeConditionalCSS(container));
+              }
+              return tagEmbeddedObjects(container, embeddedObjectFilter(msgHdr.folder.getUriForMsg(msgHdr)));
+            }
+
             /**
              * Reply body as Thunderbird's reply window builds it: localized cite line, Thunderbird's
              * own quote (nsIMsgQuote; plain text of the original as fallback), the identity signature
@@ -8231,6 +8442,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
               const user = isHtml ? text : userBodyHtml(text, false, prefs.paragraphMode);
               return composeHtmlOutput(wrapHtmlDocument(layoutComposeHtml("new", { user, signature }, prefs)));
+            }
+
+            // Inline forward body as Thunderbird's forward window builds it (see forwardBodyFor).
+            function buildForwardBody(body, isHtml, useHtml, { msgHdr, mimeMsg, identity }) {
+              const prefs = composeLayoutPrefs(identity);
+              const parts = {
+                user: useHtml ? userBodyHtml(body, isHtml, prefs.paragraphMode) : String(body || ""),
+                forward: forwardBodyFor(mimeMsg, msgHdr, useHtml),
+                signature: signatureFor(identity, Ci.nsIMsgCompType.ForwardInline, useHtml, true, prefs),
+              };
+              return useHtml ? composeHtmlOutput(wrapHtmlDocument(layoutComposeHtml("forward", parts, prefs))) : plainEditorOutput(layoutComposeText("forward", parts, prefs));
             }
 
             // BEGIN HTML HIDDEN CONTENT HELPERS
@@ -12358,10 +12580,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * intro body is injected via NotifyComposeBodyReady, mirroring how
              * replyToMessage handles intro injection.
              *
-             * skipReview still uses direct send, so it keeps a manual forward
-             * block + auto-attaches originals from MsgHdrToMimeMessage + manually
-             * marks the original as forwarded after a successful send. Like a
-             * direct reply, it takes the sender from the caller only.
+             * A draft or a direct send builds the same body as that window
+             * (buildForwardBody) and attaches the originals from
+             * MsgHdrToMimeMessage; a direct send marks the original as forwarded
+             * itself. Like a direct reply, it takes the sender from the caller only.
              */
             async function forwardMessage(messageId, folderPath, to, body, isHtml, cc, bcc, from, attachments, skipReview, mode) {
               try {
@@ -12420,48 +12642,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (!isEncryptedContentAllowed() && isEncryptedMimeMessage(mimeMsg)) {
                     return { error: `${ENCRYPTED_CONTENT_NOTICE}; nothing was ${composeMode === "send" ? "sent" : "saved"}` };
                   }
-                  const originalBody = extractPlainTextBody(mimeMsg);
                   setDirectSendRecipients(composeFields, msgComposeParams.identity, to, cc, bcc);
 
-                  const origSubject = msgHdr.mime2DecodedSubject || msgHdr.subject || "";
-                  composeFields.subject = /^fwd:/i.test(origSubject) ? origSubject : `Fwd: ${origSubject}`;
+                  // nsMsgCompose::CreateMessage: the prefix before the subject as the database keeps it, without "Re:"
+                  const fwdPrefix = Services.prefs.getStringPref("mail.forward_subject_prefix", "Fwd");
+                  composeFields.subject = `${fwdPrefix}: ${msgHdr.mime2DecodedSubject || msgHdr.subject || ""}`;
                   // Thunderbird references only the forwarded message
                   if (!msgHdr.messageId.startsWith("md5:")) composeFields.references = `<${msgHdr.messageId}>`;
 
-                  const dateStr = msgHdr.date ? new Date(msgHdr.date / 1000).toLocaleString() : "";
-                  const fwdAuthor = msgHdr.mime2DecodedAuthor || msgHdr.author || "";
-                  const fwdRecipients = msgHdr.mime2DecodedRecipients || msgHdr.recipients || "";
-
-                  // Direct send goes through nsIMsgSend, not nsIMsgCompose,
-                  // so we hand-build the forward block. The shape matches the
-                  // resolved compose mode -- shipping an HTML envelope for a
-                  // plain-format send would render as literal markup in the
-                  // recipient's mail client.
-                  if (fwdUseHtml) {
-                    const fwdHeaderHtml =
-                      `-------- Forwarded Message --------<br>` +
-                      `Subject: ${escapeHtml(origSubject)}<br>` +
-                      `Date: ${dateStr}<br>` +
-                      `From: ${escapeHtml(fwdAuthor)}<br>` +
-                      `To: ${escapeHtml(fwdRecipients)}<br><br>`;
-                    const quotedHtml = escapeHtml(originalBody).replace(/\n/g, '<br>');
-                    const quotedLinesHtml = originalBody.split('\n').map(line =>
-                      `&gt; ${escapeHtml(line)}`
-                    ).join('<br>');
-                    const forwardBlock = isHtml
-                      ? `<blockquote type="cite">${fwdHeaderHtml}${quotedHtml}</blockquote>`
-                      : `${fwdHeaderHtml}${quotedLinesHtml}`;
-                    const introHtml = body ? formatBodyHtml(body, isHtml) + '<br><br>' : "";
-                    composeFields.body = `<html><head><meta charset="UTF-8"></head><body>${introHtml}${forwardBlock}</body></html>`;
-                  } else {
-                    const fwdHeader =
-                      `-------- Forwarded Message --------\n` +
-                      `Subject: ${origSubject}\n` +
-                      `Date: ${dateStr}\n` +
-                      `From: ${fwdAuthor}\n` +
-                      `To: ${fwdRecipients}\n\n`;
-                    composeFields.body = `${body ? body + '\n\n' : ''}${fwdHeader}${originalBody}`;
-                  }
+                  composeFields.body = buildForwardBody(body, isHtml, fwdUseHtml, { msgHdr, mimeMsg, identity: msgComposeParams.identity });
 
                   const origDescs = [];
                   if (mimeMsg && mimeMsg.allUserAttachments) {

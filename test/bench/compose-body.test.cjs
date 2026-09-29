@@ -1,9 +1,9 @@
 "use strict";
-// Reply and new-message draft bodies (cite line, quote, signature, layout, charset) equal what Thunderbird's
-// own compose window saves with the same text typed at its caret.
+// Reply, forward and new-message draft bodies (cite line, quote, forward header, signature, layout, charset) equal
+// what Thunderbird's own compose window saves with the same text typed at its caret.
 const { describe, it, before, after } = require("node:test");
 const assert = require("node:assert/strict");
-const { SKIP, mcp, tbLib, closeAll, FOLDER } = require("./helpers.cjs");
+const { SKIP, state, mcp, tbLib, closeAll, FOLDER } = require("./helpers.cjs");
 
 const TEXT = "Hello there, Ünïcode ок";
 
@@ -129,6 +129,7 @@ const canonicalHtml = html => tbLib(`${CANONICAL} return canonical(args.html);`,
 async function ourDraft(type, folder, id, text) {
   let saved;
   if (type === "New") saved = await mcp().call("saveDraft", { to: "z@example.test", subject: "[mcp-test] body", body: text });
+  else if (type === "ForwardInline") saved = await mcp().call("forwardMessage", { messageId: id, folderPath: folder, mode: "draft", to: "z@example.test", body: text });
   else saved = await mcp().call("replyToMessage", { messageId: id, folderPath: folder, mode: "draft", body: text, replyAll: type === "ReplyAll" });
   assert.equal(saved.success, true, JSON.stringify(saved));
   return draftRaw(saved.messageId);
@@ -153,10 +154,12 @@ async function compare({ type, folder, id, identity = {}, prefs = {}, text = TEX
 
 const clearDrafts = () => tbLib("clearFolder(args.drafts);", { drafts: FOLDER.drafts });
 
-const TEXT_SIG = { htmlSigText: "Bench\nUser <b>", htmlSigFormat: false, attachSignature: false, sigOnReply: true };
-const HTML_SIG = { htmlSigText: "Bench <b>User</b>", htmlSigFormat: true, attachSignature: false, sigOnReply: true };
+const TEXT_SIG = { htmlSigText: "Bench\nUser <b>", htmlSigFormat: false, attachSignature: false, sigOnReply: true, sigOnForward: true };
+const HTML_SIG = { htmlSigText: "Bench <b>User</b>", htmlSigFormat: true, attachSignature: false, sigOnReply: true, sigOnForward: true };
 const NO_SIG = { htmlSigText: "", attachSignature: false };
 const TRICKY = ["  two leading spaces", "trailing spaces   ", "> typed quote mark", "From the start", "long ".repeat(40).trim(), "end"].join("\n");
+const major = state ? parseInt(state.version, 10) : 0;
+const NATIVE_DROPS_PLAIN_FORWARD_SIG = major >= 150 && major < 158;
 const LAYOUTS = [[0, true], [1, true], [1, false], [0, false]];
 const ORIGINALS = [["html-alt", FOLDER.inbox, "html-alt@eta.test"], ["plain utf-8", FOLDER.inbox, "charset-utf8@rho.test"]];
 
@@ -182,6 +185,16 @@ describe("compose body", { skip: SKIP }, () => {
         for (const [sigName, sig] of [["text sig", TEXT_SIG], ["html sig", HTML_SIG]]) {
           await t.test(`top=${replyOnTop} bottom=${sigBottom} ${sigName}`, () =>
             compare({ type: "Reply", folder: ORIGINALS[1][1], id: ORIGINALS[1][2], identity: { composeHtml, ...sig, replyOnTop, sigBottom } }));
+        }
+      }
+    });
+
+    it(`${mode} forward: header table and body, signature position`, async t => {
+      for (const [name, folder, id] of ORIGINALS) {
+        for (const [replyOnTop, sigBottom] of [[0, true], [1, false]]) {
+          const skip = !composeHtml && sigBottom && NATIVE_DROPS_PLAIN_FORWARD_SIG && "Thunderbird 150-157 drop this signature (bug 2063939)";
+          await t.test(`${name} top=${replyOnTop} bottom=${sigBottom}`, { skip }, () =>
+            compare({ type: "ForwardInline", folder, id, identity: { composeHtml, ...TEXT_SIG, replyOnTop, sigBottom } }));
         }
       }
     });
@@ -222,6 +235,11 @@ describe("compose body", { skip: SKIP }, () => {
           type: "Reply", folder: ORIGINALS[0][1], id: ORIGINALS[0][2], identity: { composeHtml: true, ...sig, replyOnTop, sigBottom }, prefs,
         }));
       }
+    }
+    for (const [replyOnTop, sigBottom] of [[0, true], [1, false]]) {
+      await t.test(`forward top=${replyOnTop} bottom=${sigBottom}`, () => compare({
+        type: "ForwardInline", folder: ORIGINALS[1][1], id: ORIGINALS[1][2], identity: { composeHtml: true, ...TEXT_SIG, replyOnTop, sigBottom }, prefs,
+      }));
     }
     for (const [sigName, sig] of [["text sig", TEXT_SIG], ["no sig", NO_SIG]]) {
       await t.test(`new ${sigName}`, () => compare({ type: "New", identity: { composeHtml: true, ...sig, replyOnTop: 0, sigBottom: true }, prefs }));
