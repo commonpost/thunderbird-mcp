@@ -164,10 +164,10 @@ The bridge re-discovers `connection.json` on every cache miss. It tries these lo
 1. `COMMONPOST_MCP_CONNECTION_FILE`, if set
 2. Native temp dir: `<os.tmpdir()>/commonpost-mcp/connection.json`
 3. macOS fallback: `/var/folders/*/*/T/commonpost-mcp/connection.json` owned by the current user
-4. Linux Snap: Thunderbird's live `TMPDIR` from `/proc/<pid>/environ`, plus the official snap fallback under `~/Downloads/thunderbird.tmp`
-5. Linux Flatpak / Betterbird Flatpak: `$XDG_RUNTIME_DIR/app/*/commonpost-mcp/connection.json`
+4. Linux Snap: only from a process that is really the confined Thunderbird snap (`/proc/<pid>/exe` resolves under `/snap/thunderbird/` and `SNAP_NAME=thunderbird` is in its environment), read from its live `TMPDIR`; the official snap's own `~/Downloads/thunderbird.tmp` fallback is tried only once such a process was actually seen
+5. Linux Flatpak / Betterbird Flatpak: the real `/run/user/<uid>` (verified by `lstat`, never trusted from `$XDG_RUNTIME_DIR`), under a closed list of app ids (`org.mozilla.Thunderbird`, `net.thunderbird.Thunderbird`, `eu.betterbird.Betterbird`)
 
-This covers native installs, the official Thunderbird snap, Thunderbird Flatpak, Thunderbird Beta Flatpak, and Betterbird Flatpak without changing the extension side. If multiple sandbox candidates exist at once, the bridge tries the newest file first. Set `COMMONPOST_MCP_CONNECTION_FILE` to force a single explicit path.
+This covers native installs, the official Thunderbird snap, Thunderbird Flatpak (including its beta channel, which shares the same app id installed from a different remote), and Betterbird Flatpak, without changing the extension side. If multiple sandbox candidates exist at once, the bridge tries the newest file first. Set `COMMONPOST_MCP_CONNECTION_FILE` to force a single explicit path.
 
 Example override:
 
@@ -205,6 +205,31 @@ Both add-ons can be installed at the same time: they use different ids, preferen
 - **Tool access control**: Disable specific tools via the settings page. Disabled tools are hidden from `tools/list` and blocked at dispatch.
 - **Localhost only**: By default, the server binds to localhost only. The "Listen on all interfaces" option in settings binds to all IPv4 interfaces for WSL, Docker, or remote access. **This exposes the MCP server to every device on your local network.** Only enable on trusted networks. Auth token is always required.
 - **Auto-update integrity**: Auto-update is a code-delivery channel whose integrity depends on continued control of the GitHub repository, the GitHub Actions token, and the `commonpost` GitHub organization.
+
+### Attachments refused
+
+A `sendMail`, `saveDraft`, `replyToMessage` or `forwardMessage` call whose attachment path matches any of the
+following is refused, and the whole call fails (nothing is sent, saved, or opened) rather than silently dropping
+just that attachment:
+
+- a dotfile or dot-directory anywhere in the path (`.ssh`, `.aws`, `.config/gcloud`, `.git-credentials`, ...);
+- a filename that holds credentials or secrets on its own, wherever it is found (`credentials.json`, `*.ppk`,
+  `*.jks`, `*.pem`, `*.p12`, `*.kdbx`, `wallet.dat`, `terraform.tfstate*`, `Local State`, browser cookie/login
+  stores, ...);
+- system directories (`/etc`, `/proc`, `C:\Windows\System32`, ...) and each mail client's own profile
+  (Thunderbird's, other mail clients' saved credentials);
+- on macOS, anything under the signed-in user's `Library` folder (Mail, Messages, Keychains, Application Support,
+  ...), including its APFS Data-volume real-path form;
+- on Windows, AppData and its compatibility-junction aliases (`Local Settings`, `Application Data`, `Cookies`,
+  `Recent`, `SendTo`, ...) -- with one exception: the extension's own `<TEMP>\commonpost-mcp\` backup folder, so a
+  previously-saved attachment there can still be attached; `connection.json` itself is refused even there;
+- a UNC or device path (`\\server\share\...`, `\\?\...`), an alternate data stream, or a Windows form (8.3 short
+  name, trailing dot or space) that resolves to a different name than the one given.
+
+The bridge additionally resolves the attachment's **real path** (through symlinks and, on Windows, junctions and
+reparse points) and checks that too, so a denied file reached under an innocuous-looking name is still refused.
+The extension cannot do this on Windows (Gecko's `nsLocalFile::IsSymlink` has no implementation there) and instead
+refuses every string file path attachment on Windows outright; attach files through the bridge there.
 
 ---
 
