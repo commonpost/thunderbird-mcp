@@ -2012,7 +2012,10 @@ function conversationGraph(items, peopleOf) {
   });
   const byKey = new Map();
   items.forEach((it, i) => {
-    if (it.subjectKey) byKey.set(it.subjectKey, [...(byKey.get(it.subjectKey) || []), i]);
+    if (!it.subjectKey) return;
+    const list = byKey.get(it.subjectKey);
+    if (list) list.push(i);
+    else byKey.set(it.subjectKey, [i]);
   });
   const people = new Map();
   const peopleAt = i => {
@@ -2020,20 +2023,27 @@ function conversationGraph(items, peopleOf) {
     return people.get(i);
   };
   const earlier = (a, b) => items[a].dateTs < items[b].dateTs || (items[a].dateTs === items[b].dateTs && ids[a] < ids[b]);
+  const needsLink = i => items[i].hasRe && idsPerRoot.get(refRoot[i]).size === 1;
   const linkKey = key => {
     const list = (byKey.get(key) || []).slice().sort((a, b) => (earlier(a, b) ? -1 : earlier(b, a) ? 1 : 0));
+    if (list.length < 2 || !list.some(needsLink)) return;
+    // email -> positions in list of the messages it took part in, so the nearest earlier match is a lookup
+    const seenAt = new Map();
     list.forEach((i, pos) => {
-      if (!items[i].hasRe || idsPerRoot.get(refRoot[i]).size > 1) return;
-      const wanted = peopleAt(i).key;
-      if (!wanted.length) return;
-      for (let k = pos - 1; k >= 0; k--) {
-        const j = list[k];
-        if (ids[j] === ids[i]) continue;
-        const all = peopleAt(j).all;
-        if (wanted.some(e => all.has(e))) {
-          union(ids[j], ids[i]);
-          break;
+      if (needsLink(i)) {
+        let best = -1;
+        for (const e of peopleAt(i).key) {
+          const at = seenAt.get(e) || [];
+          for (let k = at.length - 1; k >= 0 && at[k] > best; k--) {
+            if (ids[list[at[k]]] !== ids[i]) { best = at[k]; break; }
+          }
         }
+        if (best >= 0) union(ids[list[best]], ids[i]);
+      }
+      for (const e of peopleAt(i).all) {
+        const at = seenAt.get(e);
+        if (at) at.push(pos);
+        else seenAt.set(e, [pos]);
       }
     });
   };
@@ -2129,16 +2139,43 @@ function buildSearchPage(rows, { offset, limit, format, incomplete, key = "messa
   return out;
 }
 
+// format "legacy" (0.9.x only, then removed): the 0.8 output, full rows in a plain array unless offset is passed.
+function legacySearchRow(row) {
+  const out = {
+    id: row.id, threadId: row._threadId, subject: row._legacySubject ?? row.subject, author: row.author,
+    recipients: row.recipients, ccList: row.ccList, date: row.date, folder: row._folderName, folderPath: row.folderPath,
+    read: row.read, flagged: row.flagged, tags: row.tags,
+  };
+  if (row.preview) out.preview = row.preview;
+  for (const key of ["dupLocations", "linkedBy"]) if (row[key] !== undefined) out[key] = row[key];
+  return out;
+}
+
+function legacySearchPage(rows, { offset, limit, incomplete }) {
+  const start = offset > 0 ? Math.floor(offset) : 0;
+  const page = rows.slice(start, start + limit).map(legacySearchRow);
+  if (offset === undefined || offset === null) return page;
+  const out = { messages: page, totalMatches: rows.length, offset: start, limit, hasMore: start + limit < rows.length };
+  if (incomplete) out.incomplete = true;
+  return out;
+}
+
 const DEFAULT_GET_MESSAGE_BODY_CHARS = 20000;
 const DEFAULT_GET_MESSAGES_BODY_CHARS = 4000;
 const MAX_BODY_CHARS = 200000;
 
-// Page body (or rawSource) of a getMessage result; error results pass through.
+// Page body (or rawSource) of a getMessage result; error results pass through. Base64 pages start and end on
+// 4-character groups, so each page decodes on its own.
 function pageMessageBody(result, bodyOffset, maxBodyChars, defaultChars) {
   if (!result || typeof result !== "object" || result.error) return result;
   const requested = Number(maxBodyChars);
-  const maxChars = Math.min(requested > 0 ? Math.floor(requested) : defaultChars, MAX_BODY_CHARS);
-  return pageTextField(result, typeof result.rawSource === "string" ? "rawSource" : "body", bodyOffset, maxChars);
+  let maxChars = Math.min(requested > 0 ? Math.floor(requested) : defaultChars, MAX_BODY_CHARS);
+  let offset = bodyOffset;
+  if (result.rawEncoding === "base64") {
+    maxChars = Math.max(4, maxChars - (maxChars % 4));
+    offset = Math.floor(Math.max(0, Number(bodyOffset) || 0) / 4) * 4;
+  }
+  return pageTextField(result, typeof result.rawSource === "string" ? "rawSource" : "body", offset, maxChars);
 }
 
 // Page a long text field in place; adds bodyTotalChars / bodyTruncated / nextBodyOffset.
@@ -4312,7 +4349,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             groupBy: { type: "string", enum: ["sender", "thread"], description: "Collapse matches into one row per sender or conversation: count, unread, first/last date, latestId + latestFolderPath of the newest non-draft message, drafts count" },
             threadOf: {
               type: "object",
-              description: "Return the whole conversation of this message across folders (incl. Sent), oldest first. A Re: message without threading headers joins by subject the earlier message its sender took part in (linkedBy: subject)",
+              description: "Return the whole conversation of this message across folders (incl. Sent), oldest first. A Re: message without threading headers joins by subject the earlier message its sender took part in (linkedBy: subject). Reads at most 10,000 headers; incomplete: true when it stopped there (narrow with folderPath)",
               properties: {
                 messageId: { type: "string" },
                 folderPath: { type: "string" },
@@ -4320,7 +4357,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               required: ["messageId", "folderPath"],
               additionalProperties: false,
             },
-            format: { type: "string", enum: ["objects", "table"], description: "'table' returns messages as { columns, rows } (fewer tokens for long lists)" },
+            format: { type: "string", enum: ["objects", "table", "legacy"], description: "'table' returns messages as { columns, rows } (fewer tokens for long lists). 'legacy' (deprecated, removed after 0.9): the 0.8 output, a plain array of full rows (threadId, folder, whole preview) unless offset is passed, 50 rows by default; not with groupBy" },
             searchBody: { type: "boolean", description: "Full-text search of subject, body and attachment names via the Gloda index (slower). Query: words or \"quoted phrases\", all must match, no operators; terms under 3 characters are ignored; English words match other forms (stemming), other languages such as Russian only the exact word form. IMAP needs offline sync." },
             dedupByMessageId: { type: "boolean", default: true, description: "Collapse copies of one message in several folders into one row with dupLocations" },
           },
@@ -4340,7 +4377,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             saveAttachments: { type: "boolean", description: "If true, save attachments to <OS temp dir>/commonpost-mcp/<messageId>/ and include filePath in response (default: false)" },
             includeInlineImages: { type: "boolean", description: "If true, append supported inline email images as MCP image content blocks after the text result (default: false; max 1 MiB base64 per image and 4 MiB total). Images referenced by the rendered body are attempted first in document order, followed by remaining inline images in MIME order. Ignored when rawSource is true." },
             bodyFormat: { type: "string", enum: ["markdown", "text", "html"], description: "Body output format: 'markdown' (default, preserves structure), 'text' (plain text), 'html' (raw HTML)" },
-            rawSource: { type: "boolean", description: "If true, return the full raw RFC 2822 message source (all headers + MIME parts). Useful for extracting calendar invites, S/MIME data, or debugging. Decoded as UTF-8 when valid, else by the charset its Content-Type declares, else a detected one; rawCharset names it. Other fields (body, attachments) are omitted when this is set. Note: requires local/offline message copy; IMAP messages not cached offline may fail." },
+            rawSource: { type: "boolean", description: "If true, return the full raw RFC 2822 message source (all headers + MIME parts). Useful for extracting calendar invites, S/MIME data, or debugging. Decoded as UTF-8 when valid, else by the charset of the top-level Content-Type, then of the parts, else a detected one; rawCharset names it, rawMixedCharsets lists the part charsets when they differ. Other fields (body, attachments) are omitted when this is set. Note: requires local/offline message copy; IMAP messages not cached offline may fail." },
+            rawEncoding: { type: "string", enum: ["text", "base64"], default: "text", description: "With rawSource: 'base64' returns the exact bytes instead of decoded text, for 8bit/binary parts; pages then start and end on 4-character groups" },
             maxBodyChars: { type: "integer", minimum: 1, maximum: MAX_BODY_CHARS, default: DEFAULT_GET_MESSAGE_BODY_CHARS, description: "Max characters of body (or rawSource) returned; longer bodies set bodyTruncated and nextBodyOffset" },
             bodyOffset: { type: "integer", minimum: 0, default: 0, description: "Continue a truncated body from nextBodyOffset" },
           },
@@ -4373,6 +4411,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             saveAttachments: { type: "boolean", description: "If true, save attachments for each message and include filePath in attachment metadata (default: false)" },
             bodyFormat: { type: "string", enum: ["markdown", "text", "html"], description: "Body output format shared by all messages: 'markdown' (default), 'text', or 'html'" },
             rawSource: { type: "boolean", description: "If true, return raw RFC 2822 source (decoded text, rawCharset) for each message instead of parsed body fields" },
+            rawEncoding: { type: "string", enum: ["text", "base64"], default: "text", description: "With rawSource: 'base64' returns the exact bytes instead of decoded text" },
             maxBodyChars: { type: "integer", minimum: 1, maximum: MAX_BODY_CHARS, default: DEFAULT_GET_MESSAGES_BODY_CHARS, description: "Max body characters per message; read the rest with getMessage bodyOffset" },
           },
           required: ["messages"],
@@ -4793,7 +4832,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             flaggedOnly: { type: "boolean", description: "Only flagged/starred" },
             includeSubfolders: { type: "boolean", default: true, description: "Include subfolders of folderPath" },
             includeTrash: { type: "boolean", default: false, description: "Also include Trash and Junk" },
-            format: { type: "string", enum: ["objects", "table"], description: "'table' returns messages as { columns, rows }" },
+            format: { type: "string", enum: ["objects", "table", "legacy"], description: "'table' returns messages as { columns, rows }. 'legacy' (deprecated, removed after 0.9): the 0.8 output, as in searchMessages" },
           },
           required: [],
         },
@@ -7329,6 +7368,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return refs;
             }
 
+            // BEGIN SEARCH ROW BUILDER
             const DRAFT_FOLDER_FLAGS = Ci.nsMsgFolderFlags.Drafts | Ci.nsMsgFolderFlags.Templates | Ci.nsMsgFolderFlags.Queue;
             const draftFolderCache = new Map();
             function isDraftFolder(folder) {
@@ -7346,7 +7386,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return msgHdr.flags & Ci.nsMsgMessageFlags.HasRe ? `Re: ${s}` : s;
             }
 
-            function buildSearchRow(msgHdr, folder) {
+            function buildSearchRow(msgHdr, folder, legacy) {
               const row = {
                 id: msgHdr.messageId,
                 subject: displaySubject(msgHdr),
@@ -7361,10 +7401,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 _dateTs: msgHdr.date || 0,
               };
               if (isDraftFolder(folder)) row._draft = true;
+              if (legacy) {
+                row._threadId = msgHdr.threadId;
+                // nsIMsgFolder.prettyName is localizedName since Thunderbird 141
+                row._folderName = folder.localizedName ?? folder.prettyName;
+                row._legacySubject = msgHdr.mime2DecodedSubject || msgHdr.subject;
+              }
               const preview = msgHdr.getStringProperty("preview") || "";
               if (preview) row.preview = preview;
               return row;
             }
+            // END SEARCH ROW BUILDER
 
             function addThreadGroupingFields(row, msgHdr, refs, ownEmails) {
               row._msgId = normalizeMessageIdForDedup(msgHdr.messageId);
@@ -7384,6 +7431,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * Returns { error } or normalized options with a cheap header predicate.
              */
             function prepareSearch(args) {
+              if (args.format === "legacy" && args.groupBy) return { error: 'format "legacy" cannot be combined with groupBy' };
               const parsedStart = args.startDate ? new Date(args.startDate).getTime() : null;
               const parsedEnd = args.endDate ? new Date(args.endDate).getTime() : null;
               if (parsedStart !== null && isNaN(parsedStart)) return { error: `Invalid startDate: ${args.startDate}` };
@@ -7395,7 +7443,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
               const requestedLimit = Number(args.maxResults);
               const limit = Math.min(
-                Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.floor(requestedLimit) : DEFAULT_SEARCH_RESULTS,
+                Number.isFinite(requestedLimit) && requestedLimit > 0
+                  ? Math.floor(requestedLimit)
+                  : (args.format === "legacy" ? DEFAULT_MAX_RESULTS : DEFAULT_SEARCH_RESULTS),
                 MAX_SEARCH_RESULTS_CAP
               );
 
@@ -7431,6 +7481,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const dir = prepared.sortOrder === "asc" ? 1 : -1;
               finalRows.sort((a, b) => dir * (a._dateTs - b._dateTs));
               const pageOpts = { offset: args.offset, limit: prepared.limit, format: args.format, incomplete };
+              if (args.format === "legacy") return legacySearchPage(finalRows, pageOpts);
               if (args.groupBy === "sender" || args.groupBy === "thread") {
                 if (args.groupBy === "thread") assignThreadKeys(finalRows);
                 const page = buildSearchPage(groupSearchRows(finalRows, args.groupBy, prepared.sortOrder), { ...pageOpts, key: "groups" });
@@ -7488,7 +7539,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                           if (!trashAllowed && isTrashOrJunkFolder(folder, true)) continue;
                           if (!prepared.passesHeaderFilters(msgHdr)) continue;
 
-                          const row = buildSearchRow(msgHdr, folder);
+                          const row = buildSearchRow(msgHdr, folder, args.format === "legacy");
                           if (ownEmails) addThreadGroupingFields(row, msgHdr, null, ownEmails);
                           rows.push(row);
                         }
@@ -7518,7 +7569,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                const warning = dropped.length ? `Terms under 3 characters are not searched: ${dropped.join(", ")}` : null;
 	                if (!kept.length) return { error: ["searchBody needs a term of at least 3 characters.", warning].filter(Boolean).join(" ") };
 	                if (!warning) return glodaBodySearch(args, prepared);
-	                return Promise.resolve(glodaBodySearch(args, prepared)).then(res => (res.error ? res : { ...res, warning }));
+	                return Promise.resolve(glodaBodySearch(args, prepared)).then(res => (res.error || Array.isArray(res) ? res : { ...res, warning }));
 	              }
 
 	              const { terms, failed } = parseSearchQuery(args.query);
@@ -7543,7 +7594,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                  // listed, with no query) on those is excluded outright rather
 	                  // than trusted to show only what it should.
 	                  if (!encryptedAllowed && isRawMimeEnvelopeEncrypted(msgHdr)) continue;
-	                  const row = buildSearchRow(msgHdr, folder);
+	                  const row = buildSearchRow(msgHdr, folder, args.format === "legacy");
 	                  if (ownEmails) addThreadGroupingFields(row, msgHdr, null, ownEmails);
 	                  rows.push(row);
 	                }
@@ -7609,7 +7660,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	            /**
 	             * threadOf (T1): every header in scope is read first (id, References, subject key, Re: flag), then the
 	             * conversation is joined (conversationMembers), so the folder order does not matter. Filters and query
-	             * terms select rows of the conversation; they do not cut its links.
+	             * terms select rows of the conversation; they do not cut its links. At most SEARCH_COLLECTION_CAP
+	             * headers are read (this runs on the main thread); past that the result is marked incomplete.
 	             */
 	            function threadOfSearch(args, prepared, terms) {
 	              const found = findMessage(args.threadOf.messageId, args.threadOf.folderPath);
@@ -7619,6 +7671,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	              const items = [];
 	              const sources = [];
 	              let seedIndex = -1;
+	              let scanCapped = false;
 	              const add = (msgHdr, source) => {
 	                items.push({
 	                  id: normalizeMessageIdForDedup(msgHdr.messageId),
@@ -7631,6 +7684,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	              };
 	              const walked = walkSearchFolders(args, (folder, db) => {
 	                for (const msgHdr of db.enumerateMessages()) {
+	                  if (items.length >= SEARCH_COLLECTION_CAP) { scanCapped = true; return false; }
 	                  if (seedIndex < 0 && msgHdr.messageKey === seedHdr.messageKey && folder.URI === seedFolderURI) seedIndex = items.length;
 	                  add(msgHdr, { folder, key: msgHdr.messageKey });
 	                }
@@ -7652,7 +7706,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
 	              const encryptedAllowed = isEncryptedContentAllowed();
 	              const rows = [];
-	              let incomplete = false;
+	              let incomplete = scanCapped;
 	              for (const [i, how] of members) {
 	                if (!sources[i].folder) continue;
 	                if (rows.length >= SEARCH_COLLECTION_CAP) { incomplete = true; break; }
@@ -7661,7 +7715,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                if (!prepared.passesHeaderFilters(msgHdr) || !headerMatchesTerms(msgHdr, terms)) continue;
 	                // Same rule as the other search paths: an encrypted message is left out.
 	                if (!encryptedAllowed && isRawMimeEnvelopeEncrypted(msgHdr)) continue;
-	                const row = buildSearchRow(msgHdr, sources[i].folder);
+	                const row = buildSearchRow(msgHdr, sources[i].folder, args.format === "legacy");
 	                if (how === "subject") row.linkedBy = "subject";
 	                if (args.groupBy === "thread") addThreadGroupingFields(row, msgHdr, items[i].refs, ownEmails);
 	                rows.push(row);
@@ -7669,6 +7723,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	              return finishSearch(rows, args, prepared, incomplete);
 	            }
 
+            // BEGIN SEARCH CONTACTS
             function searchContacts(query, maxResults, format) {
               const results = [];
               const lowerQuery = (query || "").toLowerCase();
@@ -7713,6 +7768,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
               return results;
             }
+            // END SEARCH CONTACTS
 
             /**
              * Find a contact card by UID across all address books.
@@ -9157,28 +9213,53 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return bodyPart;
             }
 
-            // Raw source as text: strict UTF-8; else a charset declared in a Content-Type (non-UTF-8 first, since the
-            // bytes are not UTF-8); else detect(raw) (MailStringUtils.detectCharset, Gecko's EncodingDetector).
+            // Labels of the WHATWG "replacement" encoding, which decodes any input to U+FFFD, and encodings that
+            // cannot decode a whole message: UTF-16 garbles its ASCII headers, x-user-defined turns every 8-bit byte
+            // into a private-use character.
+            const RAW_SOURCE_REFUSED_LABELS = new Set(["csiso2022kr", "hz-gb-2312", "iso-2022-cn", "iso-2022-cn-ext", "iso-2022-kr", "replacement"]);
+            const RAW_SOURCE_REFUSED_ENCODINGS = new Set(["replacement", "utf-16be", "utf-16le", "x-user-defined"]);
+
+            function rawSourceDecoder(label) {
+              if (!label || RAW_SOURCE_REFUSED_LABELS.has(label.toLowerCase())) return null;
+              try {
+                const decoder = new TextDecoder(label);
+                return RAW_SOURCE_REFUSED_ENCODINGS.has(decoder.encoding) ? null : decoder;
+              } catch {
+                return null;
+              }
+            }
+
+            // Raw source as text: strict UTF-8; else the charset of the top-level Content-Type, then those of the
+            // parts (non-UTF-8 first, since the bytes are not UTF-8); else detect(raw) (MailStringUtils.detectCharset:
+            // BOM, then Gecko's EncodingDetector). mixedCharsets lists the declared encodings when they differ.
             function decodeRawSource(raw, detect) {
               const bytes = rawMimeBytesFromByteString(raw);
               try {
                 return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes), charset: "utf-8" };
               } catch {}
+              const charsetOf = header => header.match(/charset\s*=\s*["']?([^"';\s]+)/i)?.[1]?.toLowerCase();
+              const headerEnd = raw.search(/\r?\n\r?\n/);
+              let topLevel = null;
               const declared = [];
-              for (const [header] of raw.matchAll(/^content-type:[^\r\n]*(?:\r?\n[ \t][^\r\n]*)*/gim)) {
-                const label = header.match(/charset\s*=\s*["']?([^"';\s]+)/i)?.[1]?.toLowerCase();
+              for (const match of raw.matchAll(/^content-type:[^\r\n]*(?:\r?\n[ \t][^\r\n]*)*/gim)) {
+                const label = charsetOf(match[0]);
+                if (topLevel === null && (headerEnd < 0 || match.index < headerEnd)) topLevel = label || "";
                 if (label && label !== "us-ascii" && !declared.includes(label)) declared.push(label);
               }
               const isUtf8 = label => /^utf-?8$/.test(label);
-              const candidates = [...declared.filter(l => !isUtf8(l)), ...declared.filter(isUtf8)];
+              const candidates = [
+                ...(topLevel && !isUtf8(topLevel) ? [topLevel] : []),
+                ...declared.filter(l => !isUtf8(l)),
+                ...declared.filter(isUtf8),
+              ];
               try { if (detect) candidates.push(detect(raw)); } catch {}
+              const encodings = [...new Set(declared.map(l => rawSourceDecoder(l)?.encoding).filter(Boolean))];
+              const mixed = encodings.length > 1 ? { mixedCharsets: encodings } : {};
               for (const label of candidates) {
-                try {
-                  const decoder = new TextDecoder(label);
-                  return { text: decoder.decode(bytes), charset: decoder.encoding };
-                } catch {}
+                const decoder = rawSourceDecoder(label);
+                if (decoder) return { text: decoder.decode(bytes), charset: decoder.encoding, ...mixed };
               }
-              return { text: raw, charset: "iso-8859-1" };
+              return { text: raw, charset: "iso-8859-1", ...mixed };
             }
             // END RAW MIME PARSING HELPERS
 
@@ -9352,7 +9433,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
             // END RAW MIME ATTACHMENT HELPERS
 
-	            function getMessage(messageId, folderPath, saveAttachments, bodyFormat, rawSource, includeInlineImages) {
+	            function getMessage(messageId, folderPath, saveAttachments, bodyFormat, rawSource, includeInlineImages, rawEncoding) {
 	              return new Promise((resolve) => {
 	                try {
 	                  const found = findMessage(messageId, folderPath);
@@ -9373,14 +9454,28 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                        resolve({ error: "Message has zero size - cannot read raw source" });
 	                        return;
 	                      }
+	                      if (rawEncoding === "base64") {
+	                        resolve({
+	                          id: msgHdr.messageId,
+	                          subject: displaySubject(msgHdr),
+	                          rawSource: encodeByteStringToBase64(raw),
+	                          rawEncoding: "base64",
+	                        });
+	                        return;
+	                      }
 	                      const { MailStringUtils } = ChromeUtils.importESModule("resource:///modules/MailStringUtils.sys.mjs");
 	                      const decoded = decodeRawSource(raw, bytes => MailStringUtils.detectCharset(bytes));
-	                      resolve({
+	                      const result = {
 	                        id: msgHdr.messageId,
 	                        subject: outerWireSubject(msgHdr, msgHdr.mime2DecodedSubject || msgHdr.subject),
 	                        rawSource: decoded.text,
 	                        rawCharset: decoded.charset,
-	                      });
+	                      };
+	                      if (decoded.mixedCharsets) {
+	                        result.rawMixedCharsets = decoded.mixedCharsets;
+	                        result.warning = `Parts declare different charsets; rawSource is decoded as ${decoded.charset}, so text in the other charsets may be garbled. rawEncoding "base64" returns the exact bytes.`;
+	                      }
+	                      resolve(result);
 	                    } catch (e) {
 	                      console.error("commonpost-mcp: raw source read failed:", e);
 	                      resolve({ error: "Failed to read raw source" });
@@ -10178,7 +10273,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	              });
 	            }
 
-            async function getMessages(messages, saveAttachments, bodyFormat, rawSource, maxBodyChars) {
+            async function getMessages(messages, saveAttachments, bodyFormat, rawSource, maxBodyChars, rawEncoding) {
               if (typeof messages === "string") {
                 try { messages = JSON.parse(messages); } catch { /* leave as-is */ }
               }
@@ -10220,7 +10315,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
 
                 const result = pageMessageBody(
-                  await getMessage(messageId, folderPath, saveAttachments, bodyFormat, rawSource),
+                  await getMessage(messageId, folderPath, saveAttachments, bodyFormat, rawSource, false, rawEncoding),
                   0, maxBodyChars, DEFAULT_GET_MESSAGES_BODY_CHARS
                 );
                 results.push({ index: i, messageId, folderPath, ...result });
@@ -10802,6 +10897,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
 
             // Recent mail across all folders (or one folder), newest first, Trash/Junk skipped.
+            // BEGIN RECENT MESSAGES
             function getRecentMessages(args) {
               const days = Number(args.daysBack) > 0 ? Math.floor(Number(args.daysBack)) : 7;
               return searchMessages({
@@ -10818,6 +10914,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 format: args.format,
               });
             }
+            // END RECENT MESSAGES
 
             function isTrashOrDescendant(folder) {
               try {
@@ -12487,11 +12584,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   return await searchMessages({ ...args, query: args.query || "" });
                 case "getMessage":
                   return pageMessageBody(
-                    await getMessage(args.messageId, args.folderPath, args.saveAttachments, args.bodyFormat, args.rawSource, args.includeInlineImages),
+                    await getMessage(args.messageId, args.folderPath, args.saveAttachments, args.bodyFormat, args.rawSource, args.includeInlineImages, args.rawEncoding),
                     args.bodyOffset, args.maxBodyChars, DEFAULT_GET_MESSAGE_BODY_CHARS
                   );
                 case "getMessages":
-                  return await getMessages(args.messages, args.saveAttachments, args.bodyFormat, args.rawSource, args.maxBodyChars);
+                  return await getMessages(args.messages, args.saveAttachments, args.bodyFormat, args.rawSource, args.maxBodyChars, args.rawEncoding);
                 case "searchContacts":
                   return searchContacts(args.query || "", args.maxResults, args.format);
                 case "getContact":

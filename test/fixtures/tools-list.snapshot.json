@@ -133,7 +133,7 @@
           },
           "threadOf": {
             "type": "object",
-            "description": "Return the whole conversation of this message across folders (incl. Sent), oldest first. A Re: message without threading headers joins by subject the earlier message its sender took part in (linkedBy: subject)",
+            "description": "Return the whole conversation of this message across folders (incl. Sent), oldest first. A Re: message without threading headers joins by subject the earlier message its sender took part in (linkedBy: subject). Reads at most 10,000 headers; incomplete: true when it stopped there (narrow with folderPath)",
             "properties": {
               "messageId": {
                 "type": "string"
@@ -152,9 +152,10 @@
             "type": "string",
             "enum": [
               "objects",
-              "table"
+              "table",
+              "legacy"
             ],
-            "description": "'table' returns messages as { columns, rows } (fewer tokens for long lists)"
+            "description": "'table' returns messages as { columns, rows } (fewer tokens for long lists). 'legacy' (deprecated, removed after 0.9): the 0.8 output, a plain array of full rows (threadId, folder, whole preview) unless offset is passed, 50 rows by default; not with groupBy"
           },
           "searchBody": {
             "type": "boolean",
@@ -211,7 +212,16 @@
           },
           "rawSource": {
             "type": "boolean",
-            "description": "If true, return the full raw RFC 2822 message source (all headers + MIME parts). Useful for extracting calendar invites, S/MIME data, or debugging. Decoded as UTF-8 when valid, else by the charset its Content-Type declares, else a detected one; rawCharset names it. Other fields (body, attachments) are omitted when this is set. Note: requires local/offline message copy; IMAP messages not cached offline may fail."
+            "description": "If true, return the full raw RFC 2822 message source (all headers + MIME parts). Useful for extracting calendar invites, S/MIME data, or debugging. Decoded as UTF-8 when valid, else by the charset of the top-level Content-Type, then of the parts, else a detected one; rawCharset names it, rawMixedCharsets lists the part charsets when they differ. Other fields (body, attachments) are omitted when this is set. Note: requires local/offline message copy; IMAP messages not cached offline may fail."
+          },
+          "rawEncoding": {
+            "type": "string",
+            "enum": [
+              "text",
+              "base64"
+            ],
+            "default": "text",
+            "description": "With rawSource: 'base64' returns the exact bytes instead of decoded text, for 8bit/binary parts; pages then start and end on 4-character groups"
           },
           "maxBodyChars": {
             "type": "integer",
@@ -286,6 +296,15 @@
           "rawSource": {
             "type": "boolean",
             "description": "If true, return raw RFC 2822 source (decoded text, rawCharset) for each message instead of parsed body fields"
+          },
+          "rawEncoding": {
+            "type": "string",
+            "enum": [
+              "text",
+              "base64"
+            ],
+            "default": "text",
+            "description": "With rawSource: 'base64' returns the exact bytes instead of decoded text"
           },
           "maxBodyChars": {
             "type": "integer",
@@ -1556,9 +1575,10 @@
             "type": "string",
             "enum": [
               "objects",
-              "table"
+              "table",
+              "legacy"
             ],
-            "description": "'table' returns messages as { columns, rows }"
+            "description": "'table' returns messages as { columns, rows }. 'legacy' (deprecated, removed after 0.9): the 0.8 output, as in searchMessages"
           }
         },
         "required": []
