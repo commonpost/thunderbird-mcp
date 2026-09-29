@@ -654,6 +654,7 @@ function convertProductionFileAttachments(entries, files) {
       return file;
     },
     isSensitiveFilePath: () => false,
+    isWindowsHost: () => false,
     Services: {
       io: {
         newFileURI: file => ({ spec: `file://${file.path}` }),
@@ -992,6 +993,24 @@ describe('Validation: attachment sending', () => {
     assert.equal(result.descs.length, 0);
     assert.deepEqual(Array.from(result.failed), [
       '/allowed/docs/lien/notes.txt (a parent directory is a symlink or reparse point: /allowed/docs/lien)',
+    ]);
+  });
+
+  it('a string file path attachment is refused outright on Windows (N5: nsLocalFile::IsSymlink cannot see a junction there)', () => {
+    const entries = ['C:\\Users\\alice\\Documents\\report.pdf'];
+    const files = new Map([[entries[0], makeMockLocalFile(entries[0], { ancestors: ['C:\\', 'C:\\Users', 'C:\\Users\\alice', 'C:\\Users\\alice\\Documents'] })]]);
+    const runtime = loadProductionAttachmentValidation({
+      createLocalFile: (attachmentPath) => files.get(attachmentPath),
+      isSensitiveFilePath: () => false,
+      isWindowsHost: () => true,
+      Services: { io: { newFileURI: file => ({ spec: `file://${file.path}` }) } },
+    });
+
+    const result = runtime.filePathsToAttachDescs(entries);
+
+    assert.equal(result.descs.length, 0);
+    assert.deepEqual(Array.from(result.failed), [
+      'C:\\Users\\alice\\Documents\\report.pdf (a file path attachment cannot be verified on Windows through this tool; use the bridge instead, which resolves and checks the real path)',
     ]);
   });
 
@@ -1478,6 +1497,11 @@ describe('isSensitiveFilePath: system directories', () => {
     assert.equal(isSensitiveFilePath('/Users/x/Library/Keychains/login.keychain-db'), true);
   });
 
+  it('blocks the APFS Data-volume form of a home Library path (a resolved real path can come back this way)', () => {
+    assert.equal(isSensitiveFilePath('/System/Volumes/Data/Users/x/Library/Mail'), true);
+    assert.equal(isSensitiveFilePath('/system/volumes/data/users/x/library/mail'), true);
+  });
+
   it('blocks Windows system dirs (forward and back slashes)', () => {
     assert.equal(isSensitiveFilePath('C:\\Windows\\System32\\config\\SAM'), true);
     assert.equal(isSensitiveFilePath('C:/Windows/System32/config/SAM'), true);
@@ -1533,9 +1557,8 @@ describe('isSensitiveFilePath: benign paths pass through', () => {
     assert.equal(isSensitiveFilePath('/home/user/medical/pemphigus.txt'), false);
     // "etc" inside a path that doesn't start at /etc/
     assert.equal(isSensitiveFilePath('/home/user/etc-notes.md'), false);
-    // Not a look-alike escape any more: every dotfile/dot-directory
-    // component is blocked outright (hasSensitivePathComponent), a
-    // deliberately broader rule than the old profile-name-only check.
+    // Every dotfile/dot-directory component is blocked outright
+    // (hasSensitivePathComponent), whatever its name.
     assert.equal(isSensitiveFilePath('/home/user/.thunderbird-notes/report.txt'), true);
     // A non-dotfile look-alike of "thunderbird" still passes: only the
     // profile-directory patterns and the generic dotfile rule apply.

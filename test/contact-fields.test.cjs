@@ -17,7 +17,12 @@ function loadContactFieldHelpers() {
   assert.ok(end > start, "contact field helper end marker missing");
 
   const snippet = source.slice(start, end);
-  const sandbox = {};
+  // applyContactFields strips <email-content> markers from fields.note
+  // before writing it (stripEmailContentMarkers, declared in the untrusted
+  // content helpers elsewhere in api.js, not part of this marked block):
+  // an identity stub here since this suite is about field mapping, not
+  // marker stripping (covered by untrusted-content.test.cjs).
+  const sandbox = { stripEmailContentMarkers: (value) => value };
   vm.createContext(sandbox);
   vm.runInContext(
     `${snippet}

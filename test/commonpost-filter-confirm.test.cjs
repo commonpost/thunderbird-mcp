@@ -455,7 +455,7 @@ describe("text shown to the user", () => {
   it("makes invisible and direction characters visible", () => {
     assert.equal(api.displayFilterText("a\u202Eb"), "a[U+202E]b");
     assert.equal(api.displayFilterText("a\u200Bb\u00ADc\u2066d"), "a[U+200B]b[U+00AD]c[U+2066]d");
-    assert.equal(api.displayFilterText("a b"), "a[U+00A0]b");
+    assert.equal(api.displayFilterText("a\u00A0b"), "a[U+00A0]b");
     assert.equal(api.displayFilterText("x\u{E0041}"), "x[U+E0041]");
     assert.equal(api.displayFilterText("x\uFE0F"), "x[U+FE0F]");
   });

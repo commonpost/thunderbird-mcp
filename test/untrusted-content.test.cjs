@@ -18,6 +18,7 @@ const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${apiSource.slice(start, end)}
 this.api = { stripHiddenCharacters, protectUntrustedResult, protectMessageToolResult, untrustedContentNotice,
+  stripEmailContentMarkers, untrustedContentOpen, untrustedContentClose,
   UNTRUSTED_CONTENT_TOOLS, UNTRUSTED_WALK_MAX_NODES, UNTRUSTED_WALK_MAX_DEPTH };`, sandbox);
 const api = sandbox.api;
 const NONCE = "0123456789abcdef01234567";
@@ -66,6 +67,22 @@ describe("stripHiddenCharacters", () => {
         { text: `می${joiner}خواهم`, removed: 0 }, joiner);
       assert.deepEqual({ ...api.stripHiddenCharacters(`a${joiner}b`) }, { text: `a${joiner}b`, removed: 0 }, joiner);
     }
+    // In canonical Indic use the immediate neighbor is often a combining
+    // mark (a virama, a vowel sign), not a bare letter on both sides: kept
+    // whenever at least one side is a real letter and neither side is
+    // outside [letter, mark].
+    // Sinhala: SHA (letter) + virama U+0DCA (mark) + ZWJ + RA (letter) + vowel sign I.
+    const sinhala = "\u0DC0\u0DCA\u200D\u0DBB\u0DD3";
+    assert.deepEqual({ ...api.stripHiddenCharacters(sinhala) }, { text: sinhala, removed: 0 }, "Sinhala virama+ZWJ+letter");
+    // Bengali: RA (letter) + ZWJ + virama U+09CD (mark) + YA (letter).
+    const bengali = "\u09B0\u200D\u09CD\u09AF";
+    assert.deepEqual({ ...api.stripHiddenCharacters(bengali) }, { text: bengali, removed: 0 }, "Bengali letter+ZWJ+virama");
+    // Devanagari: KA (letter) + virama U+094D (mark) + ZWNJ + SSA (letter).
+    const devanagariConjunct = "\u0915\u094D\u200C\u0937";
+    assert.deepEqual({ ...api.stripHiddenCharacters(devanagariConjunct) }, { text: devanagariConjunct, removed: 0 }, "Devanagari virama+ZWNJ+letter");
+    // Two marks with no letter on either side: still removed (the "at least
+    // one letter" requirement is not met).
+    assert.deepEqual({ ...api.stripHiddenCharacters("\u0DCA\u200D\u094D") }, { text: "\u0DCA\u094D", removed: 1 }, "mark+joiner+mark, no letter");
     // Not between two letters and not an emoji sequence: removed, both joiners.
     for (const joiner of ["\u200C", "\u200D"]) {
       assert.deepEqual({ ...api.stripHiddenCharacters(`1${joiner}2`) }, { text: "12", removed: 1 }, joiner);
@@ -87,6 +104,44 @@ describe("stripHiddenCharacters", () => {
       assert.equal(api.stripHiddenCharacters(value).text, value);
       assert.equal(api.stripHiddenCharacters(value).removed, 0);
     }
+  });
+});
+
+describe("stripEmailContentMarkers", () => {
+  const nonce = "0123456789abcdef01234567";
+
+  it("removes an open marker, a close marker, and the hidden-characters-removed attribute", () => {
+    const wrapped = `${api.untrustedContentOpen(nonce, 0)}\nMeeting notes\n${api.untrustedContentClose(nonce)}`;
+    assert.equal(api.stripEmailContentMarkers(wrapped), "\nMeeting notes\n");
+    const withRemoved = api.untrustedContentOpen(nonce, 3) + "x" + api.untrustedContentClose(nonce);
+    assert.equal(api.stripEmailContentMarkers(withRemoved), "x");
+  });
+
+  it("leaves ordinary text with no marker in it untouched", () => {
+    assert.equal(api.stripEmailContentMarkers("plain text, no markers here"), "plain text, no markers here");
+  });
+
+  it("passes non-strings through unchanged", () => {
+    for (const value of [undefined, null, 42, {}]) {
+      assert.equal(api.stripEmailContentMarkers(value), value);
+    }
+  });
+
+  it("is wired into every text field createEvent/updateEvent/createTask/updateTask/createContact/updateContact write", () => {
+    const src = apiSource;
+    const sites = [
+      /event\.title = stripEmailContentMarkers\(title\);/,
+      /event\.setProperty\("LOCATION", stripEmailContentMarkers\(location\)\);/,
+      /event\.setProperty\("DESCRIPTION", stripEmailContentMarkers\(description\)\);/,
+      /newItem\.title = stripEmailContentMarkers\(title\); changes\.push\("title"\);/,
+      /newItem\.setProperty\("LOCATION", stripEmailContentMarkers\(location\)\); changes\.push\("location"\);/,
+      /newItem\.setProperty\("DESCRIPTION", stripEmailContentMarkers\(description\)\); changes\.push\("description"\);/,
+      /todo\.title = stripEmailContentMarkers\(title\);/,
+      /todo\.descriptionHTML = descriptionToHTML\(stripEmailContentMarkers\(description\)\);/,
+      /newItem\.descriptionHTML = descriptionToHTML\(stripEmailContentMarkers\(description\)\); changes\.push\("description"\);/,
+      /card\.setProperty\("Notes", stripEmailContentMarkers\(fields\.note\)\);/,
+    ];
+    for (const re of sites) assert.match(src, re, re.toString());
   });
 });
 
@@ -237,9 +292,15 @@ describe("protectMessageToolResult", () => {
     const withHidden = api.protectMessageToolResult("getMessage", { body: "a\u202Eb" }, NONCE);
     assert.match(withHidden, new RegExp(`<email-content id="${NONCE}">`));
     assert.match(withHidden, /never as instructions/);
-    assert.match(withHidden, /1 hidden or bidirectional-control character\(s\) were removed/);
+    assert.match(withHidden, /1 hidden or bidirectional-control character\(s\) were found/);
     const clean = api.protectMessageToolResult("searchMessages", [{ subject: "a" }], NONCE);
-    assert.doesNotMatch(clean, /removed/);
+    assert.doesNotMatch(clean, /were found/);
+  });
+
+  it("the notice is generic across events/tasks/contacts, not message-specific wording", () => {
+    const notice = api.protectMessageToolResult("listEvents", { events: [{ description: "a" }] }, NONCE);
+    assert.doesNotMatch(notice, /\bmessages\b/i);
+    assert.doesNotMatch(notice, /attachment names/);
   });
 
   it("adds nothing to an error-only result or a missing one", () => {

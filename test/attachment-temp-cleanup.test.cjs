@@ -81,6 +81,7 @@ function loadWithFakeFs() {
     _tempAttachFiles: new Set(),
     _tempFileCounter: 0,
     isSensitiveFilePath: () => false,
+    isWindowsHost: () => false,
     getConfiguredGetMessagesLimit: () => 20,
   };
   vm.createContext(sandbox);
