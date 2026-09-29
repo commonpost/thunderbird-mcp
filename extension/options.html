@@ -320,24 +320,41 @@
     <button id="saveSkipReviewBtn" disabled>Save</button>
     <span id="saveSkipReviewStatus" class="save-status"></span>
   </div>
+  <h3 id="filterSendRuleHeading">Filter rules that send mail (forward / reply)</h3>
   <p class="mode-note">
-    Filters that forward or reply send mail automatically, with no review window.
-    While this setting is enabled (default), MCP clients cannot create or add
-    Forward/Reply filter actions, and cannot change or run a filter list that
-    already holds a rule that sends mail or runs an add-on action (deleting such
-    a rule is still possible). Manage those rules in Thunderbird's filter editor.
+    A filter rule that forwards or replies sends mail automatically, every time,
+    with no review window. An MCP client (an AI assistant) could be tricked by a
+    message it reads into asking for one. This setting decides what happens when
+    an MCP client asks to create or change such a rule, or to change or run a
+    filter list that already holds one.
   </p>
-  <ul class="account-list">
+  <ul class="account-list" role="radiogroup" aria-labelledby="filterSendRuleHeading">
     <li>
       <label>
-        <input type="checkbox" id="blockFilterForwardReply">
-        <span>Block filter forward/reply (default) -- no sending rule without review</span>
+        <input type="radio" name="filterSendRulePolicy" id="filterSendRulePolicyBlock" value="block">
+        <span><strong>Always block</strong> (default) -- MCP clients can never create such rules, nor change or run a
+          filter list that holds one (deleting such a rule stays possible). Manage these rules in
+          Thunderbird's filter editor.</span>
+      </label>
+    </li>
+    <li>
+      <label>
+        <input type="radio" name="filterSendRulePolicy" id="filterSendRulePolicyConfirm" value="confirm">
+        <span><strong>Ask me each time</strong> -- Thunderbird shows a dialog with the account,
+          the rule, its conditions and the full destination address. Nothing is written unless you click
+          the confirmation button; <em>Refuse</em> is the default button (Enter and Escape refuse), closing
+          the dialog refuses, and it expires after 10 minutes. One request at a time, at most 5 per hour.</span>
       </label>
     </li>
   </ul>
+  <p class="mode-note">
+    Whatever the setting: rules that send mail on outgoing mail are refused, and MCP clients can never
+    accept a confirmation themselves. Every request and answer is recorded in
+    <code>commonpost-mcp-confirmations.log</code> in your profile folder (no message content).
+  </p>
   <div class="save-row">
-    <button id="saveFilterForwardReplyBtn" disabled>Save</button>
-    <span id="saveFilterForwardReplyStatus" class="save-status"></span>
+    <button id="saveFilterSendRulePolicyBtn" disabled>Save</button>
+    <span id="saveFilterSendRulePolicyStatus" class="save-status"></span>
   </div>
 </div>
 

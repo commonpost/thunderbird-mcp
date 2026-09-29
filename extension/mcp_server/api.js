@@ -1146,7 +1146,6 @@ const PREF_BLOCK_SKIPREVIEW = "extensions.commonpost-mcp.blockSkipReview";
 const PREF_STABLE_AUTH_TOKEN = "extensions.commonpost-mcp.stableAuthToken";
 const PREF_GET_MESSAGES_LIMIT = "extensions.commonpost-mcp.getMessagesLimit";
 const PREF_LISTEN_ALL = "extensions.commonpost-mcp.listenAll";
-const PREF_BLOCK_FILTER_FORWARD_REPLY = "extensions.commonpost-mcp.blockFilterForwardReply";
 const AUTH_TOKEN_PATTERN = /^[0-9a-f]{64}$/;
 // Valid group and CRUD values for tool metadata validation
 const VALID_GROUPS = ["messages", "folders", "contacts", "calendar", "filters", "system"];
@@ -1813,7 +1812,12 @@ function copyRuleAction(filter, action) {
 
 // Build the actions requested through MCP. `resolveFolder(uri)` returns
 // { folder } or { error } for an accessible folder.
-function buildRuleActions(filter, actions, resolveFolder, { allowSendActions = false } = {}) {
+// Sending actions (Forward/Reply) are built only with allowSendActions ===
+// true, and then only with a value that can be shown to the user in full:
+// forward = ONE plain address (assertForwardAddress); reply = a template of a
+// Templates folder, checked by `checkSendAction(actionName, value)`, which
+// the caller must supply (no check, no reply: fail closed).
+function buildRuleActions(filter, actions, resolveFolder, { allowSendActions = false, checkSendAction } = {}) {
   if (typeof resolveFolder !== "function") {
     // checkTargetFolder is mandatory: every action that targets a folder
     // (moveToFolder/copyToFolder) must have its target verified accessible.
@@ -1863,11 +1867,30 @@ function buildRuleActions(filter, actions, resolveFolder, { allowSendActions = f
         }
         action.targetFolderUri = targetCheck.folder.URI;
       } else {
-        action[spec.member] = VALUE_CODECS[spec.codec].parse(act.value, `Action value for "${act.type}"`, spec);
+        const parsed = VALUE_CODECS[spec.codec].parse(act.value, `Action value for "${act.type}"`, spec);
+        if (isSendingActionType(spec.value)) {
+          if (spec.value === FILTER_ACTION_FORWARD) {
+            assertForwardAddress(parsed);
+          } else if (typeof checkSendAction !== "function") {
+            throw new Error(`Filter action "${act.type}" cannot be checked here (no template check); refused`);
+          }
+          if (typeof checkSendAction === "function") checkSendAction(spec.action, parsed);
+        }
+        action[spec.member] = parsed;
       }
     }
     filter.appendAction(action);
   }
+}
+
+// Grouping of a term as Thunderbird evaluates it (nsMsgSearchOfflineMail::
+// ConstructExpressionTree): only in memory -- msgFilterRules.dat has no syntax
+// for it -- but it changes which messages match, so it is read back (and so
+// part of fingerprintFilterList) whenever set.
+function readTermGrouping(term, out) {
+  if (term.beginsGrouping) out.beginsGrouping = true;
+  if (term.endsGrouping) out.endsGrouping = true;
+  return out;
 }
 
 // Read a rule back for listFilters/updateFilter. Nothing unreadable is
@@ -1878,7 +1901,7 @@ function serializeFilterRule(filter, index) {
   try {
     for (const term of filter.searchTerms) {
       if (term.matchAll) {
-        terms.push({ matchAll: true, booleanAnd: term.booleanAnd });
+        terms.push(readTermGrouping(term, { matchAll: true, booleanAnd: term.booleanAnd }));
         continue;
       }
       const t = {
@@ -1895,8 +1918,10 @@ function serializeFilterRule(filter, index) {
       }
       if (term.arbitraryHeader) t.header = term.arbitraryHeader;
       if (SEARCH_ATTRIB_CUSTOM !== undefined && term.attrib === SEARCH_ATTRIB_CUSTOM) t.customId = term.customId;
-      if (SEARCH_ATTRIB_HDR_PROPERTY.includes(term.attrib)) t.hdrProperty = term.hdrProperty;
-      terms.push(t);
+      // The message-header property a hdrProperty term tests (two such terms
+      // differ only by it).
+      if (SEARCH_ATTRIB_HDR_PROPERTY.includes(term.attrib) || term.hdrProperty) t.hdrProperty = term.hdrProperty;
+      terms.push(readTermGrouping(term, t));
     }
   } catch (e) {
     termsError = describeError(e);
@@ -1983,7 +2008,7 @@ function validateFilterType(type) {
 // is not replaced is COPIED typed, and any copy failure throws before the
 // filter list is touched. Returns { changes, replacement } -- replacement is
 // null when only name/enabled/type change (applied in place by the caller).
-function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSendActions = false } = {}) {
+function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSendActions = false, checkSendAction } = {}) {
   if (typeof resolveFolder !== "function") {
     throw new Error("planFilterUpdate requires a resolveFolder(uri) function");
   }
@@ -2039,7 +2064,7 @@ function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSend
   }
 
   if (replaceActions) {
-    buildRuleActions(replacement, update.actions, resolveFolder, { allowSendActions });
+    buildRuleActions(replacement, update.actions, resolveFolder, { allowSendActions, checkSendAction });
     changes.push("actions");
   } else {
     const count = filter.actionCount;
@@ -2062,8 +2087,10 @@ function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSend
 // Preference extensions.commonpost-mcp.blockFilterForwardReply (default
 // true). A filter that forwards or replies sends mail automatically, without
 // the review window the compose tools keep: a prompt-injected client could use
-// one to exfiltrate every incoming message. While the guard is on:
-//   - no Forward or Reply action can be created or added (buildRuleActions);
+// one to exfiltrate every incoming message. While the setting is on (the
+// default, and whenever it cannot be read) the guard blocks:
+//   - no action whose RESOLVED type is Forward or Reply can be created or
+//     added (buildRuleActions) -- whatever name was requested;
 //   - a filter list that already holds a rule sending mail (Forward/Reply) or
 //     running an add-on action (Custom, effect unknown) cannot be changed or
 //     run through MCP (create/update/reorder/apply), except deleting those
@@ -2074,10 +2101,29 @@ function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSend
 const FILTER_SEND_ACTION_TYPES = ["Forward", "Reply"]
   .map((idl) => resolveXpcomConstant("nsMsgFilterAction", idl))
   .filter((v) => v !== undefined);
+const FILTER_ACTION_FORWARD = resolveXpcomConstant("nsMsgFilterAction", "Forward");
 const FILTER_TYPE_POST_OUTGOING = resolveXpcomConstant("nsMsgFilterType", "PostOutgoing") ?? 0x40;
 const FILTER_SEND_GUARD_NOTE =
   'blocked by the "Block filter forward/reply" setting (extensions.commonpost-mcp.blockFilterForwardReply, on by default); '
   + "review and change such rules in Thunderbird's filter editor";
+
+// A forward target the user can read in full and that means one recipient:
+// one plain ASCII address, no display name, no list, no comment, no IP
+// literal (Thunderbird hands the value to compose as a recipient list, so
+// "a@x, b@y" would send to both). Internationalized addresses are refused
+// rather than shown with look-alike letters.
+const FORWARD_ADDRESS_MAX_LENGTH = 254;
+const FORWARD_ADDRESS_PATTERN =
+  /^[A-Za-z0-9!#$%&'*+/=?^_\x60{|}~-]{1,64}(?:\.[A-Za-z0-9!#$%&'*+/=?^_\x60{|}~-]{1,64})*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+
+function assertForwardAddress(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > FORWARD_ADDRESS_MAX_LENGTH
+      || !FORWARD_ADDRESS_PATTERN.test(value) || value.split("@")[0].length > 64) {
+    throw new Error(`Forward target must be exactly one plain e-mail address (ASCII, no name, no list, `
+      + `at most ${FORWARD_ADDRESS_MAX_LENGTH} characters), got: ${JSON.stringify(String(value).slice(0, 300))}`);
+  }
+  return value;
+}
 
 function isSendingActionType(type) {
   return FILTER_SEND_ACTION_TYPES.includes(type);
@@ -2130,6 +2176,811 @@ function assertFilterListGuard(filterList, operation, targetIndex) {
     + (operation === "delete" ? "; deleting one of those rules is allowed" : ""));
 }
 // END FILTER RULE HELPERS
+
+// BEGIN FILTER CONFIRMATION HELPERS
+// ── Human confirmation of filter rules that send mail ──
+//
+// The preference extensions.commonpost-mcp.blockFilterForwardReply decides what
+// happens to a request that needs the "no sending rule without review" guard:
+//   true (default) -- "block": refused, as described at the guard above.
+//   false -- "confirm": what "block" refuses (a rule that forwards or replies;
+//     a change to, or a run of, a filter list holding a rule that sends mail or
+//     runs an add-on action) is NOT written. The MCP call returns at once
+//     {status: "pending_user_confirmation"} and Thunderbird asks the user in a
+//     dialog. Only the user's click on the confirmation button writes it, after
+//     everything has been checked again.
+// There is no setting that writes such a rule without asking. A value that
+// cannot be read, or is not a boolean, gives "block" (fail closed).
+// Refused whatever the setting: a rule that sends mail on OUTGOING mail
+// (nsMsgFilterType.PostOutgoing), anything involving an action that cannot be
+// read (it could not be shown), and what cannot be shown in full in a dialog
+// (too many conditions, actions or sending rules).
+// Limits: one confirmation pending at a time, at most five dialogs per hour
+// (no dialog flood), ten minutes to answer.
+
+const PREF_BLOCK_FILTER_FORWARD_REPLY = "extensions.commonpost-mcp.blockFilterForwardReply";
+// Hidden, for tests: only SHORTENS the time to answer (clamped to 30-600 s).
+const PREF_FILTER_CONFIRM_TIMEOUT = "extensions.commonpost-mcp.filterConfirmTimeoutSeconds";
+const FILTER_CONFIRM_TTL_DEFAULT_S = 600;
+const FILTER_CONFIRM_TTL_MIN_S = 30;
+const FILTER_CONFIRM_MAX_PENDING = 1;
+const FILTER_CONFIRM_MAX_PER_HOUR = 5;
+const FILTER_CONFIRM_HISTORY = 20;
+const FILTER_CONFIRM_HOUR_MS = 60 * 60 * 1000;
+const FILTER_CONFIRM_FINAL_STATUSES = ["accepted", "refused", "expired", "failed"];
+// What a dialog can show in full; beyond that the request is refused.
+const FILTER_CONFIRM_MAX_TERMS = 20;
+const FILTER_CONFIRM_MAX_ACTIONS = 10;
+const FILTER_CONFIRM_MAX_SENDING_RULES = 10;
+const FILTER_CONFIRM_MAX_TEXT = 9000; // commonDialog crops at 10000
+const FILTER_CONFIRM_LOG_NAME = "commonpost-mcp-confirmations.log";
+const FILTER_CONFIRM_LOG_MAX_BYTES = 256 * 1024;
+const FILTER_CONFIRM_TITLE_PREFIX = "Commonpost MCP:";
+
+// `prefs` = { type(name) -> "string"|"bool"|"int"|"none", bool(name), int(name) },
+// each may throw. Returns { policy, source, note? }.
+function resolveFilterSendRulePolicy(prefs) {
+  const block = (source, note) => ({ policy: "block", source, note });
+  let type;
+  try {
+    type = prefs.type(PREF_BLOCK_FILTER_FORWARD_REPLY);
+  } catch (e) {
+    return block("error", `${PREF_BLOCK_FILTER_FORWARD_REPLY} unreadable (${describeError(e)})`);
+  }
+  if (type === "none") return { policy: "block", source: "default" };
+  if (type !== "bool") return block("invalid", `${PREF_BLOCK_FILTER_FORWARD_REPLY} is not a boolean`);
+  let blocked;
+  try {
+    blocked = prefs.bool(PREF_BLOCK_FILTER_FORWARD_REPLY);
+  } catch (e) {
+    return block("error", `${PREF_BLOCK_FILTER_FORWARD_REPLY} unreadable (${describeError(e)})`);
+  }
+  return { policy: blocked ? "block" : "confirm", source: "pref" };
+}
+
+// Seconds the user has to answer: 600 by default; the hidden preference can
+// only shorten it (30-600).
+function resolveFilterConfirmTtlMs(prefs) {
+  let seconds = FILTER_CONFIRM_TTL_DEFAULT_S;
+  try {
+    if (prefs.type(PREF_FILTER_CONFIRM_TIMEOUT) === "int") {
+      const v = prefs.int(PREF_FILTER_CONFIRM_TIMEOUT);
+      if (Number.isInteger(v)) seconds = Math.min(FILTER_CONFIRM_TTL_DEFAULT_S, Math.max(FILTER_CONFIRM_TTL_MIN_S, v));
+    }
+  } catch {
+    // Unreadable: keep the default (the preference can only shorten it).
+  }
+  return seconds * 1000;
+}
+
+// Kinds reported by filterSendingActionKinds: "custom", "unreadable (...)",
+// or the name of a sending action ("forward", "reply").
+function splitActionKinds(kinds) {
+  const out = { sending: [], custom: false, unreadable: false };
+  for (const k of kinds || []) {
+    if (k === "custom") out.custom = true;
+    else if (String(k).startsWith("unreadable")) out.unreadable = true;
+    else out.sending.push(k);
+  }
+  return out;
+}
+
+// What the "confirm" policy does with a filter operation ("block" applies the
+// guard and never gets here).
+//   operation: "create" | "update" | "delete" | "reorder" | "apply"
+//   listRules: listSendingRules(filterList) BEFORE the change
+//   result:    create/update only: { kinds: filterSendingActionKinds(resulting rule), type }
+//   targetIndex: delete/update: index of the rule concerned
+// Returns { verdict: "allow" } | { verdict: "refuse", reason } | { verdict: "confirm", resultSends, context }.
+function decideSendRuleChange({ operation, listRules = [], result = null, targetIndex } = {}) {
+  const ops = ["create", "update", "delete", "reorder", "apply"];
+  if (!ops.includes(operation)) return { verdict: "refuse", reason: `Unknown filter operation: ${operation}` };
+  const res = result ? splitActionKinds(result.kinds) : { sending: [], custom: false, unreadable: false };
+  if (res.unreadable) {
+    return { verdict: "refuse", reason: "The resulting rule has an action Thunderbird cannot read; it cannot be shown for "
+      + "confirmation -- change it in Thunderbird's filter editor" };
+  }
+  const resultSends = res.sending.length > 0 || res.custom;
+  if (resultSends && result && ((Number(result.type) || 0) & FILTER_TYPE_POST_OUTGOING) !== 0) {
+    return { verdict: "refuse", reason: "A filter rule that sends mail (or runs an add-on action) cannot run on outgoing "
+      + "mail (type includes 64, PostOutgoing): refused whatever the setting" };
+  }
+  // Deleting a rule that sends mail (or runs an add-on action) is always the
+  // way out, as with "block".
+  if (operation === "delete" && listRules.some((r) => r.index === targetIndex)) {
+    return { verdict: "allow" };
+  }
+  const context = listRules;
+  if (context.some((r) => (r.actions || []).some((k) => String(k).startsWith("unreadable")))) {
+    return { verdict: "refuse", reason: "This account's filter list holds a rule with an action Thunderbird cannot read; "
+      + "it cannot be shown for confirmation -- fix it in Thunderbird's filter editor" };
+  }
+  if (context.length > FILTER_CONFIRM_MAX_SENDING_RULES) {
+    return { verdict: "refuse", reason: `This account's filter list holds ${context.length} rules that send mail or run `
+      + `add-on actions (more than ${FILTER_CONFIRM_MAX_SENDING_RULES} cannot be reviewed in a dialog) -- use Thunderbird's filter editor` };
+  }
+  if (!resultSends && context.length === 0) return { verdict: "allow" };
+  return { verdict: "confirm", resultSends, context };
+}
+
+// Pending confirmations, their outcome, and the limits. No timer, no window
+// here: the caller registers cleanup hooks (entry.hooks) that run when the
+// entry leaves "pending", whatever the reason. The only transition is
+// pending -> accepted | refused | expired | failed, once.
+function createFilterConfirmationStore({
+  now = () => Date.now(),
+  newId,
+  maxPending = FILTER_CONFIRM_MAX_PENDING,
+  maxPerHour = FILTER_CONFIRM_MAX_PER_HOUR,
+  historyMax = FILTER_CONFIRM_HISTORY,
+  onSettle,
+} = {}) {
+  if (typeof newId !== "function") throw new Error("createFilterConfirmationStore needs newId()");
+  const entries = new Map();
+  const shown = []; // times dialogs were opened, for the hourly limit
+
+  const iso = (t) => (typeof t === "number" ? new Date(t).toISOString() : null);
+  const pendingEntries = () => [...entries.values()].filter((e) => e.status === "pending");
+  function pruneShown() {
+    const cutoff = now() - FILTER_CONFIRM_HOUR_MS;
+    while (shown.length && shown[0] <= cutoff) shown.shift();
+  }
+  function trim() {
+    const settled = [...entries.values()].filter((e) => e.status !== "pending");
+    while (settled.length > historyMax) entries.delete(settled.shift().id);
+  }
+  function view(e) {
+    if (!e) return null;
+    return {
+      confirmationId: e.id,
+      operation: e.operation,
+      accountId: e.accountId,
+      status: e.status,
+      requestedAt: iso(e.requestedAt),
+      expiresAt: iso(e.expiresAt),
+      decidedAt: iso(e.decidedAt),
+      ...(e.reason ? { reason: e.reason } : {}),
+      ...(e.result ? { result: e.result } : {}),
+      summary: e.summary,
+    };
+  }
+  const store = {
+    // May a new dialog be shown now? Nothing is recorded.
+    admit() {
+      const pend = pendingEntries();
+      if (pend.length >= maxPending) return { ok: false, code: "pending", pending: view(pend[0]) };
+      pruneShown();
+      if (shown.length >= maxPerHour) {
+        return { ok: false, code: "rate", used: shown.length, retryAt: iso(shown[0] + FILTER_CONFIRM_HOUR_MS) };
+      }
+      return { ok: true };
+    },
+    open({ operation, accountId, ttlMs, summary = null }) {
+      const admitted = store.admit();
+      if (!admitted.ok) return { error: admitted };
+      const t = now();
+      const id = newId();
+      if (typeof id !== "string" || !id || entries.has(id)) throw new Error("confirmation id collision");
+      const entry = {
+        id, operation, accountId, status: "pending", requestedAt: t, expiresAt: t + ttlMs,
+        decidedAt: null, reason: null, result: null, summary, hooks: [],
+      };
+      entries.set(id, entry);
+      shown.push(t);
+      trim();
+      return { entry };
+    },
+    get(id) {
+      return typeof id === "string" ? entries.get(id) : undefined;
+    },
+    isLive(entry) {
+      return !!entry && entry.status === "pending" && now() < entry.expiresAt;
+    },
+    settle(id, status, { reason = null, result = null } = {}) {
+      if (!FILTER_CONFIRM_FINAL_STATUSES.includes(status)) throw new Error(`invalid confirmation status: ${status}`);
+      const entry = entries.get(id);
+      if (!entry || entry.status !== "pending") return null;
+      entry.status = status;
+      entry.decidedAt = now();
+      entry.reason = reason;
+      entry.result = result;
+      const hooks = entry.hooks.splice(0);
+      for (const hook of hooks) {
+        try {
+          hook(entry);
+        } catch (e) {
+          entry.hookError = describeError(e);
+        }
+      }
+      trim();
+      if (typeof onSettle === "function") {
+        try { onSettle(entry); } catch (e) { entry.hookError = describeError(e); }
+      }
+      return entry;
+    },
+    expireDue() {
+      const t = now();
+      return pendingEntries().filter((e) => t >= e.expiresAt)
+        .map((e) => store.settle(e.id, "expired", { reason: "no answer in time; nothing was written" }));
+    },
+    shutdown(reason) {
+      return pendingEntries().map((e) => store.settle(e.id, "expired", { reason }));
+    },
+    pending() {
+      store.expireDue();
+      return view(pendingEntries()[0] || null);
+    },
+    view(id) {
+      store.expireDue();
+      return view(entries.get(id));
+    },
+    recent(limit = 10) {
+      store.expireDue();
+      return [...entries.values()].reverse().slice(0, limit).map(view);
+    },
+    usage() {
+      pruneShown();
+      return {
+        maxPending, maxPerHour, dialogsLastHour: shown.length,
+        nextSlotAt: shown.length >= maxPerHour ? iso(shown[0] + FILTER_CONFIRM_HOUR_MS) : null,
+      };
+    },
+  };
+  return store;
+}
+
+// Refusal when the store does not admit a new dialog.
+function describeConfirmationRefusal(admitted) {
+  if (admitted.code === "pending") {
+    const p = admitted.pending || {};
+    return `Another filter confirmation is already waiting for the user (${p.confirmationId}, ${p.operation}, `
+      + `expires ${p.expiresAt}); only one at a time. Nothing was written and no dialog was shown -- `
+      + "check it with getFilterConfirmation and ask again once it is settled";
+  }
+  if (admitted.code === "rate") {
+    return `Too many filter confirmations: ${admitted.used} dialogs in the last hour (limit ${FILTER_CONFIRM_MAX_PER_HOUR}). `
+      + `Nothing was written and no dialog was shown; next possible at ${admitted.retryAt}, `
+      + "or make the change in Thunderbird's filter editor";
+  }
+  return "Filter confirmation refused";
+}
+
+// ── Text shown in the dialog ──
+// Every value comes from what Thunderbird resolved and would write (the
+// candidate rule read back through serializeFilterRule, the account and
+// folders Thunderbird knows), never from free text presented as an
+// explanation. Free text inside those values already passed assertFilterText;
+// here every character that draws nothing or changes direction is also shown
+// as [U+XXXX] -- controls and format characters (Cc, Cf), private use,
+// surrogates, UNASSIGNED code points (Cn: invisible or unpredictable in the
+// dialog's font), line/paragraph separators, all of Unicode's
+// Default_Ignorable_Code_Point (variation selectors, Mongolian free variation
+// selectors U+180B-U+180F, fillers, tags, U+2065, U+FFF0-U+FFF8...), every
+// space other than U+0020 and the blank braille pattern U+2800 --, long runs
+// of spaces are counted, and long values are cut visibly -- except forward
+// addresses, always shown in full.
+// The class lists combining and format characters on purpose: each is matched (and shown) on its own.
+// eslint-disable-next-line no-misleading-character-class
+const DISPLAY_INVISIBLE = /[\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000\u034F\u115F\u1160\u17B4\u17B5\u3164\uFFA0\uFE00-\uFE0F\u2800]|[\u{E0000}-\u{E0FFF}]/gu;
+
+function displayFilterText(value, max = 80) {
+  const s = value === null || value === undefined ? "" : String(value);
+  // Cut first (never inside a character; the count is the value's own
+  // length), then make the kept part visible.
+  const chars = Array.from(s);
+  const cut = max > 0 && chars.length > max;
+  const shown = (cut ? chars.slice(0, max).join("") : s)
+    .replace(DISPLAY_INVISIBLE, codePointLabel)
+    .replace(/ {3,}/g, (m) => ` [${m.length} spaces] `);
+  return cut ? `${shown}… [cut: ${chars.length} characters in total]` : shown;
+}
+
+function codePointLabel(c) {
+  return `[U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}]`;
+}
+
+// Inside “…”, characters that look like the closing ” are shown as [U+XXXX]
+// so that the delimiters of a quoted value are unambiguous. Always: double
+// quotation marks and their look-alikes (straight ", curly, low, reversed,
+// primes, ditto marks, modifier letters, fullwidth, ornaments) and the curly
+// single quotes.
+// Other single quotes, primes and accents only when two or more follow each
+// other (two of them can read as one ”; an apostrophe as in "l'équipe"
+// stays readable). A combining mark that does not sit on a letter or digit
+// (on a space, on punctuation, or first) is shown too: on a space U+030B
+// draws a free-standing ˝.
+const QUOTE_LIKE_ALWAYS = /[\u0022\u2018-\u201F\u2033\u2034\u2036\u2057\u02BA\u02DD\u02EE\u02F6\u05F4\u2E42\u275D\u275E\u3003\u301D-\u301F\uFF02\u{1F676}-\u{1F678}]/gu;
+const QUOTE_LIKE_RUN = /[\u0022\u0027\u0060\u00B4\u02B9-\u02BD\u02C8\u02CA\u02CB\u02DD\u02EE\u02F6\u0384\u055A\u05F3\u05F4\u1FEF\u1FFD\u2018-\u201F\u2032-\u2037\u2039\u203A\u2057\u275B-\u275E\u2E42\u3003\u301D-\u301F\uA78B\uA78C\uFF02\uFF07\uFF40\u{1F676}-\u{1F678}]{2,}/gu;
+const LOOSE_COMBINING_MARKS = /(?<![\p{L}\p{N}\p{M}])\p{M}+/gu;
+
+function quoteFilterText(value, max = 80) {
+  // Quotes first: a mark left on a quote now sits on "]" and is shown too.
+  const shown = displayFilterText(value, max)
+    .replace(QUOTE_LIKE_RUN, (m) => Array.from(m, codePointLabel).join(""))
+    .replace(QUOTE_LIKE_ALWAYS, codePointLabel)
+    .replace(LOOSE_COMBINING_MARKS, (m) => Array.from(m, codePointLabel).join(""));
+  return `“${shown}”`;
+}
+
+const FILTER_OP_LABELS = {
+  contains: "contains", doesntContain: "doesn't contain", is: "is", isnt: "isn't", isEmpty: "is empty",
+  isntEmpty: "isn't empty", isBefore: "is before", isAfter: "is after", isHigherThan: "is higher than",
+  isLowerThan: "is lower than", beginsWith: "begins with", endsWith: "ends with", soundsLike: "sounds like",
+  isGreaterThan: "is greater than", isLessThan: "is less than", isInAB: "is in address book",
+  isntInAB: "isn't in address book", matches: "matches", doesntMatch: "doesn't match",
+};
+
+const FILTER_ACTION_LABELS = {
+  moveToFolder: "Move to folder", copyToFolder: "Copy to folder", changePriority: "Set priority to",
+  junkScore: "Set junk score to", addTag: "Add tag", delete: "Delete the message", markRead: "Mark as read",
+  markUnread: "Mark as unread", markFlagged: "Flag (star)", killThread: "Ignore thread",
+  killSubthread: "Ignore subthread", watchThread: "Watch thread", stopExecution: "Stop filter execution",
+  deleteFromServer: "Delete from POP3 server", leaveOnServer: "Leave on POP3 server",
+  fetchBody: "Fetch body from POP3 server", label: "Set label",
+};
+
+const FILTER_TYPE_LABELS = [
+  ["InboxRule", 0x1, "new mail (before junk classification)"],
+  ["InboxJavaScript", 0x2, "new mail (script)"],
+  ["NewsRule", 0x4, "newsgroup messages"],
+  ["NewsJavaScript", 0x8, "newsgroup messages (script)"],
+  ["Manual", 0x10, "manual run"],
+  ["PostPlugin", 0x20, "new mail (after junk classification)"],
+  ["PostOutgoing", 0x40, "OUTGOING mail, after sending"],
+  ["Archive", 0x80, "archiving"],
+  ["Periodic", 0x100, "periodically"],
+];
+
+function describeFilterType(type) {
+  const t = Number(type) || 0;
+  const parts = [];
+  let known = 0;
+  for (const [idl, fallback, label] of FILTER_TYPE_LABELS) {
+    const bit = resolveXpcomConstant("nsMsgFilterType", idl) ?? fallback;
+    known |= bit;
+    if (t & bit) parts.push(label);
+  }
+  if (t & ~known) parts.push(`unknown bits 0x${(t & ~known).toString(16)}`);
+  return parts.length ? parts.join(", ") : "never (type 0)";
+}
+
+function describeFilterTerm(term) {
+  if (term.matchAll) return "every message (no condition)";
+  // An add-on condition is named by its customId, a message-property
+  // condition by the property it tests (their attribute has no name here).
+  let attrib = displayFilterText(term.attrib, 40);
+  if (term.customId !== undefined && term.customId !== "") {
+    attrib = `add-on condition ${quoteFilterText(term.customId, 60)}`;
+  } else if (term.hdrProperty) {
+    attrib = `message property ${quoteFilterText(term.hdrProperty, 60)}`;
+  }
+  const header = term.header ? ` ${quoteFilterText(term.header, 60)}` : "";
+  const op = FILTER_OP_LABELS[term.op] || displayFilterText(term.op, 40);
+  const value = term.valueError
+    ? ` (value unreadable: ${displayFilterText(term.valueError, 80)})`
+    : (term.value !== undefined && term.value !== "" ? ` ${quoteFilterText(term.value, 100)}` : "");
+  return `${attrib}${header} ${op}${value}`;
+}
+
+// `templates`: { [value]: { subject, folder } | { error } } resolved by the caller.
+function describeFilterAction(action, templates = {}) {
+  const type = action.type;
+  if (type === "forward") {
+    // The destination, always complete.
+    return `Forward to ${displayFilterText(action.value, 0)}`;
+  }
+  if (type === "reply") {
+    const t = templates[action.value];
+    if (t && !t.error) {
+      const meta = [`folder ${quoteFilterText(t.folder, 60)}`];
+      if (t.author) meta.push(`from ${quoteFilterText(t.author, 60)}`);
+      if (t.date) meta.push(displayFilterText(t.date, 20));
+      if (Number.isFinite(t.size) && t.size > 0) meta.push(`${Math.max(1, Math.round(t.size / 1024))} KB`);
+      return `Reply with template ${quoteFilterText(t.subject, 80)} (${meta.join("; ")}) -- its whole content is sent `
+        + "to the sender of each matching message; check it in the Templates folder";
+    }
+    let where;
+    try {
+      const parsed = parseReplyTemplateValue(action.value);
+      where = `Message-ID ${quoteFilterText(parsed.messageId, 120)} in ${displayFilterText(parsed.folderUri, 160)}`;
+    } catch {
+      where = quoteFilterText(action.value, 120);
+    }
+    return `Reply with template ${where} (template not found: `
+      + `${displayFilterText(t && t.error ? t.error : "not resolved", 80)})`;
+  }
+  if (type === "custom") {
+    return `Add-on action ${quoteFilterText(action.customId, 80)} (effect unknown)`;
+  }
+  if (type === "unreadable") return `(action Thunderbird cannot read: ${displayFilterText(action.error, 80)})`;
+  const label = FILTER_ACTION_LABELS[type] || `Action ${displayFilterText(type, 40)}`;
+  if (action.valueError) return `${label} (value unreadable: ${displayFilterText(action.valueError, 80)})`;
+  if (action.value !== undefined && action.value !== "") return `${label} ${quoteFilterText(action.value, 120)}`;
+  return label;
+}
+
+// One line saying where mail goes, computed from the resolved actions only
+// (no free text can add a destination to it): forward addresses in full,
+// replies to the sender, add-on actions as unknown.
+function describeSendTargets(rules) {
+  const forwards = [];
+  const addons = [];
+  let replies = false;
+  for (const rule of rules) {
+    for (const a of (rule && rule.actions) || []) {
+      if (a.type === "forward") {
+        const shown = displayFilterText(a.value, 0);
+        if (!forwards.includes(shown)) forwards.push(shown);
+      } else if (a.type === "reply") {
+        replies = true;
+      } else if (a.type === "custom") {
+        const shown = quoteFilterText(a.customId, 80);
+        if (!addons.includes(shown)) addons.push(shown);
+      }
+    }
+  }
+  const parts = [];
+  if (forwards.length) parts.push(forwards.join(", "));
+  if (replies) parts.push("the sender of each matching message (reply)");
+  if (addons.length) parts.push(`unknown (add-on action ${addons.join(", ")})`);
+  return parts.join("; ");
+}
+
+function isSendingDescribedAction(action) {
+  return action.type === "forward" || action.type === "reply" || action.type === "custom";
+}
+
+// Conditions laid out as Thunderbird evaluates them for a filter
+// (nsMsgSearchOfflineMail::ConstructExpressionTree, nsMsgLocalSearch.cpp):
+// from top to bottom, each AND / OR joining its line to the result of all the
+// lines above it (no precedence of AND over OR); a term with beginsGrouping
+// opens "(" -- its own AND / OR then joins the whole group to what precedes
+// it --, the term with endsGrouping closes it, a group never closed runs to
+// the last condition. A term that closes a group never opened stops
+// Thunderbird there: the conditions after it are ignored, which a dialog
+// cannot show truthfully -- throws (the request is refused).
+// Returns { rows: [{ term, depth, join, open, close }], mixed, grouped }:
+// `mixed` = AND and OR both join lines of one level.
+function layoutFilterTerms(terms) {
+  const rows = [];
+  let pos = 0;
+  let mixed = false;
+  let grouped = false;
+  // groupJoin: null at the top level; inside a group, the AND / OR (or "")
+  // that joins the group to what precedes it, shown on its first line.
+  const level = (depth, groupJoin) => {
+    const inGroup = groupJoin !== null;
+    const ops = new Set();
+    let first = true;
+    while (pos < terms.length) {
+      const term = terms[pos];
+      const join = first ? "" : (term.booleanAnd === false ? "OR" : "AND");
+      if (!first) ops.add(join);
+      // The first term of a group is the one that opened it (Thunderbird
+      // turns its beginsGrouping off for the recursive call).
+      if (term.beginsGrouping && !(first && inGroup)) {
+        grouped = true;
+        level(depth + 1, join);
+      } else {
+        const row = { term, depth, join: first && inGroup ? groupJoin : join, open: first && inGroup, close: 0 };
+        rows.push(row);
+        if (term.endsGrouping) {
+          if (inGroup) {
+            row.close = 1;
+            if (ops.size > 1) mixed = true;
+            return;
+          }
+          if (pos < terms.length - 1) {
+            throw new Error(`condition ${pos + 1} closes a group that was never opened, so Thunderbird ignores the `
+              + `${terms.length - pos - 1} condition(s) after it`);
+          }
+        }
+      }
+      first = false;
+      pos++;
+    }
+    if (ops.size > 1) mixed = true;
+    if (inGroup) rows[rows.length - 1].close++;
+  };
+  level(0, null);
+  return { rows, mixed, grouped };
+}
+
+// Lines describing one rule (a serializeFilterRule result).
+function describeFilterRuleLines(rule, templates, { indent = "  " } = {}) {
+  const terms = Array.isArray(rule.terms) ? rule.terms : [];
+  const actions = Array.isArray(rule.actions) ? rule.actions : [];
+  if (terms.length > FILTER_CONFIRM_MAX_TERMS) {
+    throw new Error(`the rule has ${terms.length} conditions (more than ${FILTER_CONFIRM_MAX_TERMS} cannot be reviewed in a dialog)`);
+  }
+  if (actions.length > FILTER_CONFIRM_MAX_ACTIONS) {
+    throw new Error(`the rule has ${actions.length} actions (more than ${FILTER_CONFIRM_MAX_ACTIONS} cannot be reviewed in a dialog)`);
+  }
+  const lines = [];
+  lines.push(`${indent}Name: ${quoteFilterText(rule.name, 80)}${rule.enabled ? "" : "   (DISABLED)"}`);
+  lines.push(`${indent}Runs on: ${describeFilterType(rule.type)}`);
+  if (rule.termsError) {
+    lines.push(`${indent}If: (conditions unreadable: ${displayFilterText(rule.termsError, 80)})`);
+  } else if (terms.length === 0) {
+    lines.push(`${indent}If: (no condition)`);
+  } else {
+    const layout = layoutFilterTerms(terms);
+    lines.push(`${indent}If:`);
+    if (layout.mixed) {
+      lines.push(`${indent}  (read from top to bottom: each AND / OR joins its line to everything above it`
+        + `${layout.grouped ? " in its parentheses" : ""})`);
+    }
+    for (const row of layout.rows) {
+      const pad = "    ".repeat(row.open ? row.depth - 1 : row.depth);
+      lines.push(`${indent}    ${pad}${row.join ? `${row.join} ` : ""}${row.open ? "( " : ""}${describeFilterTerm(row.term)}`
+        + `${" )".repeat(row.close)}`);
+    }
+  }
+  lines.push(`${indent}Then:`);
+  for (const action of actions) {
+    const text = describeFilterAction(action, templates);
+    lines.push(`${indent}    ${isSendingDescribedAction(action) ? ">> " : ""}${text}`);
+  }
+  return lines;
+}
+
+function describeSendingRuleLine(rule, templates) {
+  const acts = (rule.actions || []).filter(isSendingDescribedAction).slice(0, 5)
+    .map((a) => describeFilterAction(a, templates));
+  const more = (rule.actions || []).filter(isSendingDescribedAction).length > 5 ? "; …" : "";
+  return `  #${rule.index} ${quoteFilterText(rule.name, 60)}${rule.enabled ? "" : " (disabled)"}: ${acts.join("; ")}${more}`;
+}
+
+const FILTER_CONFIRM_SEND_WARNING =
+  "This rule will automatically send matching incoming mail, every time, without review.";
+const FILTER_CONFIRM_SEND_WARNING_DISABLED =
+  "The rule is disabled for now; once enabled, it will automatically send matching incoming mail, every time, without review.";
+
+// d = {
+//   operation: "create" | "update" | "delete" | "reorder" | "apply",
+//   account: { key, name, email }, rule (serialized result or target rule), position, count,
+//   before (update: serialized current rule), changes (update), fromIndex, toIndex (reorder),
+//   folder: { name, uri } (apply), context: serialized sending rules of the list (with index),
+//   resultSends, templates, expiresAt (ms), formatTime(ms) -> string
+// }
+// Returns { title, text, acceptLabel, refuseLabel }. Throws when the change
+// cannot be shown in full (the caller refuses the request).
+function buildFilterConfirmationDialog(d) {
+  const L = [];
+  const acc = d.account || {};
+  const accountLine = `Account: ${quoteFilterText(acc.name, 60)}${acc.email ? ` <${displayFilterText(acc.email, 80)}>` : ""} `
+    + `(${displayFilterText(acc.key, 40)})`;
+  const context = Array.isArray(d.context) ? d.context : [];
+  const templates = d.templates || {};
+  let title;
+  let acceptLabel;
+  const intro = "An MCP client (an AI assistant) asks Thunderbird to";
+  const ruleDisabled = !!(d.rule && d.rule.enabled === false);
+  const sendsNote = !d.resultSends ? ""
+    : (ruleDisabled ? "an action that SENDS MAIL AUTOMATICALLY (rule disabled for now)" : "SENDS MAIL AUTOMATICALLY");
+  switch (d.operation) {
+    case "create":
+      title = d.resultSends ? `${FILTER_CONFIRM_TITLE_PREFIX} create a filter rule that SENDS MAIL?`
+        : `${FILTER_CONFIRM_TITLE_PREFIX} change a filter list that sends mail?`;
+      acceptLabel = "Create the rule";
+      L.push(`${intro} create this mail filter rule${d.resultSends ? `, which ${ruleDisabled ? "has " : ""}${sendsNote}` : ""}:`,
+        "", accountLine);
+      L.push(`Position: #${d.position} (0 = runs first) in a list of ${d.count + 1} rule(s)`);
+      L.push(...describeFilterRuleLines(d.rule, templates, { indent: "" }));
+      break;
+    case "update":
+      title = d.resultSends ? `${FILTER_CONFIRM_TITLE_PREFIX} change a filter rule that SENDS MAIL?`
+        : `${FILTER_CONFIRM_TITLE_PREFIX} change a filter list that sends mail?`;
+      acceptLabel = "Save the change";
+      L.push(`${intro} change filter rule #${d.position} ${quoteFilterText(d.before && d.before.name, 60)}`
+        + ` (changed: ${(d.changes || []).map((c) => displayFilterText(c, 20)).join(", ") || "nothing"})`
+        + `${d.resultSends ? `; after the change it ${ruleDisabled ? "has " : ""}${sendsNote}` : ""}.`, "", accountLine);
+      L.push("After the change:");
+      L.push(...describeFilterRuleLines(d.rule, templates, { indent: "" }));
+      break;
+    case "delete":
+      title = `${FILTER_CONFIRM_TITLE_PREFIX} change a filter list that sends mail?`;
+      acceptLabel = "Delete the rule";
+      L.push(`${intro} delete filter rule #${d.position} ${quoteFilterText(d.rule && d.rule.name, 60)}.`, "", accountLine);
+      break;
+    case "reorder":
+      title = `${FILTER_CONFIRM_TITLE_PREFIX} change a filter list that sends mail?`;
+      acceptLabel = "Move the rule";
+      L.push(`${intro} move filter rule #${d.fromIndex} ${quoteFilterText(d.rule && d.rule.name, 60)} `
+        + `to position ${d.toIndex} (0 = runs first).`, "", accountLine);
+      break;
+    case "apply":
+      title = `${FILTER_CONFIRM_TITLE_PREFIX} run filters that SEND MAIL?`;
+      acceptLabel = "Run the filters";
+      L.push(`${intro} apply filters including ${context.length} sending rule(s) to the messages already in folder `
+        + `${quoteFilterText(d.folder && d.folder.name, 60)} (${displayFilterText(d.folder && d.folder.uri, 160)}):`, "",
+      accountLine);
+      break;
+    default:
+      throw new Error(`unknown operation ${d.operation}`);
+  }
+  if (context.length) {
+    L.push("");
+    L.push(d.operation === "apply"
+      ? "Rules of this list that send mail or run add-on actions:"
+      : "This account's filter list already has rules that send mail or run add-on actions:");
+    for (const rule of context) L.push(describeSendingRuleLine(rule, templates));
+  }
+  L.push("");
+  if (d.operation === "apply") {
+    L.push(`Mail is sent automatically to: ${describeSendTargets(context)}`);
+    L.push("Running them will send the matching messages of this folder now, without review.");
+  } else {
+    if (d.resultSends) {
+      L.push(`${ruleDisabled ? "Once enabled, mail" : "Mail"} is sent automatically to: ${describeSendTargets([d.rule])}`);
+      L.push(ruleDisabled ? FILTER_CONFIRM_SEND_WARNING_DISABLED : FILTER_CONFIRM_SEND_WARNING);
+    }
+    if (context.length) {
+      L.push(`Rules already in this list send to: ${describeSendTargets(context)}`);
+      L.push("Changing the rules around them can change which messages they send.");
+    }
+  }
+  const when = typeof d.formatTime === "function" ? d.formatTime(d.expiresAt) : new Date(d.expiresAt).toISOString();
+  L.push("", `${d.operation === "apply" ? "Nothing has run" : "Nothing has been written"} yet. `
+    + "Refuse unless you asked for exactly this.",
+  `This request expires at ${when}; closing this window refuses it.`);
+  const text = L.join("\n");
+  if (text.length > FILTER_CONFIRM_MAX_TEXT) {
+    throw new Error(`the change is too long to review in a dialog (${text.length} characters)`);
+  }
+  return { title, text, acceptLabel, refuseLabel: "Refuse" };
+}
+
+// Reply template value as Thunderbird's filter editor writes it
+// (searchWidgets.js findTemplates): <Templates folder URI>?messageId=<id>&subject=<subject>.
+// The subject part is free text and is never shown: the dialog shows the
+// subject of the message Thunderbird finds.
+function parseReplyTemplateValue(value) {
+  const m = /^([^?]+)\?messageId=([^&]+)(?:&subject=.*)?$/s.exec(String(value));
+  if (!m) {
+    throw new Error("Reply template must be <Templates folder URI>?messageId=<Message-ID>&subject=<subject> "
+      + "(as Thunderbird's filter editor writes it)");
+  }
+  return { folderUri: m[1], messageId: m[2] };
+}
+
+// Short, public description of a confirmation (getFilterConfirmation, journal):
+// what the rule is called and where it sends; no message content.
+function summarizeFilterConfirmation({ operation, rule = null, context = [], folder = null } = {}) {
+  const sends = [];
+  for (const a of (rule && rule.actions) || []) {
+    if (a.type === "forward") {
+      sends.push(`forward to ${displayFilterText(a.value, 0)}`);
+    } else if (a.type === "reply") {
+      let id;
+      try {
+        id = parseReplyTemplateValue(a.value).messageId;
+      } catch {
+        id = "(unparsed)";
+      }
+      sends.push(`reply with template ${displayFilterText(id, 120)}`);
+    } else if (a.type === "custom") {
+      sends.push(`add-on action ${displayFilterText(a.customId, 80)}`);
+    }
+  }
+  return {
+    operation,
+    ...(rule ? { ruleName: displayFilterText(rule.name, 80), ruleEnabled: !!rule.enabled } : {}),
+    ...(sends.length ? { sends } : {}),
+    ...(context.length ? { sendingRulesInList: context.map((r) => `#${r.index} ${displayFilterText(r.name, 60)}`) } : {}),
+    ...(folder ? { folder: displayFilterText(folder.uri, 200) } : {}),
+  };
+}
+
+// Everything that makes the list what it is, rule by rule (order, names,
+// types, enabled, conditions with their grouping and header property,
+// actions): accepted only if unchanged.
+function fingerprintFilterList(filterList) {
+  const rules = [];
+  const count = filterList.filterCount;
+  for (let i = 0; i < count; i++) {
+    try {
+      const f = filterList.getFilterAt(i);
+      rules.push({ rule: serializeFilterRule(f, i), desc: f.filterDesc || "" });
+    } catch (e) {
+      rules.push({ index: i, error: describeError(e) });
+    }
+  }
+  return JSON.stringify({ count, rules });
+}
+// END FILTER CONFIRMATION HELPERS
+
+// ── Filter confirmation runtime (preferences, store, journal; uses XPCOM) ──
+const FILTER_PREFS = {
+  type(name) {
+    const t = Services.prefs.getPrefType(name);
+    if (t === Services.prefs.PREF_STRING) return "string";
+    if (t === Services.prefs.PREF_BOOL) return "bool";
+    if (t === Services.prefs.PREF_INT) return "int";
+    return "none";
+  },
+  string: (name) => Services.prefs.getStringPref(name),
+  bool: (name) => Services.prefs.getBoolPref(name),
+  int: (name) => Services.prefs.getIntPref(name),
+};
+
+function randomConfirmationId() {
+  const rng = Cc["@mozilla.org/security/random-generator;1"].createInstance(Ci.nsIRandomGenerator);
+  const bytes = rng.generateRandomBytes(12);
+  return "fc-" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// One JSON line per event in <profile>/commonpost-mcp-confirmations.log
+// (0600, rotated to .1 beyond 256 KiB) and in the console: requests,
+// refusals, acceptances, expirations, failures. Rule names, operations,
+// accounts and forward targets only -- never the content of a message.
+function appendFilterConfirmationLog(event) {
+  const record = { t: new Date().toISOString(), ...event };
+  let line;
+  try {
+    line = JSON.stringify(record);
+  } catch (e) {
+    line = JSON.stringify({ t: record.t, event: String(event && event.event), error: `unserializable: ${describeError(e)}` });
+  }
+  console.log(`commonpost-mcp: filter confirmation ${line}`);
+  try {
+    const file = Services.dirsvc.get("ProfD", Ci.nsIFile);
+    file.append(FILTER_CONFIRM_LOG_NAME);
+    if (file.exists()) {
+      if (file.isSymlink() || !file.isFile()) throw new Error(`${file.path} is not a regular file`);
+      if (file.fileSize > FILTER_CONFIRM_LOG_MAX_BYTES) {
+        const old = file.parent.clone();
+        old.append(FILTER_CONFIRM_LOG_NAME + ".1");
+        if (old.exists()) old.remove(false);
+        file.moveTo(null, FILTER_CONFIRM_LOG_NAME + ".1");
+      }
+    }
+    const target = Services.dirsvc.get("ProfD", Ci.nsIFile);
+    target.append(FILTER_CONFIRM_LOG_NAME);
+    const ostream = Cc["@mozilla.org/network/file-output-stream;1"].createInstance(Ci.nsIFileOutputStream);
+    // 0x02 = O_WRONLY, 0x08 = O_CREAT, 0x10 = O_APPEND
+    ostream.init(target, 0x02 | 0x08 | 0x10, 0o600, 0);
+    const converter = Cc["@mozilla.org/intl/converter-output-stream;1"].createInstance(Ci.nsIConverterOutputStream);
+    converter.init(ostream, "UTF-8");
+    converter.writeString(line + "\n");
+    converter.close();
+  } catch (e) {
+    console.warn("commonpost-mcp: could not write the filter confirmation journal:", e);
+  }
+}
+
+function logSettledFilterConfirmation(entry) {
+  appendFilterConfirmationLog({
+    event: entry.status,
+    id: entry.id,
+    operation: entry.operation,
+    accountId: entry.accountId,
+    reason: entry.reason,
+    ...(entry.result ? { result: pickFilterResultForLog(entry.result) } : {}),
+    summary: entry.summary,
+  });
+}
+
+function pickFilterResultForLog(result) {
+  const out = {};
+  for (const key of ["success", "name", "index", "filterCount", "deleted", "remainingCount", "fromIndex", "toIndex",
+    "folder", "changes", "enabledFilters"]) {
+    if (result[key] !== undefined) out[key] = result[key];
+  }
+  if (result.filter && typeof result.filter === "object") out.filterName = result.filter.name;
+  return out;
+}
+
+// One store per running extension (survives a server restart, not a reload).
+function getFilterConfirmationStore() {
+  if (!globalThis.__commonpostMcpFilterConfirmations) {
+    globalThis.__commonpostMcpFilterConfirmations = createFilterConfirmationStore({
+      newId: randomConfirmationId,
+      onSettle: logSettledFilterConfirmation,
+    });
+  }
+  return globalThis.__commonpostMcpFilterConfirmations;
+}
 
 // eslint-disable-next-line no-unused-vars -- read by Thunderbird: the Experiment API namespace "commonpostMcp" (schema.json)
 var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
@@ -2867,7 +3718,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "createFilter",
         group: "filters", crud: "create",
         title: "Create Filter",
-        description: "Create a new mail filter rule on an account. Rules that forward or reply (send mail) are refused while the \"Block filter forward/reply\" setting is on (default), and so is any change to a filter list that already holds such a rule.",
+        description: "Create a new mail filter rule on an account. A rule that forwards or replies (sends mail), or a new rule in a filter list that already holds a rule sending mail, is not written at once: with the default setting (\"Filter rules that send mail: Ask me each time\") the call returns {status: \"pending_user_confirmation\", confirmationId} and Thunderbird asks the user in a dialog (only the user can accept; follow it with getFilterConfirmation); with \"Always block\" it is refused. Forward takes exactly one plain e-mail address; reply takes a template of a Templates folder (<folder URI>?messageId=<id>&subject=<subject>). Sending rules for outgoing mail (type 64) are always refused.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2909,7 +3760,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "updateFilter",
         group: "filters", crud: "update",
         title: "Update Filter",
-        description: "Modify an existing filter's properties, conditions, or actions. Forward/reply actions are refused while the \"Block filter forward/reply\" setting is on (default), and so is any change to a filter list that already holds a rule sending mail.",
+        description: "Modify an existing filter's properties, conditions, or actions. Adding forward/reply actions, or changing a filter list that holds a rule sending mail (including enabling or editing that rule), needs the user's confirmation in Thunderbird with the default setting (the call returns {status: \"pending_user_confirmation\", confirmationId}; follow it with getFilterConfirmation) and is refused with \"Always block\". Sending rules for outgoing mail (type 64) are always refused.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2951,7 +3802,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "deleteFilter",
         group: "filters", crud: "delete",
         title: "Delete Filter",
-        description: "Delete a mail filter by index",
+        description: "Delete a mail filter by index. Deleting a rule that sends mail is always allowed; deleting another rule of a list that holds one needs the user's confirmation (default setting) or is refused (\"Always block\").",
         inputSchema: {
           type: "object",
           properties: {
@@ -2965,7 +3816,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "reorderFilters",
         group: "filters", crud: "update",
         title: "Reorder Filters",
-        description: "Move a filter to a different position in the execution order",
+        description: "Move a filter to a different position in the execution order. In a filter list that holds a rule sending mail, this needs the user's confirmation (default setting; returns status pending_user_confirmation) or is refused (\"Always block\").",
         inputSchema: {
           type: "object",
           properties: {
@@ -2980,7 +3831,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "applyFilters",
         group: "filters", crud: "update",
         title: "Apply Filters",
-        description: "Manually run all enabled filters on a folder to organize existing messages. Refused while the \"Block filter forward/reply\" setting is on (default) if the account's filter list holds a rule that forwards, replies or runs an add-on action.",
+        description: "Manually run all enabled filters on a folder to organize existing messages. If the account's filter list holds a rule that forwards, replies or runs an add-on action, running it needs the user's confirmation in Thunderbird with the default setting (returns status pending_user_confirmation; follow it with getFilterConfirmation) and is refused with \"Always block\".",
         inputSchema: {
           type: "object",
           properties: {
@@ -2988,6 +3839,19 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             folderPath: { type: "string", description: "Folder URI to apply filters to (from listFolders)" },
           },
           required: ["accountId", "folderPath"],
+        },
+      },
+      {
+        name: "getFilterConfirmation",
+        group: "filters", crud: "read",
+        title: "Get Filter Confirmation",
+        description: "Read-only. State of a filter change waiting for, or settled by, the user's confirmation in Thunderbird: pending, accepted (written), refused (by the user, or the dialog was closed), expired (no answer within the time limit, 10 minutes) or failed (accepted, but the filter list, account or setting changed meanwhile: nothing written). Without confirmationId: the pending request (at most one) and the recent ones, with the limits (one pending, five dialogs per hour). MCP clients cannot accept, refuse or cancel a confirmation.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            confirmationId: { type: "string", description: "confirmationId returned with status pending_user_confirmation (optional)" },
+          },
+          required: [],
         },
       },
       {
@@ -3411,17 +4275,16 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
 
             /**
-             * "Block filter forward/reply": true by
-             * default; see the guard in FILTER RULE HELPERS.
+             * "Filter rules that send mail": "block" (blockFilterForwardReply on,
+             * the default) or "confirm" (off); read on every call, fail closed.
+             * See FILTER CONFIRMATION HELPERS.
              */
-            function isFilterForwardReplyBlocked() {
-              try {
-                return Services.prefs.getBoolPref(PREF_BLOCK_FILTER_FORWARD_REPLY, true);
-              } catch (e) {
-                // Fail closed: an unreadable pref keeps the guard on.
-                console.warn("commonpost-mcp: blockFilterForwardReply unreadable, guard stays on:", e);
-                return true;
+            function filterSendRulePolicy() {
+              const resolved = resolveFilterSendRulePolicy(FILTER_PREFS);
+              if (resolved.note) {
+                console.warn(`commonpost-mcp: filter send-rule policy "${resolved.policy}": ${resolved.note}`);
               }
+              return resolved.policy;
             }
 
             /**
@@ -8832,16 +9695,68 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return getAccessibleFolder(uri);
             }
 
-            function buildActions(filter, actions) {
-              buildRuleActions(filter, actions, resolveFilterTargetFolder,
-                { allowSendActions: !isFilterForwardReplyBlocked() });
+            // Reply template of a sending rule: a message of a Templates folder
+            // of an accessible account, found by its Message-ID, as the filter
+            // editor writes it. Anything else could make every matching sender
+            // receive an arbitrary message of the mailbox as the "template".
+            function resolveReplyTemplate(value) {
+              const { folderUri, messageId } = parseReplyTemplateValue(value);
+              const found = getAccessibleFolder(folderUri);
+              if (found.error || !found.folder) {
+                throw new Error(`Reply template folder not accessible: ${folderUri}`);
+              }
+              const folder = found.folder;
+              if (folder.URI !== folderUri) {
+                throw new Error(`Reply template folder must be given by its canonical URI: ${folder.URI}`);
+              }
+              if (!folder.getFlag(Ci.nsMsgFolderFlags.Templates)) {
+                throw new Error(`Reply template must be a message of a Templates folder; ${folder.URI} is not one`);
+              }
+              let hdr;
+              try {
+                hdr = folder.msgDatabase.getMsgHdrForMessageID(messageId);
+              } catch (e) {
+                throw new Error(`Cannot read Templates folder ${folder.URI}: ${describeError(e)}`, { cause: e });
+              }
+              if (!hdr) {
+                throw new Error(`Reply template not found: no message with Message-ID ${messageId} in ${folder.URI}`);
+              }
+              let date = "";
+              try {
+                date = hdr.date ? new Date(hdr.date / 1000).toISOString().slice(0, 10) : "";
+              } catch (e) {
+                console.warn("commonpost-mcp: reply template date unreadable:", e);
+              }
+              return {
+                subject: hdr.mime2DecodedSubject || "",
+                folder: folderDisplayName(folder) || folder.name || folder.URI,
+                author: hdr.mime2DecodedAuthor || "",
+                date,
+                size: Number(hdr.messageSize) || 0,
+              };
             }
 
-            // Throws when the forward/reply guard forbids this operation.
+            function checkSendActionValue(actionName, value) {
+              if (actionName === "reply") resolveReplyTemplate(value);
+            }
+
+            // Options for building actions under the given policy: "block"
+            // refuses sending actions outright; "confirm" builds
+            // them (checked) so that the change can be shown and confirmed.
+            function sendActionOptions(policy) {
+              return policy === "confirm"
+                ? { allowSendActions: true, checkSendAction: checkSendActionValue }
+                : { allowSendActions: false };
+            }
+
+            function buildActions(filter, actions, policy) {
+              buildRuleActions(filter, actions, resolveFilterTargetFolder, sendActionOptions(policy));
+            }
+
+            // "block" policy only: throws when the guard forbids this
+            // operation (the "confirm" policy decides with decideSendRuleChange).
             function guardFilterList(filterList, operation, targetIndex) {
-              if (isFilterForwardReplyBlocked()) {
-                assertFilterListGuard(filterList, operation, targetIndex);
-              }
+              assertFilterListGuard(filterList, operation, targetIndex);
             }
 
             // ── Filter tool handlers ──
@@ -8898,6 +9813,571 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
+            // ── Filter operations: prepare (validate + build, nothing written),
+            // then commit (write). A confirmed operation is prepared AGAIN from
+            // its stored arguments when the user accepts, and committed only if
+            // it is still exactly what was shown. ──
+
+            function prepareCreateFilter(a, policy) {
+              // Free text and bits Thunderbird persists: checked before any
+              // filter object exists (see FILTER_TEXT_FORBIDDEN).
+              validateFilterName(a.name);
+              if (a.type !== undefined && a.type !== null) validateFilterType(a.type);
+
+              if (!Array.isArray(a.conditions) || a.conditions.length === 0) {
+                return { error: "conditions must be a non-empty array" };
+              }
+              if (!Array.isArray(a.actions) || a.actions.length === 0) {
+                return { error: "actions must be a non-empty array" };
+              }
+
+              const fl = getFilterListForAccount(a.accountId);
+              if (fl.error) return fl;
+              const { filterList } = fl;
+              if (policy === "block") guardFilterList(filterList, "create");
+
+              const filter = filterList.createFilter(a.name);
+              filter.enabled = a.enabled !== false;
+              filter.filterType = (Number.isFinite(a.type) && a.type > 0) ? a.type : 17; // inbox + manual
+
+              buildTerms(filter, a.conditions);
+              buildActions(filter, a.actions, policy);
+
+              const idx = (a.insertAtIndex != null && a.insertAtIndex >= 0)
+                ? Math.min(a.insertAtIndex, filterList.filterCount)
+                : filterList.filterCount;
+              const rule = serializeFilter(filter, idx);
+              return {
+                operation: "create",
+                account: fl.account,
+                filterList,
+                result: { kinds: filterSendingActionKinds(filter), type: filter.filterType },
+                display: { rule, position: idx, count: filterList.filterCount },
+                shown: JSON.stringify({ rule, idx }),
+                commit() {
+                  filterList.insertFilterAt(idx, filter);
+                  filterList.saveToDefaultFile();
+                  return {
+                    success: true,
+                    name: filter.filterName,
+                    index: idx,
+                    filterCount: filterList.filterCount,
+                  };
+                },
+              };
+            }
+
+            function prepareUpdateFilter(a, policy) {
+              const fl = getFilterListForAccount(a.accountId);
+              if (fl.error) return fl;
+              const { filterList } = fl;
+
+              if (a.filterIndex < 0 || a.filterIndex >= filterList.filterCount) {
+                return { error: `Invalid filter index: ${a.filterIndex}` };
+              }
+
+              if (a.name !== undefined) validateFilterName(a.name);
+              if (a.type !== undefined) validateFilterType(a.type);
+
+              // "block": covers (re)enabling, retargeting or marking for
+              // outgoing mail (PostOutgoing) a sending rule.
+              if (policy === "block") guardFilterList(filterList, "update");
+              const filter = filterList.getFilterAt(a.filterIndex);
+              const before = serializeFilter(filter, a.filterIndex);
+              // Build (and fully validate) the replacement before touching
+              // the filter or the list: a failure leaves both unchanged.
+              const { changes, replacement } = planFilterUpdate(
+                filterList, filter,
+                { name: a.name, enabled: a.enabled, type: a.type, conditions: a.conditions, actions: a.actions },
+                resolveFilterTargetFolder, sendActionOptions(policy));
+
+              const resulting = replacement || filter;
+              let rule = serializeFilter(resulting, a.filterIndex);
+              if (!replacement) {
+                rule = {
+                  ...rule,
+                  ...(a.name !== undefined ? { name: a.name } : {}),
+                  ...(a.enabled !== undefined ? { enabled: a.enabled } : {}),
+                  ...(a.type !== undefined ? { type: a.type } : {}),
+                };
+              }
+              return {
+                operation: "update",
+                account: fl.account,
+                filterList,
+                targetIndex: a.filterIndex,
+                result: {
+                  kinds: filterSendingActionKinds(resulting),
+                  type: a.type !== undefined ? a.type : resulting.filterType,
+                },
+                display: { rule, before, changes, position: a.filterIndex },
+                shown: JSON.stringify({ rule, before, changes }),
+                commit() {
+                  if (replacement) {
+                    filterList.removeFilterAt(a.filterIndex);
+                    filterList.insertFilterAt(a.filterIndex, replacement);
+                  } else {
+                    if (a.name !== undefined) filter.filterName = a.name;
+                    if (a.enabled !== undefined) filter.enabled = a.enabled;
+                    if (a.type !== undefined) filter.filterType = a.type;
+                  }
+                  filterList.saveToDefaultFile();
+                  return {
+                    success: true,
+                    changes,
+                    filter: serializeFilter(filterList.getFilterAt(a.filterIndex), a.filterIndex),
+                  };
+                },
+              };
+            }
+
+            function prepareDeleteFilter(a, policy) {
+              const fl = getFilterListForAccount(a.accountId);
+              if (fl.error) return fl;
+              const { filterList } = fl;
+
+              if (a.filterIndex < 0 || a.filterIndex >= filterList.filterCount) {
+                return { error: `Invalid filter index: ${a.filterIndex}` };
+              }
+
+              if (policy === "block") guardFilterList(filterList, "delete", a.filterIndex);
+              const filter = filterList.getFilterAt(a.filterIndex);
+              const rule = serializeFilter(filter, a.filterIndex);
+              return {
+                operation: "delete",
+                account: fl.account,
+                filterList,
+                targetIndex: a.filterIndex,
+                display: { rule, position: a.filterIndex },
+                shown: JSON.stringify({ rule }),
+                commit() {
+                  const filterName = filter.filterName;
+                  filterList.removeFilterAt(a.filterIndex);
+                  filterList.saveToDefaultFile();
+                  return { success: true, deleted: filterName, remainingCount: filterList.filterCount };
+                },
+              };
+            }
+
+            function prepareReorderFilters(a, policy) {
+              const fl = getFilterListForAccount(a.accountId);
+              if (fl.error) return fl;
+              const { filterList } = fl;
+
+              if (a.fromIndex < 0 || a.fromIndex >= filterList.filterCount) {
+                return { error: `Invalid source index: ${a.fromIndex}` };
+              }
+              if (a.toIndex < 0 || a.toIndex >= filterList.filterCount) {
+                return { error: `Invalid target index: ${a.toIndex}` };
+              }
+
+              if (policy === "block") guardFilterList(filterList, "reorder");
+              const filter = filterList.getFilterAt(a.fromIndex);
+              const rule = serializeFilter(filter, a.fromIndex);
+              return {
+                operation: "reorder",
+                account: fl.account,
+                filterList,
+                display: { rule, fromIndex: a.fromIndex, toIndex: a.toIndex },
+                shown: JSON.stringify({ rule, fromIndex: a.fromIndex, toIndex: a.toIndex }),
+                commit() {
+                  // moveFilterAt is unreliable — use remove + insert instead
+                  // Adjust toIndex after removal: if moving down, indices shift
+                  filterList.removeFilterAt(a.fromIndex);
+                  const adjustedTo = (a.fromIndex < a.toIndex) ? a.toIndex - 1 : a.toIndex;
+                  filterList.insertFilterAt(adjustedTo, filter);
+                  filterList.saveToDefaultFile();
+                  return { success: true, name: filter.filterName, fromIndex: a.fromIndex, toIndex: a.toIndex };
+                },
+              };
+            }
+
+            function prepareApplyFilters(a, policy) {
+              const fl = getFilterListForAccount(a.accountId);
+              if (fl.error) return fl;
+              const { filterList } = fl;
+              // "block": never run a list holding a sending rule (the whole
+              // list is handed to applyFiltersToFolders). Checked before
+              // anything else, so the refusal does not depend on the folder.
+              if (policy === "block") guardFilterList(filterList, "apply");
+
+              const afResult = getAccessibleFolder(a.folderPath);
+              if (afResult.error) return afResult;
+              const folder = afResult.folder;
+
+              // Try MailServices.filters first, fall back to XPCOM contract ID
+              let filterService = null;
+              const serviceErrors = [];
+              try {
+                filterService = MailServices.filters;
+              } catch (e) {
+                serviceErrors.push(`MailServices.filters: ${describeError(e)}`);
+              }
+              if (!filterService) {
+                try {
+                  filterService = Cc["@mozilla.org/messenger/filter-service;1"]
+                    .getService(Ci.nsIMsgFilterService);
+                } catch (e) {
+                  serviceErrors.push(`filter-service: ${describeError(e)}`);
+                }
+              }
+              if (!filterService) {
+                return {
+                  error: "Filter service not available in this Thunderbird version"
+                    + (serviceErrors.length ? ` (${serviceErrors.join("; ")})` : ""),
+                };
+              }
+              return {
+                operation: "apply",
+                account: fl.account,
+                filterList,
+                display: { folder: { name: folderDisplayName(folder) || folder.name || folder.URI, uri: folder.URI } },
+                shown: JSON.stringify({ folder: folder.URI }),
+                commit() {
+                  filterService.applyFiltersToFolders(filterList, [folder], null);
+
+                  // applyFiltersToFolders is async — returns immediately
+                  let enabledFilters = 0;
+                  for (let i = 0; i < filterList.filterCount; i++) {
+                    if (filterList.getFilterAt(i).enabled) enabledFilters++;
+                  }
+                  return {
+                    success: true,
+                    message: "Filters applied (processing may take a moment)",
+                    folder: a.folderPath,
+                    enabledFilters,
+                  };
+                },
+              };
+            }
+
+            function prepareFilterOperation(kind, args, policy) {
+              switch (kind) {
+                case "createFilter": return prepareCreateFilter(args, policy);
+                case "updateFilter": return prepareUpdateFilter(args, policy);
+                case "deleteFilter": return prepareDeleteFilter(args, policy);
+                case "reorderFilters": return prepareReorderFilters(args, policy);
+                case "applyFilters": return prepareApplyFilters(args, policy);
+                default: throw new Error(`Unknown filter operation: ${kind}`);
+              }
+            }
+
+            function decideFilterPlan(plan) {
+              return decideSendRuleChange({
+                operation: plan.operation,
+                listRules: listSendingRules(plan.filterList),
+                result: plan.result || null,
+                targetIndex: plan.targetIndex,
+              });
+            }
+
+            // Direct call from a tool: "block" = the guard; "confirm" =
+            // allowed changes are written, sensitive ones wait for the user.
+            function runFilterOperation(kind, args) {
+              const policy = filterSendRulePolicy();
+              const plan = prepareFilterOperation(kind, args, policy);
+              if (plan.error) return plan;
+              if (policy === "block") return plan.commit();
+              const verdict = decideFilterPlan(plan);
+              if (verdict.verdict === "allow") return plan.commit();
+              if (verdict.verdict === "refuse") {
+                appendFilterConfirmationLog({ event: "request_refused", operation: kind, accountId: args.accountId,
+                  reason: verdict.reason });
+                return { error: verdict.reason };
+              }
+              return requestFilterConfirmation(kind, args, plan, verdict);
+            }
+
+            function describeAccountForDialog(account) {
+              let name = "";
+              let email = "";
+              try {
+                name = account.incomingServer ? account.incomingServer.prettyName || "" : "";
+              } catch (e) {
+                console.warn("commonpost-mcp: account name unreadable for the confirmation dialog:", e);
+              }
+              try {
+                email = account.defaultIdentity ? account.defaultIdentity.email || "" : "";
+              } catch (e) {
+                console.warn("commonpost-mcp: account identity unreadable for the confirmation dialog:", e);
+              }
+              return { key: account.key, name, email };
+            }
+
+            // Subject and folder of each reply template shown in the dialog
+            // (the value itself is never presented as the template's name).
+            function resolveTemplatesForDisplay(rules) {
+              const templates = {};
+              for (const rule of rules) {
+                for (const action of (rule && rule.actions) || []) {
+                  if (action.type !== "reply" || typeof action.value !== "string" || action.value in templates) continue;
+                  try {
+                    templates[action.value] = resolveReplyTemplate(action.value);
+                  } catch (e) {
+                    templates[action.value] = { error: describeError(e) };
+                  }
+                }
+              }
+              return templates;
+            }
+
+            function formatConfirmationTime(ms) {
+              const d = new Date(ms);
+              try {
+                return `${d.toLocaleTimeString()} (${d.toISOString().slice(11, 16)} UTC)`;
+              } catch (e) {
+                console.warn("commonpost-mcp: local time format failed:", e);
+                return d.toISOString();
+              }
+            }
+
+            // The dialog for a prepared plan: context rules read back, reply
+            // templates resolved (subject, author, date, size), account. Built
+            // again at commit time with the same expiry, it must give the same
+            // text: what is written is what the user saw.
+            function composeFilterConfirmationDialog(plan, verdict, expiresAt) {
+              const context = verdict.context.map((r) => serializeFilter(plan.filterList.getFilterAt(r.index), r.index));
+              const templates = resolveTemplatesForDisplay([plan.display.rule, ...context]);
+              const dialog = buildFilterConfirmationDialog({
+                operation: plan.operation,
+                account: describeAccountForDialog(plan.account),
+                ...plan.display,
+                context,
+                resultSends: verdict.resultSends,
+                templates,
+                expiresAt,
+                formatTime: formatConfirmationTime,
+              });
+              return { dialog, context };
+            }
+
+            function requestFilterConfirmation(kind, args, plan, verdict) {
+              const store = getFilterConfirmationStore();
+              store.expireDue();
+              const admitted = store.admit();
+              if (!admitted.ok) {
+                const reason = describeConfirmationRefusal(admitted);
+                appendFilterConfirmationLog({ event: "request_refused", operation: kind, accountId: args.accountId,
+                  reason: admitted.code === "pending" ? "another confirmation is pending" : "hourly limit reached" });
+                return { error: reason };
+              }
+              const win = Services.wm.getMostRecentWindow("mail:3pane");
+              if (!win || win.closed) {
+                const reason = "Thunderbird's main window is not open, so the user cannot be asked; nothing was written";
+                appendFilterConfirmationLog({ event: "request_refused", operation: kind, accountId: args.accountId, reason });
+                return { error: reason };
+              }
+              const ttlMs = resolveFilterConfirmTtlMs(FILTER_PREFS);
+              const dialogExpiresAt = Date.now() + ttlMs;
+              let dialog;
+              let context;
+              try {
+                ({ dialog, context } = composeFilterConfirmationDialog(plan, verdict, dialogExpiresAt));
+              } catch (e) {
+                const reason = `This change cannot be shown in full for confirmation (${describeError(e)}); `
+                  + "nothing was written -- use Thunderbird's filter editor";
+                appendFilterConfirmationLog({ event: "request_refused", operation: kind, accountId: args.accountId, reason });
+                return { error: reason };
+              }
+              const summary = summarizeFilterConfirmation({
+                operation: plan.operation, rule: plan.display.rule, context, folder: plan.display.folder,
+              });
+              const opened = store.open({ operation: kind, accountId: args.accountId, ttlMs, summary });
+              if (opened.error) return { error: describeConfirmationRefusal(opened.error) };
+              const entry = opened.entry;
+              // From here on, any failure settles the entry: a request left
+              // "pending" without its timer would block every later one.
+              try {
+                entry.private = {
+                  kind,
+                  args: JSON.parse(JSON.stringify(args)),
+                  fingerprint: fingerprintFilterList(plan.filterList),
+                  shown: plan.shown,
+                  dialogExpiresAt,
+                  dialogTitle: dialog.title,
+                  dialogText: dialog.text,
+                };
+                const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+                timer.initWithCallback(() => {
+                  store.settle(entry.id, "expired", { reason: "no answer within the time limit; nothing was written" });
+                }, ttlMs + 50, Ci.nsITimer.TYPE_ONE_SHOT);
+                entry.hooks.push(() => timer.cancel());
+                openFilterConfirmationDialog(win, dialog, entry);
+              } catch (e) {
+                const reason = `The confirmation dialog could not be opened (${describeError(e)}); nothing was written`;
+                store.settle(entry.id, "failed", { reason });
+                return { error: reason };
+              }
+              appendFilterConfirmationLog({ event: "requested", id: entry.id, operation: kind, accountId: args.accountId,
+                summary, expiresAt: new Date(entry.expiresAt).toISOString() });
+              console.log(`commonpost-mcp: filter confirmation ${entry.id} (${kind}, ${args.accountId}) shown to the user`);
+              return {
+                status: "pending_user_confirmation",
+                confirmationId: entry.id,
+                operation: kind,
+                accountId: args.accountId,
+                expiresAt: new Date(entry.expiresAt).toISOString(),
+                message: "Nothing has been written. Thunderbird is showing the user a dialog to confirm or refuse this "
+                  + "change; only the user can answer, MCP clients cannot. Use getFilterConfirmation with this "
+                  + "confirmationId to follow it (pending, accepted, refused, expired, failed). Do not ask again while it is "
+                  + "pending: a new request is refused until this one is settled.",
+                shownToUser: { title: dialog.title, text: dialog.text },
+              };
+            }
+
+            // The dialog is Thunderbird's own common dialog, opened NON-modal
+            // over the main window (Services.prompt would open it modal, with
+            // a nested event loop and no way to close it when it expires).
+            // Refuse is the default button (Enter and Escape refuse), the
+            // accept button stays disabled until the dialog has had focus for
+            // security.dialog_enable_delay, there is no "don't ask again".
+            function openFilterConfirmationDialog(parentWin, dialog, entry) {
+              const { PromptUtils } = ChromeUtils.importESModule("resource://gre/modules/PromptUtils.sys.mjs");
+              const bag = PromptUtils.objectToPropBag({
+                promptType: "confirmEx",
+                title: dialog.title,
+                text: dialog.text,
+                button0Label: dialog.acceptLabel,
+                button1Label: dialog.refuseLabel,
+                defaultButtonNum: 1,
+                enableDelay: true,
+              });
+              let dlgWin = null;
+              let observing = true;
+              const stopObserving = () => {
+                if (!observing) return;
+                observing = false;
+                Services.obs.removeObserver(observer, "common-dialog-loaded");
+              };
+              const observer = {
+                observe(subject, topic) {
+                  if (topic !== "common-dialog-loaded" || !dlgWin || subject !== dlgWin) return;
+                  stopObserving();
+                  // Registered after commonDialog.js's own unload listener,
+                  // which writes the answer back into the bag.
+                  subject.addEventListener("unload", () => {
+                    Services.tm.dispatchToMainThread(() => onFilterConfirmationClosed(entry, bag));
+                  }, { once: true });
+                },
+              };
+              Services.obs.addObserver(observer, "common-dialog-loaded");
+              entry.hooks.push(() => {
+                try {
+                  stopObserving();
+                } catch (e) {
+                  console.warn("commonpost-mcp: could not remove the confirmation observer:", e);
+                }
+                if (dlgWin && !dlgWin.closed) dlgWin.close();
+              });
+              dlgWin = Services.ww.openWindow(parentWin, "chrome://global/content/commonDialog.xhtml", "_blank",
+                "centerscreen,chrome,titlebar,dialog,dependent", bag);
+              entry.private.window = dlgWin;
+            }
+
+            function onFilterConfirmationClosed(entry, bag) {
+              const store = getFilterConfirmationStore();
+              if (store.get(entry.id) !== entry || entry.status !== "pending") return; // expired or settled meanwhile
+              let clicked = 1;
+              let ok = false;
+              try {
+                clicked = bag.getProperty("buttonNumClicked");
+                ok = bag.getProperty("ok") === true;
+              } catch (e) {
+                console.warn("commonpost-mcp: confirmation answer unreadable, taken as refused:", e);
+              }
+              if (!(clicked === 0 && ok)) {
+                store.settle(entry.id, "refused", {
+                  reason: "refused by the user (Refuse, Enter, Escape or window closed); nothing was written",
+                });
+                return;
+              }
+              if (!store.isLive(entry)) {
+                store.settle(entry.id, "expired", { reason: "accepted after the time limit; nothing was written" });
+                return;
+              }
+              let result;
+              try {
+                result = commitConfirmedFilterOperation(entry);
+              } catch (e) {
+                const reason = `accepted by the user but NOT written: ${describeError(e)}`;
+                store.settle(entry.id, "failed", { reason });
+                showFilterConfirmationFailure(reason);
+                return;
+              }
+              store.settle(entry.id, "accepted", { reason: "accepted by the user; written after checking again", result });
+            }
+
+            // Everything is checked again just before writing: policy, tool
+            // access, account access, texts, folders, templates (prepare), the
+            // list unchanged, the change identical to what was shown, and the
+            // dialog text itself unchanged (template header, account, context).
+            function commitConfirmedFilterOperation(entry) {
+              const p = entry.private;
+              const policy = filterSendRulePolicy();
+              if (policy !== "confirm") throw new Error(`the "Filter rules that send mail" setting is now "${policy}"`);
+              if (!isToolEnabled(p.kind)) throw new Error(`the ${p.kind} tool is now disabled`);
+              const plan = prepareFilterOperation(p.kind, p.args, "confirm");
+              if (plan.error) throw new Error(plan.error);
+              if (fingerprintFilterList(plan.filterList) !== p.fingerprint) {
+                throw new Error("the account's filter list changed since the request");
+              }
+              if (plan.shown !== p.shown) throw new Error("the change is no longer the one shown");
+              const verdict = decideFilterPlan(plan);
+              if (verdict.verdict === "refuse") throw new Error(verdict.reason);
+              if (verdict.verdict === "confirm") {
+                // Everything the dialog showed, resolved again: a reply
+                // template replaced by another message with the same
+                // Message-ID, a renamed account... -> not written.
+                const again = composeFilterConfirmationDialog(plan, verdict, p.dialogExpiresAt).dialog;
+                if (again.title !== p.dialogTitle || again.text !== p.dialogText) {
+                  throw new Error("what the dialog showed has changed since (for example the reply template's subject, "
+                    + "author or size)");
+                }
+              }
+              const result = plan.commit();
+              if (result && result.error) throw new Error(result.error);
+              return result;
+            }
+
+            // The user accepted but nothing was written: say so (non-modal).
+            function showFilterConfirmationFailure(reason) {
+              try {
+                const { PromptUtils } = ChromeUtils.importESModule("resource://gre/modules/PromptUtils.sys.mjs");
+                const bag = PromptUtils.objectToPropBag({
+                  promptType: "alert",
+                  title: `${FILTER_CONFIRM_TITLE_PREFIX} nothing was written`,
+                  text: `The filter change you accepted was NOT written:\n\n${displayFilterText(reason, 600)}\n\n`
+                    + "Ask for it again if you still want it.",
+                });
+                Services.ww.openWindow(Services.wm.getMostRecentWindow("mail:3pane"),
+                  "chrome://global/content/commonDialog.xhtml", "_blank", "centerscreen,chrome,titlebar,dialog,dependent", bag);
+              } catch (e) {
+                console.error("commonpost-mcp: could not tell the user that the filter change failed:", e);
+              }
+            }
+
+            function getFilterConfirmation(confirmationId) {
+              try {
+                const store = getFilterConfirmationStore();
+                if (confirmationId !== undefined && confirmationId !== null && confirmationId !== "") {
+                  if (typeof confirmationId !== "string") return { error: "confirmationId must be a string" };
+                  const found = store.view(confirmationId);
+                  if (!found) {
+                    return { error: `Unknown confirmationId: ${confirmationId} (ids do not survive a Thunderbird restart)` };
+                  }
+                  return found;
+                }
+                return {
+                  policy: filterSendRulePolicy(),
+                  pending: store.pending(),
+                  recent: store.recent(10),
+                  limits: store.usage(),
+                };
+              } catch (e) {
+                return { error: e.toString() };
+              }
+            }
+
             function createFilter(accountId, name, enabled, type, conditions, actions, insertAtIndex) {
               try {
                 // Coerce arrays from MCP client string serialization
@@ -8914,42 +10394,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (typeof enabled === "string") enabled = enabled === "true";
                 if (typeof type === "string") type = parseInt(type, 10);
                 if (typeof insertAtIndex === "string") insertAtIndex = parseInt(insertAtIndex, 10);
-                // Free text and bits Thunderbird persists: checked before any
-                // filter object exists (see FILTER_TEXT_FORBIDDEN).
-                validateFilterName(name);
-                if (type !== undefined && type !== null) validateFilterType(type);
-
-                if (!Array.isArray(conditions) || conditions.length === 0) {
-                  return { error: "conditions must be a non-empty array" };
-                }
-                if (!Array.isArray(actions) || actions.length === 0) {
-                  return { error: "actions must be a non-empty array" };
-                }
-
-                const fl = getFilterListForAccount(accountId);
-                if (fl.error) return fl;
-                const { filterList } = fl;
-                guardFilterList(filterList, "create");
-
-                const filter = filterList.createFilter(name);
-                filter.enabled = enabled !== false;
-                filter.filterType = (Number.isFinite(type) && type > 0) ? type : 17; // inbox + manual
-
-                buildTerms(filter, conditions);
-                buildActions(filter, actions);
-
-                const idx = (insertAtIndex != null && insertAtIndex >= 0)
-                  ? Math.min(insertAtIndex, filterList.filterCount)
-                  : filterList.filterCount;
-                filterList.insertFilterAt(idx, filter);
-                filterList.saveToDefaultFile();
-
-                return {
-                  success: true,
-                  name: filter.filterName,
-                  index: idx,
-                  filterCount: filterList.filterCount,
-                };
+                return runFilterOperation("createFilter",
+                  { accountId, name, enabled, type, conditions, actions, insertAtIndex });
               } catch (e) {
                 return { error: e.toString() };
               }
@@ -8972,44 +10418,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     return { error: `actions must be a valid JSON array: ${describeError(e)}` };
                   }
                 }
-
-                const fl = getFilterListForAccount(accountId);
-                if (fl.error) return fl;
-                const { filterList } = fl;
-
-                if (filterIndex < 0 || filterIndex >= filterList.filterCount) {
-                  return { error: `Invalid filter index: ${filterIndex}` };
-                }
-
-                if (name !== undefined) validateFilterName(name);
-                if (type !== undefined) validateFilterType(type);
-
-                // Forward/reply guard: covers (re)enabling, retargeting or
-                // marking for outgoing mail (PostOutgoing) a sending rule.
-                guardFilterList(filterList, "update");
-                const filter = filterList.getFilterAt(filterIndex);
-                // Build (and fully validate) the replacement before touching
-                // the filter or the list: a failure leaves both unchanged.
-                const { changes, replacement } = planFilterUpdate(
-                  filterList, filter, { name, enabled, type, conditions, actions }, resolveFilterTargetFolder,
-                  { allowSendActions: !isFilterForwardReplyBlocked() });
-
-                if (replacement) {
-                  filterList.removeFilterAt(filterIndex);
-                  filterList.insertFilterAt(filterIndex, replacement);
-                } else {
-                  if (name !== undefined) filter.filterName = name;
-                  if (enabled !== undefined) filter.enabled = enabled;
-                  if (type !== undefined) filter.filterType = type;
-                }
-
-                filterList.saveToDefaultFile();
-
-                return {
-                  success: true,
-                  changes,
-                  filter: serializeFilter(filterList.getFilterAt(filterIndex), filterIndex),
-                };
+                return runFilterOperation("updateFilter",
+                  { accountId, filterIndex, name, enabled, type, conditions, actions });
               } catch (e) {
                 return { error: e.toString() };
               }
@@ -9019,22 +10429,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               try {
                 if (typeof filterIndex === "string") filterIndex = parseInt(filterIndex);
                 if (!Number.isInteger(filterIndex)) return { error: "filterIndex must be an integer" };
-
-                const fl = getFilterListForAccount(accountId);
-                if (fl.error) return fl;
-                const { filterList } = fl;
-
-                if (filterIndex < 0 || filterIndex >= filterList.filterCount) {
-                  return { error: `Invalid filter index: ${filterIndex}` };
-                }
-
-                guardFilterList(filterList, "delete", filterIndex);
-                const filter = filterList.getFilterAt(filterIndex);
-                const filterName = filter.filterName;
-                filterList.removeFilterAt(filterIndex);
-                filterList.saveToDefaultFile();
-
-                return { success: true, deleted: filterName, remainingCount: filterList.filterCount };
+                return runFilterOperation("deleteFilter", { accountId, filterIndex });
               } catch (e) {
                 return { error: e.toString() };
               }
@@ -9046,28 +10441,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (typeof toIndex === "string") toIndex = parseInt(toIndex);
                 if (!Number.isInteger(fromIndex)) return { error: "fromIndex must be an integer" };
                 if (!Number.isInteger(toIndex)) return { error: "toIndex must be an integer" };
-
-                const fl = getFilterListForAccount(accountId);
-                if (fl.error) return fl;
-                const { filterList } = fl;
-
-                if (fromIndex < 0 || fromIndex >= filterList.filterCount) {
-                  return { error: `Invalid source index: ${fromIndex}` };
-                }
-                if (toIndex < 0 || toIndex >= filterList.filterCount) {
-                  return { error: `Invalid target index: ${toIndex}` };
-                }
-
-                guardFilterList(filterList, "reorder");
-                // moveFilterAt is unreliable — use remove + insert instead
-                // Adjust toIndex after removal: if moving down, indices shift
-                const filter = filterList.getFilterAt(fromIndex);
-                filterList.removeFilterAt(fromIndex);
-                const adjustedTo = (fromIndex < toIndex) ? toIndex - 1 : toIndex;
-                filterList.insertFilterAt(adjustedTo, filter);
-                filterList.saveToDefaultFile();
-
-                return { success: true, name: filter.filterName, fromIndex, toIndex };
+                return runFilterOperation("reorderFilters", { accountId, fromIndex, toIndex });
               } catch (e) {
                 return { error: e.toString() };
               }
@@ -9075,55 +10449,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
             function applyFilters(accountId, folderPath) {
               try {
-                const fl = getFilterListForAccount(accountId);
-                if (fl.error) return fl;
-                const { filterList } = fl;
-                // Never run a list holding a sending rule (the whole list is
-                // handed to applyFiltersToFolders). Checked before anything
-                // else, so the refusal does not depend on the folder.
-                guardFilterList(filterList, "apply");
-
-                const afResult = getAccessibleFolder(folderPath);
-                if (afResult.error) return afResult;
-                const folder = afResult.folder;
-
-                // Try MailServices.filters first, fall back to XPCOM contract ID
-                let filterService = null;
-                const serviceErrors = [];
-                try {
-                  filterService = MailServices.filters;
-                } catch (e) {
-                  serviceErrors.push(`MailServices.filters: ${describeError(e)}`);
-                }
-                if (!filterService) {
-                  try {
-                    filterService = Cc["@mozilla.org/messenger/filter-service;1"]
-                      .getService(Ci.nsIMsgFilterService);
-                  } catch (e) {
-                    serviceErrors.push(`filter-service: ${describeError(e)}`);
-                  }
-                }
-                if (!filterService) {
-                  return {
-                    error: "Filter service not available in this Thunderbird version"
-                      + (serviceErrors.length ? ` (${serviceErrors.join("; ")})` : ""),
-                  };
-                }
-                filterService.applyFiltersToFolders(filterList, [folder], null);
-
-                // applyFiltersToFolders is async — returns immediately
-                return {
-                  success: true,
-                  message: "Filters applied (processing may take a moment)",
-                  folder: folderPath,
-                  enabledFilters: (() => {
-                    let count = 0;
-                    for (let i = 0; i < filterList.filterCount; i++) {
-                      if (filterList.getFilterAt(i).enabled) count++;
-                    }
-                    return count;
-                  })(),
-                };
+                return runFilterOperation("applyFilters", { accountId, folderPath });
               } catch (e) {
                 return { error: e.toString() };
               }
@@ -9430,6 +10756,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   return reorderFilters(args.accountId, args.fromIndex, args.toIndex);
                 case "applyFilters":
                   return applyFilters(args.accountId, args.folderPath);
+                case "getFilterConfirmation":
+                  return getFilterConfirmation(args.confirmationId);
                 case "getAccountAccess":
                   return getAccountAccess();
                 default:
@@ -10048,6 +11376,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
   }
 
   onShutdown(isAppShutdown) {
+    // Pending filter confirmations end here: nothing is written, their
+    // dialogs close.
+    if (globalThis.__commonpostMcpFilterConfirmations) {
+      try {
+        globalThis.__commonpostMcpFilterConfirmations.shutdown(
+          "Commonpost MCP stopped (extension disabled, updated or Thunderbird closing); nothing was written");
+      } catch (e) {
+        console.error("commonpost-mcp: could not end pending filter confirmations:", e);
+      }
+      globalThis.__commonpostMcpFilterConfirmations = null;
+    }
     // Stop the HTTP server so the port is released
     if (globalThis.__cpMcpServer) {
       try { globalThis.__cpMcpServer.stop(() => {}); } catch { /* ignore */ }

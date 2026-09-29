@@ -537,44 +537,55 @@ saveSkipReviewBtn.addEventListener("click", async () => {
   saveSkipReviewBtn.disabled = false;
 });
 
-// --- Block filter forward/reply ---
-const blockFilterForwardReplyCheckbox = document.getElementById("blockFilterForwardReply");
-const saveFilterForwardReplyBtn = document.getElementById("saveFilterForwardReplyBtn");
-const saveFilterForwardReplyStatus = document.getElementById("saveFilterForwardReplyStatus");
+// --- Filter rules that send mail ---
+// One boolean preference (blockFilterForwardReply): true = "block" (default),
+// false = "confirm" (the user is asked in a Thunderbird dialog each time).
+const filterSendRulePolicyRadios = document.querySelectorAll('input[name="filterSendRulePolicy"]');
+const saveFilterSendRulePolicyBtn = document.getElementById("saveFilterSendRulePolicyBtn");
+const saveFilterSendRulePolicyStatus = document.getElementById("saveFilterSendRulePolicyStatus");
 
-async function loadFilterForwardReplyPref() {
+async function loadFilterSendRulePolicy() {
   try {
     const { blockFilterForwardReply } = await browser.commonpostMcp.getBlockFilterForwardReply();
-    blockFilterForwardReplyCheckbox.checked = blockFilterForwardReply !== false;
-    saveFilterForwardReplyBtn.disabled = false;
-    saveFilterForwardReplyStatus.textContent = "";
+    const policy = blockFilterForwardReply === false ? "confirm" : "block";
+    for (const radio of filterSendRulePolicyRadios) {
+      radio.checked = radio.value === policy;
+    }
+    saveFilterSendRulePolicyBtn.disabled = false;
+    saveFilterSendRulePolicyStatus.textContent = "";
   } catch (e) {
-    saveFilterForwardReplyStatus.textContent = "Error loading setting: " + e.message;
-    saveFilterForwardReplyStatus.className = "save-status error";
+    saveFilterSendRulePolicyStatus.textContent = "Error loading setting: " + e.message;
+    saveFilterSendRulePolicyStatus.className = "save-status error";
   }
 }
 
-saveFilterForwardReplyBtn.addEventListener("click", async () => {
-  saveFilterForwardReplyBtn.disabled = true;
-  saveFilterForwardReplyStatus.textContent = "Saving...";
-  saveFilterForwardReplyStatus.className = "save-status";
+saveFilterSendRulePolicyBtn.addEventListener("click", async () => {
+  const chosen = Array.from(filterSendRulePolicyRadios).find((radio) => radio.checked);
+  if (!chosen) {
+    saveFilterSendRulePolicyStatus.textContent = "Choose one of the two options.";
+    saveFilterSendRulePolicyStatus.className = "save-status error";
+    return;
+  }
+  saveFilterSendRulePolicyBtn.disabled = true;
+  saveFilterSendRulePolicyStatus.textContent = "Saving...";
+  saveFilterSendRulePolicyStatus.className = "save-status";
   try {
-    const result = await browser.commonpostMcp.setBlockFilterForwardReply(blockFilterForwardReplyCheckbox.checked);
+    const result = await browser.commonpostMcp.setBlockFilterForwardReply(chosen.value === "block");
     if (result.error) {
-      saveFilterForwardReplyStatus.textContent = result.error;
-      saveFilterForwardReplyStatus.className = "save-status error";
+      saveFilterSendRulePolicyStatus.textContent = result.error;
+      saveFilterSendRulePolicyStatus.className = "save-status error";
     } else {
-      saveFilterForwardReplyStatus.textContent = "Saved.";
+      saveFilterSendRulePolicyStatus.textContent = "Saved.";
     }
   } catch (e) {
-    saveFilterForwardReplyStatus.textContent = "Error: " + e.message;
-    saveFilterForwardReplyStatus.className = "save-status error";
+    saveFilterSendRulePolicyStatus.textContent = "Error: " + e.message;
+    saveFilterSendRulePolicyStatus.className = "save-status error";
   }
-  saveFilterForwardReplyBtn.disabled = false;
+  saveFilterSendRulePolicyBtn.disabled = false;
 });
 
 loadServerInfo().catch(e => console.error("commonpost-mcp options:", "loadServerInfo failed:", e));
-loadFilterForwardReplyPref().catch(e => console.error("commonpost-mcp options:", "loadFilterForwardReplyPref failed:", e));
+loadFilterSendRulePolicy().catch(e => console.error("commonpost-mcp options:", "loadFilterSendRulePolicy failed:", e));
 loadAuthenticationConfig().catch(e => console.error("commonpost-mcp options:", "loadAuthenticationConfig failed:", e));
 loadAccountAccess().catch(e => console.error("commonpost-mcp options:", "loadAccountAccess failed:", e));
 loadToolAccess().catch(e => console.error("commonpost-mcp options:", "loadToolAccess failed:", e));

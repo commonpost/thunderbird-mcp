@@ -102,19 +102,19 @@
         "name": "getBlockFilterForwardReply",
         "type": "function",
         "async": true,
-        "description": "Get the Block filter forward/reply preference (default true).",
+        "description": "Get the Block filter forward/reply preference (default true: filter rules that send mail are refused; false: the user is asked in Thunderbird).",
         "parameters": []
       },
       {
         "name": "setBlockFilterForwardReply",
         "type": "function",
         "async": true,
-        "description": "Set whether MCP filter tools refuse rules that forward or reply (send mail). Defaults to true.",
+        "description": "Set whether MCP filter tools refuse rules that forward or reply (send mail), or leave the decision to the user in a Thunderbird dialog. Defaults to true.",
         "parameters": [
           {
             "name": "blockFilterForwardReply",
             "type": "boolean",
-            "description": "When true (the default), createFilter/updateFilter refuse Forward and Reply actions, and no MCP tool changes or runs a filter list that already holds a rule sending mail or running an add-on action (deleting such a rule stays possible)."
+            "description": "When true (the default), createFilter/updateFilter refuse Forward and Reply actions, and no MCP tool changes or runs a filter list that already holds a rule sending mail or running an add-on action (deleting such a rule stays possible). When false, such a request waits for the user's confirmation in a Thunderbird dialog; nothing is written without it."
           }
         ]
       },
