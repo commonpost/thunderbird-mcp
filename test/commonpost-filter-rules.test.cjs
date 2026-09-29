@@ -436,11 +436,11 @@ describe("filter tool handlers (wiring)", () => {
   });
 
   it("updateFilter plans (and validates) the rebuild before touching the list", () => {
-    const u = handlers.slice(handlers.indexOf("function updateFilter("), handlers.indexOf("function deleteFilter("));
+    const u = handlers.slice(handlers.indexOf("function prepareUpdateFilter("), handlers.indexOf("function prepareDeleteFilter("));
     const plan = u.indexOf("planFilterUpdate(");
     assert.ok(plan > 0);
     assert.ok(plan < u.indexOf("removeFilterAt("));
-    assert.ok(plan < u.indexOf("filter.filterName = name"));
+    assert.ok(plan < u.indexOf("filter.filterName = a.name"));
   });
 
   it("buildActions stores the canonical folder URI via the module helper", () => {
@@ -479,8 +479,10 @@ describe("forward/reply guard on created actions", () => {
         /sends mail automatically/);
     }
     const f = makeFilter();
+    // A reply is built only with a template check (see
+    // commonpost-filter-confirm.test.cjs).
     api.buildRuleActions(f, [{ type: "forward", value: "a@example.com" }, { type: "reply", value: "uri" }], resolveFolder,
-      { allowSendActions: true });
+      { allowSendActions: true, checkSendAction: () => {} });
     assert.deepEqual([f.getActionAt(0).type, f.getActionAt(1).type], [ACTIONS.Forward, ACTIONS.Reply]);
   });
 
@@ -550,26 +552,26 @@ describe("forward/reply guard on existing sending rules", () => {
   });
 });
 
-describe("forward/reply guard wiring", () => {
+describe("forward/reply guard wiring (policy \"block\")", () => {
   const handlers = apiSource.slice(apiSource.indexOf("function getFilterListForAccount(accountId)"),
     apiSource.indexOf("// BEGIN TOOL SCHEMA VALIDATOR"));
   const body = (fn, next) => handlers.slice(handlers.indexOf(`function ${fn}(`), handlers.indexOf(`function ${next}(`));
 
-  it("every filter-writing tool and applyFilters consult the guard", () => {
-    assert.match(body("createFilter", "updateFilter"), /guardFilterList\(filterList, "create"\)/);
-    assert.match(body("updateFilter", "deleteFilter"), /guardFilterList\(filterList, "update"\)/);
-    assert.match(body("updateFilter", "deleteFilter"), /allowSendActions: !isFilterForwardReplyBlocked\(\)/);
-    assert.match(body("deleteFilter", "reorderFilters"), /guardFilterList\(filterList, "delete", filterIndex\)/);
-    assert.match(body("reorderFilters", "applyFilters"), /guardFilterList\(filterList, "reorder"\)/);
-    const apply = handlers.slice(handlers.indexOf("function applyFilters("));
+  it("every filter-writing step and applyFilters consult the guard under \"block\"", () => {
+    assert.match(body("prepareCreateFilter", "prepareUpdateFilter"), /if \(policy === "block"\) guardFilterList\(filterList, "create"\)/);
+    assert.match(body("prepareUpdateFilter", "prepareDeleteFilter"), /if \(policy === "block"\) guardFilterList\(filterList, "update"\)/);
+    assert.match(body("prepareUpdateFilter", "prepareDeleteFilter"), /sendActionOptions\(policy\)/);
+    assert.match(body("prepareDeleteFilter", "prepareReorderFilters"), /guardFilterList\(filterList, "delete", a\.filterIndex\)/);
+    assert.match(body("prepareReorderFilters", "prepareApplyFilters"), /guardFilterList\(filterList, "reorder"\)/);
+    const apply = body("prepareApplyFilters", "prepareFilterOperation");
     assert.ok(apply.indexOf('guardFilterList(filterList, "apply")') < apply.indexOf("applyFiltersToFolders("));
+    assert.match(body("sendActionOptions", "buildActions"), /policy === "confirm"\s*\?\s*\{ allowSendActions: true, checkSendAction: checkSendActionValue \}\s*:\s*\{ allowSendActions: false \}/);
   });
 
-  it("the preference defaults to on and fails closed", () => {
+  it("the policy is read on every call through the fail-closed resolver", () => {
     assert.match(apiSource, /const PREF_BLOCK_FILTER_FORWARD_REPLY = "extensions\.commonpost-mcp\.blockFilterForwardReply";/);
-    const fn = apiSource.slice(apiSource.indexOf("function isFilterForwardReplyBlocked()"));
-    assert.match(fn.slice(0, 400), /getBoolPref\(PREF_BLOCK_FILTER_FORWARD_REPLY, true\)/);
-    assert.match(fn.slice(0, 600), /return true;/);
+    const fn = apiSource.slice(apiSource.indexOf("function filterSendRulePolicy()"));
+    assert.match(fn.slice(0, 300), /resolveFilterSendRulePolicy\(FILTER_PREFS\)/);
   });
 
   it("is exposed in the experiment schema and the options page", () => {
@@ -578,7 +580,7 @@ describe("forward/reply guard wiring", () => {
     assert.ok(names.includes("getBlockFilterForwardReply") && names.includes("setBlockFilterForwardReply"));
     const html = fs.readFileSync(path.resolve(__dirname, "../extension/options.html"), "utf8");
     const js = fs.readFileSync(path.resolve(__dirname, "../extension/options.js"), "utf8");
-    assert.match(html, /id="blockFilterForwardReply"/);
+    assert.match(html, /id="filterSendRulePolicyBlock"/);
     assert.match(js, /browser\.commonpostMcp\.setBlockFilterForwardReply\(/);
   });
 });
