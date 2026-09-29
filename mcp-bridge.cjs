@@ -126,18 +126,32 @@ function createDiscoveryContext(options = {}) {
     darwinFoldersRoot: options.darwinFoldersRoot || DEFAULT_DARWIN_FOLDERS_ROOT,
     runtimeDir: Object.prototype.hasOwnProperty.call(options, 'runtimeDir')
       ? options.runtimeDir
-      : getRuntimeDir({ env, pathImpl, uid }),
+      : getRuntimeDir({ fsImpl, pathImpl, uid }),
   };
 }
 
-function getRuntimeDir({ env, pathImpl, uid }) {
-  if (env.XDG_RUNTIME_DIR) {
-    return env.XDG_RUNTIME_DIR;
+// The real per-user runtime directory, not read from the environment:
+// XDG_RUNTIME_DIR is exported by whatever process launched the bridge, so a
+// compromised or merely misconfigured caller could point a Flatpak scan (the
+// only consumer of this value) at a directory of its choosing. /run/user/<uid>
+// is the kernel/systemd-managed location for the real uid the bridge runs as,
+// and is trusted only after checking that it is a directory owned by that uid
+// with no group or other access (systemd creates it 0700).
+function getRuntimeDir({ fsImpl, pathImpl, uid }) {
+  if (uid === null || uid === undefined) {
+    return null;
   }
-  if (uid !== null && uid !== undefined) {
-    return pathImpl.join('/run/user', String(uid));
+  const dir = pathImpl.join('/run/user', String(uid));
+  let stat;
+  try {
+    stat = fsImpl.lstatSync(dir);
+  } catch {
+    return null;
   }
-  return null;
+  if (!stat.isDirectory() || stat.uid !== uid || (stat.mode & 0o077) !== 0) {
+    return null;
+  }
+  return dir;
 }
 
 function getDefaultConnectionFile(context) {
@@ -284,6 +298,11 @@ function findSnapConnectionCandidates(context) {
 
   const candidates = [];
   const seenPaths = new Set();
+  // Only set once a process is confirmed to be the real, confined Thunderbird
+  // Snap (not merely a same-named process): the Downloads fallback below is
+  // a guess at the official snap tmpdir helper's location, and is only worth
+  // trying when such a process was actually observed.
+  let sawRealSnapProcess = false;
 
   try {
     const procDirs = fsImpl.readdirSync(procRoot).filter((entry) => /^\d+$/.test(entry));
@@ -299,8 +318,30 @@ function findSnapConnectionCandidates(context) {
           continue;
         }
 
+        // The name alone proves nothing -- any local process can name
+        // itself "thunderbird" and export a TMPDIR of its choosing. Two
+        // checks neither of them can forge without controlling the Snap
+        // itself: the process's own binary must resolve under the Snap's
+        // read-only mount, and snapd's own environment marker must be
+        // present. Both must hold.
+        let exeTarget;
+        try {
+          exeTarget = fsImpl.readlinkSync(pathImpl.join(procRoot, pid, 'exe'));
+        } catch {
+          continue;
+        }
+        if (!/^\/snap\/thunderbird\//.test(exeTarget)) {
+          continue;
+        }
+
         const environ = fsImpl.readFileSync(pathImpl.join(procRoot, pid, 'environ'), 'utf8');
-        const tmpEntry = environ.split('\0').find((entry) => entry.startsWith('TMPDIR='));
+        const environEntries = environ.split('\0');
+        if (!environEntries.includes('SNAP_NAME=thunderbird')) {
+          continue;
+        }
+        sawRealSnapProcess = true;
+
+        const tmpEntry = environEntries.find((entry) => entry.startsWith('TMPDIR='));
         if (!tmpEntry) {
           continue;
         }
@@ -330,28 +371,40 @@ function findSnapConnectionCandidates(context) {
   }
 
   // Match the official snap tmpdir helper as a best-effort fallback when /proc
-  // cannot tell us the runtime TMPDIR.
-  const fallbackPath = pathImpl.join(
-    homeDir,
-    'Downloads',
-    'thunderbird.tmp',
-    COMMONPOST_MCP_SUBDIR,
-    CONNECTION_FILE_BASENAME
-  );
-  let fallbackMtime = Number.NEGATIVE_INFINITY;
-  try {
-    fallbackMtime = fsImpl.statSync(fallbackPath).mtimeMs;
-  } catch {
-    // Missing file is handled later when the candidate is read.
+  // cannot tell us the runtime TMPDIR -- but only once a real, confined
+  // Thunderbird Snap process was actually seen; otherwise this is just a path
+  // guess with nothing behind it, and a decoy at that fixed location should
+  // not be trusted merely because a snap of Thunderbird happens to be
+  // installed (it may not be running at all).
+  if (sawRealSnapProcess) {
+    const fallbackPath = pathImpl.join(
+      homeDir,
+      'Downloads',
+      'thunderbird.tmp',
+      COMMONPOST_MCP_SUBDIR,
+      CONNECTION_FILE_BASENAME
+    );
+    let fallbackMtime = Number.NEGATIVE_INFINITY;
+    try {
+      fallbackMtime = fsImpl.statSync(fallbackPath).mtimeMs;
+    } catch {
+      // Missing file is handled later when the candidate is read.
+    }
+    addUniqueCandidate(
+      candidates,
+      seenPaths,
+      makeCandidate('Snap Downloads fallback', fallbackPath, fallbackMtime)
+    );
   }
-  addUniqueCandidate(
-    candidates,
-    seenPaths,
-    makeCandidate('Snap Downloads fallback', fallbackPath, fallbackMtime)
-  );
 
   return buildScanGroup('Snap detection', pattern, candidates, 'no thunderbird TMPDIR candidates found');
 }
+
+// Flatpak app ids trusted as Thunderbird or Betterbird. A closed list, not a
+// directory listing: any other app id under the runtime directory belongs to
+// an unrelated sandboxed application and its connection.json (if it somehow
+// had one) is never read.
+const FLATPAK_APP_IDS = ['org.mozilla.Thunderbird', 'org.mozilla.ThunderbirdBeta', 'eu.betterbird.Betterbird'];
 
 function findFlatpakConnectionCandidates(context) {
   const { fsImpl, pathImpl, runtimeDir } = context;
@@ -359,7 +412,7 @@ function findFlatpakConnectionCandidates(context) {
   const pattern = pathImpl.join(
     patternBase,
     'app',
-    '*',
+    `{${FLATPAK_APP_IDS.join(',')}}`,
     COMMONPOST_MCP_SUBDIR,
     CONNECTION_FILE_BASENAME
   );
@@ -371,28 +424,14 @@ function findFlatpakConnectionCandidates(context) {
     };
   }
 
-  const appRoot = pathImpl.join(runtimeDir, 'app');
-  let appEntries;
-  try {
-    appEntries = fsImpl.readdirSync(appRoot, { withFileTypes: true });
-  } catch (err) {
-    return {
-      notes: [makeAttempt('Flatpak scan', pattern, normalizeFsError(err))],
-      candidates: [],
-    };
-  }
-
   const candidates = [];
   const seenPaths = new Set();
 
-  for (const appEntry of appEntries) {
-    if (!appEntry.isDirectory()) {
-      continue;
-    }
-
+  for (const appId of FLATPAK_APP_IDS) {
     const candidatePath = pathImpl.join(
-      appRoot,
-      appEntry.name,
+      runtimeDir,
+      'app',
+      appId,
       COMMONPOST_MCP_SUBDIR,
       CONNECTION_FILE_BASENAME
     );
@@ -402,7 +441,7 @@ function findFlatpakConnectionCandidates(context) {
       if (!stat.isFile()) {
         continue;
       }
-      addUniqueCandidate(candidates, seenPaths, makeCandidate('Flatpak runtime scan', candidatePath, stat.mtimeMs));
+      addUniqueCandidate(candidates, seenPaths, makeCandidate(`Flatpak (${appId})`, candidatePath, stat.mtimeMs));
     } catch (err) {
       if (err.code !== 'ENOENT' && err.code !== 'ENOTDIR') {
         continue;
@@ -410,7 +449,7 @@ function findFlatpakConnectionCandidates(context) {
     }
   }
 
-  return buildScanGroup('Flatpak scan', pattern, candidates, 'no matching files');
+  return buildScanGroup('Flatpak scan', pattern, candidates, 'no matching files for a known Thunderbird/Betterbird Flatpak id');
 }
 
 function buildCandidateGroups(options = {}) {
@@ -451,11 +490,53 @@ function buildCandidateGroups(options = {}) {
   return groups;
 }
 
+// Windows has no POSIX modes to fall back on, so the connection file is
+// trusted instead by resolving its real path (junctions followed) and
+// requiring it sit under the current user's %TEMP% (os.tmpdir()). Called
+// twice: once during candidate discovery (checkConnectionFileSafety) and
+// again right before the verified read (readConnectionFileVerified) --
+// a junction along the path can be retargeted between the two, so the
+// containment check is redone on the real path at read time rather than
+// trusted from the earlier, by-then-possibly-stale result. Returns null
+// when the file is acceptable, else the refusal reason.
+function checkWindowsTempContainment(candidatePath, context) {
+  const { fsImpl } = context;
+  // This check compares the file to the CURRENT PROCESS's own %TEMP%
+  // (os.tmpdir()) -- it has no way to know what Thunderbird's %TEMP% was
+  // when it wrote the file. The two agree for a native Windows bridge
+  // talking to a native Windows Thunderbird. They do NOT agree for a
+  // bridge running inside WSL (its Linux /tmp is not the Windows user's
+  // %TEMP%, even when Thunderbird's own file is reached through the
+  // \\wsl.localhost\... or /mnt/c/... path) or inside a container (its
+  // filesystem is not the host's). Those setups see a same-user, 0600 file
+  // rightfully refused here, not a security gap: set
+  // COMMONPOST_MCP_CONNECTION_FILE to the file's real path instead of
+  // relying on discovery in that case.
+  const winPath = (context.pathImpl && context.pathImpl.win32) || path.win32;
+  const realpath = (p) => (fsImpl.realpathSync.native ? fsImpl.realpathSync.native(p) : fsImpl.realpathSync(p));
+  let tempDir;
+  let realFile;
+  let realTemp;
+  try {
+    tempDir = context.osImpl.tmpdir();
+    realFile = realpath(candidatePath);
+    realTemp = realpath(tempDir);
+  } catch (err) {
+    return `refused: cannot resolve the connection file or %TEMP% (${normalizeFsError(err)})`;
+  }
+  const norm = (p) => winPath.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
+  if (!norm(realFile).startsWith(`${norm(realTemp)}\\`)) {
+    return `refused: connection file is not under the current user's %TEMP% (${tempDir})`;
+  }
+  return null;
+}
+
 // connection.json holds the bearer token for the whole mailbox: only trust a
 // regular file (never a symlink) that the current user alone can read.
 //   POSIX: owned by the current uid, no group/other permission bits.
 //   Windows: POSIX modes mean nothing there; the file must resolve (real path,
-//   junctions followed) under the current user's %TEMP% (os.tmpdir()).
+//   junctions followed) under the current user's %TEMP% (os.tmpdir()) -- see
+//   checkWindowsTempContainment, redone again in readConnectionFileVerified.
 // Returns null when the file is acceptable, else the refusal reason.
 function checkConnectionFileSafety(candidatePath, context) {
   const { fsImpl } = context;
@@ -478,23 +559,7 @@ function checkConnectionFileSafety(candidatePath, context) {
     return 'refused: connection file is not a regular file';
   }
   if (context.platform === 'win32') {
-    const winPath = (context.pathImpl && context.pathImpl.win32) || path.win32;
-    const realpath = (p) => (fsImpl.realpathSync.native ? fsImpl.realpathSync.native(p) : fsImpl.realpathSync(p));
-    let tempDir;
-    let realFile;
-    let realTemp;
-    try {
-      tempDir = context.osImpl.tmpdir();
-      realFile = realpath(candidatePath);
-      realTemp = realpath(tempDir);
-    } catch (err) {
-      return `refused: cannot resolve the connection file or %TEMP% (${normalizeFsError(err)})`;
-    }
-    const norm = (p) => winPath.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
-    if (!norm(realFile).startsWith(`${norm(realTemp)}\\`)) {
-      return `refused: connection file is not under the current user's %TEMP% (${tempDir})`;
-    }
-    return null;
+    return checkWindowsTempContainment(candidatePath, context);
   }
   if (context.uid === null || context.uid === undefined) {
     return 'refused: cannot determine the current user id to check the connection file owner';
@@ -546,7 +611,16 @@ function readConnectionFileVerified(candidatePath, context) {
     if (opened.dev !== before.dev || opened.ino !== before.ino) {
       throw new ConnectionFileRefusal('refused: connection file changed while it was being checked');
     }
-    if (context.platform !== 'win32') {
+    if (context.platform === 'win32') {
+      // The %TEMP% containment check in checkConnectionFileSafety ran
+      // earlier, on the discovery path -- a junction along candidatePath
+      // could have been retargeted since. Redo it now, right before the
+      // read, on the real path as it stands at this moment.
+      const unsafe = checkWindowsTempContainment(candidatePath, context);
+      if (unsafe) {
+        throw new ConnectionFileRefusal(unsafe);
+      }
+    } else {
       if (opened.uid !== context.uid) {
         throw new ConnectionFileRefusal(`refused: connection file is owned by uid ${opened.uid}, not the current uid ${context.uid}`);
       }
@@ -714,7 +788,70 @@ const SENSITIVE_ATTACHMENT_PATTERNS = [
   /\/all users\/(application data\/)?microsoft\/(crypto|protect)\//,
   /^[a-z]:\/programdata\/application data\/microsoft\/(crypto|protect)\//,
   /^\/private\/(etc|var\/log|var\/root)\//,
+  // macOS: everything under a user's home Library (Mail, Messages, Cookies,
+  // Keychains, Application Support, ...), not just the keychain subfolder.
+  /^\/users\/[^/]+\/library(\/|$)/,
 ];
+
+// Directory names Windows applications commonly use for per-user local data
+// (see the compatibility-junction comment above), checked as a WHOLE path
+// component so a user-chosen file merely containing these words is not
+// caught. The extension's own saved-attachment folder lives under one of
+// these on Windows (%TEMP% sits under AppData\Local): a path that also has a
+// 'commonpost-mcp' component is exempt from THIS rule only -- every other
+// rule here (dotfiles, sensitive filenames, the patterns above) still
+// applies to it.
+const SENSITIVE_DIR_COMPONENTS = new Set(['appdata', 'application data', 'local settings']);
+
+// Filenames (last path component, case-insensitive) that hold credentials or
+// secrets on their own, wherever they are found.
+const SENSITIVE_FILENAMES = [
+  /^credentials(\.(json|toml))?$/,
+  /^auth\.json$/,
+  /\.ppk$/,
+  /\.jks$/,
+  /\.keystore$/,
+  /\.ovpn$/,
+  /\.keychain(-db)?$/,
+  /^terraform\.tfstate/,
+  /^wallet\.dat$/,
+  /^local state$/,
+  /^web data$/,
+  /^places\.sqlite$/,
+  /^formhistory\.sqlite$/,
+  /^consolehost_history\.txt$/,
+  /^ntuser\.dat$/,
+];
+
+// Checked component by component, not only as a whole string: a dotfile or
+// dot-directory anywhere in the path (.ssh, .config, .env, .git-credentials,
+// .pgpass, .bash_history, .claude, .codex, .gemini, ...) holds configuration
+// or credentials by convention, whatever directory it sits under.
+// Returns null (allowed) or the reason: 'dotfile', 'appdata' (the
+// SENSITIVE_DIR_COMPONENTS rule -- on Windows this is also where %TEMP%
+// lives, so it is worth a more specific error than the others) or
+// 'filename'. hasSensitivePathComponent keeps the plain yes/no callers used
+// before this had a reason.
+function sensitivePathComponentReason(normalized) {
+  const components = normalized.split('/').filter(Boolean);
+  if (components.length === 0) return null;
+  const exemptDirComponents = components.includes('commonpost-mcp');
+  for (const part of components) {
+    if (part.length > 1 && part[0] === '.' && part !== '..') return 'dotfile';
+    if (!exemptDirComponents && SENSITIVE_DIR_COMPONENTS.has(part)) return 'appdata';
+  }
+  return SENSITIVE_FILENAMES.some((re) => re.test(components[components.length - 1])) ? 'filename' : null;
+}
+function hasSensitivePathComponent(normalized) {
+  const components = normalized.split('/').filter(Boolean);
+  if (components.length === 0) return false;
+  const exemptDirComponents = components.includes('commonpost-mcp');
+  for (const part of components) {
+    if (part.length > 1 && part[0] === '.' && part !== '..') return true;
+    if (!exemptDirComponents && SENSITIVE_DIR_COMPONENTS.has(part)) return true;
+  }
+  return SENSITIVE_FILENAMES.some((re) => re.test(components[components.length - 1]));
+}
 
 // UNC and device-namespace paths (\\server\share, \\?\..., \\.\..., \??\...,
 // //server/share) name network locations or raw devices rather than local
@@ -754,7 +891,24 @@ function windowsPathAmbiguity(attachmentPath) {
 
 function matchesSensitivePattern(attachmentPath) {
   const normalized = attachmentPath.replace(/\\/g, '/').toLowerCase();
-  return SENSITIVE_ATTACHMENT_PATTERNS.some(re => re.test(normalized));
+  return SENSITIVE_ATTACHMENT_PATTERNS.some(re => re.test(normalized)) || hasSensitivePathComponent(normalized);
+}
+
+// The generic "blocked" message doesn't say why -- fine for a dotfile or a
+// credential filename, but on Windows the appdata rule also catches every
+// ordinary file under %TEMP% (os.tmpdir(), since it sits under
+// AppData\Local\Temp), which a user can hit just by picking a file from
+// there. Give that one case a message that explains it and says what to do.
+// `displayPath` is what the message names; `reasonPath` (defaults to the
+// same) is what actually matched the rule, when that differs (the resolved
+// or real path, not the one the caller passed in).
+function sensitiveAttachmentMessage(displayPath, reasonPath = displayPath, suffix = '') {
+  const normalized = reasonPath.replace(/\\/g, '/').toLowerCase();
+  if (sensitivePathComponentReason(normalized) === 'appdata') {
+    return 'Attachment path blocked: files under AppData (on Windows this includes %TEMP%) can\'t be attached; '
+      + `copy the file to another folder, for example Documents: ${displayPath}${suffix}`;
+  }
+  return `Sensitive attachment path blocked: ${displayPath}${suffix}`;
 }
 
 // `windows`: apply the Windows-only rules (defaults to the running platform).
@@ -877,7 +1031,8 @@ async function inspectAttachmentPath(filePath) {
   // Check both the supplied path and its lexical normalization before any
   // filesystem access. The latter catches paths such as /tmp/../etc/passwd.
   if (isSensitiveFilePath(filePath, windows) || isSensitiveFilePath(resolved, windows)) {
-    throw new Error(`Sensitive attachment path blocked: ${filePath}`);
+    const reasonPath = matchesSensitivePattern(filePath) ? filePath : resolved;
+    throw new Error(sensitiveAttachmentMessage(filePath, reasonPath));
   }
 
   let stat;
@@ -906,7 +1061,7 @@ async function inspectAttachmentPath(filePath) {
     throw attachmentError('realpath', filePath, e);
   }
   if (matchesSensitivePattern(realPath)) {
-    throw new Error(`Sensitive attachment path blocked: ${filePath} (resolves to ${realPath})`);
+    throw new Error(sensitiveAttachmentMessage(filePath, realPath, ` (resolves to ${realPath})`));
   }
   return { filePath, stat, realPath };
 }
@@ -993,7 +1148,26 @@ async function readAttachmentFromPath(fileInfo) {
 // preflighted before the first read, then files are read sequentially so a
 // caller cannot force many large buffers to be resident at once.
 async function inlineAttachmentPaths(args) {
-  if (!args || !Array.isArray(args.attachments)) return;
+  if (!args || args.attachments === undefined || args.attachments === null) return;
+
+  // Some MCP clients (and the extension's own coerceToolArgs) accept
+  // `attachments` as a JSON-encoded string and parse it into an array
+  // themselves. If the bridge silently ignored that form it would never
+  // read, check or inline those paths -- they would reach the extension
+  // without ever going through any of the checks above.
+  if (typeof args.attachments === 'string') {
+    let parsed;
+    try {
+      parsed = JSON.parse(args.attachments);
+    } catch {
+      throw new Error('attachments must be an array');
+    }
+    args.attachments = parsed;
+  }
+
+  if (!Array.isArray(args.attachments)) {
+    throw new Error('attachments must be an array');
+  }
 
   if (args.attachments.length > MAX_ATTACHMENTS_PER_MESSAGE) {
     throw new Error(
@@ -1531,9 +1705,12 @@ module.exports = {
   findFlatpakConnectionCandidates,
   findMacOsConnectionCandidates,
   findSnapConnectionCandidates,
+  getRuntimeDir,
+  FLATPAK_APP_IDS,
   formatDiscoveryAttempts,
   compactToolResultJsonText,
   checkConnectionFileSafety,
+  checkWindowsTempContainment,
   readConnectionFileVerified,
   MAX_CONNECTION_FILE_BYTES,
   inlineAttachmentPaths,
@@ -1541,6 +1718,8 @@ module.exports = {
   isSensitiveFilePath,
   isUncOrDevicePath,
   windowsPathAmbiguity,
+  sensitivePathComponentReason,
+  sensitiveAttachmentMessage,
   ATTACHMENT_TOOLS,
   isValidAuthToken,
   readConnectionInfo,

@@ -25,12 +25,14 @@ reference release by release. Corrections are welcome.
 | Contacts | `@mozilla.org/addressbook/cardproperty;1`, `VCardUtils` | `addressBooks` and `contacts` APIs (permission `addressBooks`). |
 | Calendar (events, tasks) | `CalEvent`, `CalTodo`, `calUtils`, calendar manager | Thunderbird's Add-ons team announced (2026-05-21) that calendar APIs would be added to the WebExtension surface alongside the Experiment-API changes on Release. As of 2026-09-27 we found no `calendar` (or similarly named) module in the [WebExtension API reference](https://webextension-api.thunderbird.net/en/latest/) and no mention of a new calendar API in the [Thunderbird 153 release notes](https://www.thunderbird.net/en-US/thunderbird/153.0/releasenotes/) (which list only calendar bug fixes). Re-check before assuming it exists. |
 | Message filters | `@mozilla.org/messenger/filter-service;1`, `Services.filters` | No public MailExtension API. |
+| Filter confirmation dialog (`getFilterConfirmation`, the send-safety prompt) | `Services.wm`, `Services.ww` (find or open a window, `commonDialog.xhtml`) | No public MailExtension API for opening a native, user-answered dialog tied to a specific pending action. |
+| Clearing the stable token and network setting when the add-on is removed | `AddonManager.sys.mjs` (`addAddonListener`/`onUninstalling`) | None: a standard MailExtension has no hook that runs while it is being removed. |
 | Options page | Standard `options_ui` page; talks to the Experiment for the items above | Fully standard once the items above move. |
 
 ## Where the code is
 
-- The Experiment schema is `extension/mcp_server/schema.json` (17 functions: server start and status, token,
-  account and tool access, send-safety and network settings).
+- The Experiment schema is `extension/mcp_server/schema.json` (19 functions: server start and status, token,
+  account and tool access, send-safety and network settings, filter confirmation).
 - All privileged code is in `extension/mcp_server/api.js` and `extension/httpd.sys.mjs`; the background page and the
   options page only call `browser.commonpostMcp.*`.
 - Nothing is downloaded or evaluated at run time: the XPI contains the only code that runs, unminified.
