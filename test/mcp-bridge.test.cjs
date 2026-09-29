@@ -11,6 +11,8 @@ const {
   compactToolResultJsonText,
   clearConnectionCache,
   discoverConnectionInfo,
+  FLATPAK_APP_IDS,
+  getRuntimeDir,
   inlineAttachmentPaths,
   isSensitiveFilePath,
   isValidAuthToken,
@@ -23,6 +25,19 @@ function makeTempRoot() {
 
 function cleanupTempRoot(root) {
   fs.rmSync(root, { recursive: true, force: true });
+}
+
+// Attachment tests need a directory outside the AppData deny-list (which
+// os.tmpdir() sits under on Windows, since %TEMP% is AppData\Local\Temp)
+// and with no dot-prefixed component, so a path written under it is an
+// ordinary, allowed attachment path rather than one the deny-list itself
+// would refuse before the test's own assertion runs. Kept in sync with the
+// same helper in commonpost-bridge.test.cjs.
+function makeAttachmentTestRoot() {
+  if (process.platform === 'win32') {
+    return fs.mkdtempSync(path.join(os.homedir(), 'cp-test-'));
+  }
+  return makeTempRoot();
 }
 
 function writeConnectionFile(filePath, { port, token, pid = process.pid }) {
@@ -180,7 +195,7 @@ describe('Bridge attachment path policy', () => {
   let root;
 
   beforeEach(() => {
-    root = makeTempRoot();
+    root = makeAttachmentTestRoot();
   });
 
   afterEach(() => {
@@ -299,7 +314,54 @@ describe('Bridge attachment path policy', () => {
       inline,
     ]);
   });
+
+  it('parses attachments given as a JSON-encoded string, the same way coerceToolArgs does on the extension side', async () => {
+    const filePath = path.join(root, 'report.txt');
+    fs.writeFileSync(filePath, 'hello', 'utf8');
+    const args = { attachments: JSON.stringify([filePath]) };
+
+    await inlineAttachmentPaths(args);
+
+    assert.deepEqual(args.attachments, [{
+      name: 'report.txt',
+      contentType: 'text/plain',
+      base64: Buffer.from('hello').toString('base64'),
+    }]);
+  });
+
+  it('a JSON string still goes through every check: a sensitive path inside it is refused, not silently forwarded', async () => {
+    const sensitivePath = path.join(root, '.ssh', 'id_rsa');
+    const args = { attachments: JSON.stringify([sensitivePath]) };
+
+    await assert.rejects(inlineAttachmentPaths(args), /Sensitive attachment path blocked/);
+  });
+
+  it('refuses anything that is not an array and not array-shaped JSON, instead of passing it through unchecked', async () => {
+    for (const bad of ['{"not":"an array"}', 'not json at all', '42', 'null', JSON.stringify({ 0: 'x' })]) {
+      await assert.rejects(inlineAttachmentPaths({ attachments: bad }), /attachments must be an array/, bad);
+    }
+    await assert.rejects(inlineAttachmentPaths({ attachments: { 0: 'x' } }), /attachments must be an array/);
+    await assert.rejects(inlineAttachmentPaths({ attachments: 42 }), /attachments must be an array/);
+  });
+
+  it('a missing attachments field is still a no-op', async () => {
+    const args = {};
+    await inlineAttachmentPaths(args);
+    assert.deepEqual(args, {});
+    const argsNull = { attachments: null };
+    await inlineAttachmentPaths(argsNull);
+    assert.equal(argsNull.attachments, null);
+  });
 });
+
+// makeTestOptions defaults to platform: 'linux' with the real fs (uid/mode
+// checks in checkConnectionFileSafety run for real). On POSIX that's exactly
+// what it looks like; on a real Windows filesystem chmod 0600 comes back as
+// mode 666 and the owning uid as 0 regardless of what was asked for, so a
+// test that expects such a file to be ACCEPTED fails there for a reason that
+// has nothing to do with the code under test. Skipped on win32, not changed:
+// running the actual POSIX logic on a real POSIX-like fs is still the point.
+const WIN32_REAL_POSIX_FS_SKIP = { skip: process.platform === 'win32' };
 
 describe('Bridge discovery', () => {
   let root;
@@ -314,7 +376,7 @@ describe('Bridge discovery', () => {
     cleanupTempRoot(root);
   });
 
-  it('env var override takes priority', () => {
+  it('env var override takes priority', WIN32_REAL_POSIX_FS_SKIP, () => {
     const options = makeTestOptions(root, {
       env: { COMMONPOST_MCP_CONNECTION_FILE: path.join(root, 'env', 'connection.json') },
     });
@@ -336,26 +398,28 @@ describe('Bridge discovery', () => {
     });
   });
 
-  it('snap detection works from a mocked /proc tree', () => {
+  // A real Snap process: cmdline names it "thunderbird", its own binary
+  // resolves under the Snap's read-only mount, and snapd's own SNAP_NAME
+  // marker is in its environment. writeSnapProc() below is reused across
+  // tests that vary one of these three facts to confirm each one is checked.
+  function writeSnapProc(procRoot, pid, { exe = '/snap/thunderbird/123/usr/lib/thunderbird/thunderbird', snapName = 'SNAP_NAME=thunderbird', tmpDir } = {}) {
+    const procDir = path.join(procRoot, pid);
+    fs.mkdirSync(procDir, { recursive: true });
+    fs.writeFileSync(path.join(procDir, 'cmdline'), 'thunderbird\0--some-flag', 'utf8');
+    fs.symlinkSync(exe, path.join(procDir, 'exe'));
+    const envEntries = [snapName, tmpDir ? `TMPDIR=${tmpDir}` : null].filter(Boolean);
+    fs.writeFileSync(path.join(procDir, 'environ'), envEntries.join('\0') + '\0', 'utf8');
+  }
+
+  it('snap detection works from a mocked /proc tree', WIN32_REAL_POSIX_FS_SKIP, () => {
     const options = makeTestOptions(root, {
       platform: 'linux',
       procRoot: path.join(root, 'proc'),
     });
 
     fs.mkdirSync(path.join(options.homeDir, 'snap', 'thunderbird'), { recursive: true });
-    fs.mkdirSync(path.join(options.procRoot, '4242'), { recursive: true });
-    fs.writeFileSync(
-      path.join(options.procRoot, '4242', 'cmdline'),
-      'snap/thunderbird\0--some-flag',
-      'utf8'
-    );
-
     const snapTmpDir = path.join(root, 'snap-tmp');
-    fs.writeFileSync(
-      path.join(options.procRoot, '4242', 'environ'),
-      `TMPDIR=${snapTmpDir}\0HOME=${options.homeDir}\0`,
-      'utf8'
-    );
+    writeSnapProc(options.procRoot, '4242', { tmpDir: snapTmpDir });
 
     writeConnectionFile(path.join(snapTmpDir, 'commonpost-mcp', 'connection.json'), {
       port: 20003,
@@ -365,6 +429,77 @@ describe('Bridge discovery', () => {
     const connInfo = readConnectionInfo(options);
     assert.equal(connInfo.port, 20003);
     assert.equal(connInfo.token, 'snap-token');
+  });
+
+  it('snap detection refuses a real-looking name whose own binary is not under /snap/thunderbird/', () => {
+    const options = makeTestOptions(root, {
+      platform: 'linux',
+      procRoot: path.join(root, 'proc'),
+    });
+
+    fs.mkdirSync(path.join(options.homeDir, 'snap', 'thunderbird'), { recursive: true });
+    // Named "thunderbird" and even exports SNAP_NAME itself (both forgeable
+    // by any local process); only the exe target cannot be forged without
+    // controlling the Snap.
+    const fakeTmpDir = path.join(root, 'fake-tmp');
+    writeSnapProc(options.procRoot, '5150', { exe: '/home/user/lookalike/thunderbird', tmpDir: fakeTmpDir });
+    writeConnectionFile(path.join(fakeTmpDir, 'commonpost-mcp', 'connection.json'), {
+      port: 29998,
+      token: 'fake-exe-token',
+    });
+
+    assert.equal(readConnectionInfo(options), null);
+  });
+
+  it('snap detection refuses a process under the real exe path without the SNAP_NAME marker', () => {
+    const options = makeTestOptions(root, {
+      platform: 'linux',
+      procRoot: path.join(root, 'proc'),
+    });
+
+    fs.mkdirSync(path.join(options.homeDir, 'snap', 'thunderbird'), { recursive: true });
+    const noMarkerTmpDir = path.join(root, 'no-marker-tmp');
+    writeSnapProc(options.procRoot, '5151', { snapName: 'HOME=/home/user', tmpDir: noMarkerTmpDir });
+    writeConnectionFile(path.join(noMarkerTmpDir, 'commonpost-mcp', 'connection.json'), {
+      port: 29997,
+      token: 'no-marker-token',
+    });
+
+    assert.equal(readConnectionInfo(options), null);
+  });
+
+  it('the Downloads fallback is only tried once a real Snap process was seen', WIN32_REAL_POSIX_FS_SKIP, () => {
+    const withFallback = path.join(root, 'downloads-with-process');
+    fs.mkdirSync(withFallback, { recursive: true });
+    const optionsWith = makeTestOptions(withFallback, {
+      platform: 'linux',
+      procRoot: path.join(withFallback, 'proc'),
+    });
+    fs.mkdirSync(path.join(optionsWith.homeDir, 'snap', 'thunderbird'), { recursive: true });
+    writeSnapProc(optionsWith.procRoot, '6001', { tmpDir: path.join(withFallback, 'unrelated-tmp') });
+    writeConnectionFile(
+      path.join(optionsWith.homeDir, 'Downloads', 'thunderbird.tmp', 'commonpost-mcp', 'connection.json'),
+      { port: 20009, token: 'downloads-fallback-token' }
+    );
+    assert.equal(readConnectionInfo(optionsWith).token, 'downloads-fallback-token');
+    clearConnectionCache();
+
+    const withoutFallback = path.join(root, 'downloads-without-process');
+    fs.mkdirSync(withoutFallback, { recursive: true });
+    const optionsWithout = makeTestOptions(withoutFallback, {
+      platform: 'linux',
+      procRoot: path.join(withoutFallback, 'proc'),
+    });
+    fs.mkdirSync(path.join(optionsWithout.homeDir, 'snap', 'thunderbird'), { recursive: true });
+    fs.mkdirSync(optionsWithout.procRoot, { recursive: true });
+    // Snap install detected, but no matching process: the same fixed
+    // Downloads path must NOT be trusted on the strength of the snap
+    // being installed alone.
+    writeConnectionFile(
+      path.join(optionsWithout.homeDir, 'Downloads', 'thunderbird.tmp', 'commonpost-mcp', 'connection.json'),
+      { port: 20010, token: 'unearned-fallback-token' }
+    );
+    assert.equal(readConnectionInfo(optionsWithout), null);
   });
 
   it('snap detection ignores decoy processes with thunderbird only as a file arg', () => {
@@ -402,7 +537,7 @@ describe('Bridge discovery', () => {
     assert.equal(connInfo, null);
   });
 
-  it('flatpak scan finds a runtime connection file', () => {
+  it('flatpak scan finds a runtime connection file', WIN32_REAL_POSIX_FS_SKIP, () => {
     const options = makeTestOptions(root, {
       platform: 'linux',
       runtimeDir: path.join(root, 'runtime'),
@@ -425,7 +560,32 @@ describe('Bridge discovery', () => {
     assert.equal(connInfo.token, 'flatpak-token');
   });
 
-  it('macOS scan finds current uid files and ignores other owners', () => {
+  it('flatpak scan ignores an app id that is not Thunderbird or Betterbird', () => {
+    const options = makeTestOptions(root, {
+      platform: 'linux',
+      runtimeDir: path.join(root, 'runtime'),
+    });
+
+    assert.ok(!FLATPAK_APP_IDS.includes('org.example.NotThunderbird'));
+    writeConnectionFile(
+      path.join(options.runtimeDir, 'app', 'org.example.NotThunderbird', 'commonpost-mcp', 'connection.json'),
+      { port: 29996, token: 'unrelated-flatpak-token' }
+    );
+
+    assert.equal(readConnectionInfo(options), null);
+  });
+
+  it('flatpak scan does not need to list the runtime directory: only the known app ids are probed', () => {
+    const options = makeTestOptions(root, {
+      platform: 'linux',
+      runtimeDir: path.join(root, 'runtime', 'does-not-exist'),
+    });
+    // No app/ directory at all under runtimeDir: a readdir-based scan would
+    // fail outright; probing each known id directly just finds nothing.
+    assert.equal(readConnectionInfo(options), null);
+  });
+
+  it('macOS scan finds current uid files and ignores other owners', WIN32_REAL_POSIX_FS_SKIP, () => {
     // Pin a synthetic uid rather than process.getuid(). On Windows the real
     // fs.statSync reports uid=0 for every file regardless of the caller, so we
     // can't rely on stat.uid matching process.getuid() — both files are stat-
@@ -466,7 +626,7 @@ describe('Bridge discovery', () => {
     assert.equal(connInfo.token, 'owned-token');
   });
 
-  it('re-resolves candidates on the next cache miss after a startup race', () => {
+  it('re-resolves candidates on the next cache miss after a startup race', WIN32_REAL_POSIX_FS_SKIP, () => {
     const options = makeTestOptions(root, {
       platform: 'linux',
       runtimeDir: path.join(root, 'runtime'),
@@ -477,7 +637,7 @@ describe('Bridge discovery', () => {
     const delayedConnFile = path.join(
       options.runtimeDir,
       'app',
-      'org.mozilla.thunderbird',
+      'org.mozilla.Thunderbird',
       'commonpost-mcp',
       'connection.json'
     );
@@ -512,7 +672,7 @@ describe('Bridge discovery', () => {
     assert.doesNotMatch(message, /about:config|\bextensions\.[a-z]/i);
   });
 
-  it('discoverConnectionInfo collects every valid candidate, not just the winner', () => {
+  it('discoverConnectionInfo collects every valid candidate, not just the winner', WIN32_REAL_POSIX_FS_SKIP, () => {
     const options = makeTestOptions(root, {
       platform: 'linux',
       runtimeDir: path.join(root, 'runtime'),
@@ -526,7 +686,7 @@ describe('Bridge discovery', () => {
 
     // Flatpak runtime file (later group, also valid)
     writeConnectionFile(
-      path.join(options.runtimeDir, 'app', 'org.mozilla.thunderbird', 'commonpost-mcp', 'connection.json'),
+      path.join(options.runtimeDir, 'app', 'org.mozilla.Thunderbird', 'commonpost-mcp', 'connection.json'),
       { port: 20101, token: 'flatpak' }
     );
 
@@ -536,7 +696,7 @@ describe('Bridge discovery', () => {
     assert.ok(result.candidates.some(c => c.data.token === 'flatpak'));
   });
 
-  it('advanceToNextCandidate walks the cached list, then returns null when exhausted', () => {
+  it('advanceToNextCandidate walks the cached list, then returns null when exhausted', WIN32_REAL_POSIX_FS_SKIP, () => {
     const options = makeTestOptions(root, {
       platform: 'linux',
       runtimeDir: path.join(root, 'runtime'),
@@ -547,7 +707,7 @@ describe('Bridge discovery', () => {
       token: 'first',
     });
     writeConnectionFile(
-      path.join(options.runtimeDir, 'app', 'org.mozilla.thunderbird', 'commonpost-mcp', 'connection.json'),
+      path.join(options.runtimeDir, 'app', 'org.mozilla.Thunderbird', 'commonpost-mcp', 'connection.json'),
       { port: 20201, token: 'second' }
     );
 
@@ -567,7 +727,7 @@ describe('Bridge discovery', () => {
     assert.equal(advanceToNextCandidate(), null);
   });
 
-  it('hard-pinned env override does not collect autodiscovery candidates as fallbacks', () => {
+  it('hard-pinned env override does not collect autodiscovery candidates as fallbacks', WIN32_REAL_POSIX_FS_SKIP, () => {
     const options = makeTestOptions(root, {
       platform: 'linux',
       runtimeDir: path.join(root, 'runtime'),
@@ -586,5 +746,66 @@ describe('Bridge discovery', () => {
     const result = discoverConnectionInfo(options);
     assert.equal(result.candidates.length, 1);
     assert.equal(result.candidates[0].data.token, 'pinned');
+  });
+
+  describe('getRuntimeDir', () => {
+    function makeRuntimeFsWithOverride(dirPath, override) {
+      return new Proxy(fs, {
+        get(target, prop) {
+          if (prop === 'lstatSync') {
+            return (p, ...args) => {
+              if (p === dirPath) {
+                if (override instanceof Error) throw override;
+                return override;
+              }
+              return target.lstatSync(p, ...args);
+            };
+          }
+          return target[prop];
+        },
+      });
+    }
+    const dirStat = (over = {}) => ({ isDirectory: () => true, uid: 1000, mode: 0o40700, ...over });
+
+    it('never returns an externally supplied XDG_RUNTIME_DIR value, even if one is passed alongside', () => {
+      const missing = new Error('ENOENT');
+      missing.code = 'ENOENT';
+      const fsImpl = makeRuntimeFsWithOverride('/run/user/1000', missing);
+      // An extra, unused `env` key is harmless: getRuntimeDir never reads it.
+      const result = getRuntimeDir({ fsImpl, pathImpl: path, uid: 1000, env: { XDG_RUNTIME_DIR: '/tmp/elsewhere' } });
+      assert.notEqual(result, '/tmp/elsewhere');
+      assert.equal(result, null);
+    });
+
+    it('accepts a directory owned by the uid with no group/other access', WIN32_REAL_POSIX_FS_SKIP, () => {
+      const fsImpl = makeRuntimeFsWithOverride('/run/user/1000', dirStat());
+      assert.equal(getRuntimeDir({ fsImpl, pathImpl: path, uid: 1000 }), '/run/user/1000');
+    });
+
+    it('refuses a directory owned by another uid', () => {
+      const fsImpl = makeRuntimeFsWithOverride('/run/user/1000', dirStat({ uid: 1001 }));
+      assert.equal(getRuntimeDir({ fsImpl, pathImpl: path, uid: 1000 }), null);
+    });
+
+    for (const mode of [0o40750, 0o40704, 0o40777]) {
+      it(`refuses group or other access (mode ${mode.toString(8)})`, () => {
+        const fsImpl = makeRuntimeFsWithOverride('/run/user/1000', dirStat({ mode }));
+        assert.equal(getRuntimeDir({ fsImpl, pathImpl: path, uid: 1000 }), null);
+      });
+    }
+
+    it('refuses a file where a directory is expected', () => {
+      const fsImpl = makeRuntimeFsWithOverride('/run/user/1000', dirStat({ isDirectory: () => false }));
+      assert.equal(getRuntimeDir({ fsImpl, pathImpl: path, uid: 1000 }), null);
+    });
+
+    it('refuses when the directory does not exist, and when there is no uid', () => {
+      const missing = new Error('ENOENT');
+      missing.code = 'ENOENT';
+      const fsImpl = makeRuntimeFsWithOverride('/run/user/1000', missing);
+      assert.equal(getRuntimeDir({ fsImpl, pathImpl: path, uid: 1000 }), null);
+      assert.equal(getRuntimeDir({ fsImpl: fs, pathImpl: path, uid: null }), null);
+      assert.equal(getRuntimeDir({ fsImpl: fs, pathImpl: path, uid: undefined }), null);
+    });
   });
 });

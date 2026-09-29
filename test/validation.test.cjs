@@ -50,6 +50,7 @@ function loadProductionAttachmentValidation(overrides = {}) {
     'this.buildTools = buildTools;',
     'this.validateAgainstSchema = validateAgainstSchema;',
     'this.filePathsToAttachDescs = filePathsToAttachDescs;',
+    'this.findSymlinkAncestor = findSymlinkAncestor;',
     'this.attachmentLimits = { MAX_TOTAL_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, MAX_BASE64_SIZE };',
   ].join('\n'), sandbox);
   return sandbox;
@@ -577,6 +578,31 @@ describe('Validation: folder management', () => {
   });
 });
 
+// A chain of fake ancestor directories, root-first, e.g. ['/', '/home',
+// '/home/user'] for a file at /home/user/report.txt. Each entry is either a
+// plain path string (an ordinary directory) or { path, symlink: true } (or
+// symlinkError/parentError). Mirrors nsIFile: the root is its own parent.
+function makeAncestorChain(entries) {
+  const nodes = entries.map((entry) => (typeof entry === 'string' ? { path: entry, symlink: false } : entry));
+  function makeNode(index) {
+    const entry = nodes[index];
+    return {
+      get path() {
+        return entry.path;
+      },
+      isSymlink() {
+        if (entry.symlinkError) throw entry.symlinkError;
+        return !!entry.symlink;
+      },
+      get parent() {
+        if (entry.parentError) throw entry.parentError;
+        return index === 0 ? makeNode(0) : makeNode(index - 1);
+      },
+    };
+  }
+  return makeNode(nodes.length - 1);
+}
+
 function makeMockLocalFile(attachmentPath, options = {}) {
   const {
     exists = true,
@@ -588,6 +614,9 @@ function makeMockLocalFile(attachmentPath, options = {}) {
     typeError = null,
     size = 1,
     sizeError = null,
+    // Ancestor directories, root-first, NOT including the file itself; see
+    // makeAncestorChain. Defaults to a single, ordinary root directory.
+    ancestors = ['/'],
   } = options;
   return {
     path: attachmentPath,
@@ -602,6 +631,9 @@ function makeMockLocalFile(attachmentPath, options = {}) {
     normalize() {
       if (normalizeError) throw normalizeError;
       this.path = normalizedPath;
+    },
+    get parent() {
+      return makeAncestorChain(ancestors);
     },
     isFile() {
       if (typeError) throw typeError;
@@ -891,6 +923,84 @@ describe('Validation: attachment sending', () => {
       '/tmp/symlink.bin (symlinked path blocked)',
       '/tmp/symlink-check.bin (symlink check failed)',
     ]);
+  });
+
+  it('findSymlinkAncestor walks up from the parent to the root and reports the first symlinked one', () => {
+    assert.equal(
+      productionAttachmentValidation.findSymlinkAncestor(makeMockLocalFile('/tmp/a/b/c.txt', { ancestors: ['/', '/tmp', '/tmp/a'] })),
+      null
+    );
+    assert.equal(
+      productionAttachmentValidation.findSymlinkAncestor(makeMockLocalFile('/tmp/a/b/c.txt', {
+        ancestors: ['/', { path: '/tmp', symlink: true }, '/tmp/a'],
+      })),
+      '/tmp'
+    );
+    // The immediate parent itself, not just a distant ancestor.
+    assert.equal(
+      productionAttachmentValidation.findSymlinkAncestor(makeMockLocalFile('/tmp/a/b/c.txt', {
+        ancestors: ['/', '/tmp', { path: '/tmp/a', symlink: true }],
+      })),
+      '/tmp/a'
+    );
+    // A single-root chain (file directly under the root) still works.
+    assert.equal(
+      productionAttachmentValidation.findSymlinkAncestor(makeMockLocalFile('/c.txt', { ancestors: ['/'] })),
+      null
+    );
+  });
+
+  it('findSymlinkAncestor fails closed when a directory cannot be checked', () => {
+    assert.throws(
+      () => productionAttachmentValidation.findSymlinkAncestor(makeMockLocalFile('/tmp/a/c.txt', {
+        ancestors: ['/', { path: '/tmp', symlinkError: new Error('access denied') }],
+      })),
+      /parent directory check failed/
+    );
+  });
+
+  it('production runtime refuses a file reached through a symlinked or reparse-point ancestor directory', () => {
+    const entries = ['/allowed/junction/secret.txt', '/allowed/plain/report.txt'];
+    const files = new Map([
+      [entries[0], makeMockLocalFile(entries[0], { ancestors: ['/', '/allowed', { path: '/allowed/junction', symlink: true }] })],
+      [entries[1], makeMockLocalFile(entries[1], { ancestors: ['/', '/allowed', '/allowed/plain'] })],
+    ]);
+
+    const { result } = convertProductionFileAttachments(entries, files);
+
+    assert.equal(result.descs.length, 1);
+    assert.equal(result.descs[0].name, 'report.txt');
+    assert.deepEqual(Array.from(result.failed), [
+      '/allowed/junction/secret.txt (a parent directory is a symlink or reparse point: /allowed/junction)',
+    ]);
+  });
+
+  it('production runtime refuses an entirely innocuous path reached through a linked directory (Windows junction naming)', () => {
+    // docs, lien, notes.txt: nothing lexical here matches the deny-list; the
+    // refusal comes only from `lien` being a symlink or reparse point,
+    // whatever it resolves to (the extension does not need to resolve it,
+    // unlike the bridge -- any linked ancestor is refused outright).
+    const entries = ['/allowed/docs/lien/notes.txt'];
+    const files = new Map([
+      [entries[0], makeMockLocalFile(entries[0], {
+        ancestors: ['/', '/allowed', '/allowed/docs', { path: '/allowed/docs/lien', symlink: true }],
+      })],
+    ]);
+
+    const { result } = convertProductionFileAttachments(entries, files);
+
+    assert.equal(result.descs.length, 0);
+    assert.deepEqual(Array.from(result.failed), [
+      '/allowed/docs/lien/notes.txt (a parent directory is a symlink or reparse point: /allowed/docs/lien)',
+    ]);
+  });
+
+  it('checks ancestors only after the lexical and normalized deny-list, before the file-type check', () => {
+    const src = apiSource.slice(apiSource.indexOf('function filePathsToAttachDescs'));
+    const iSensitive = src.indexOf('isSensitiveFilePath(file.path)');
+    const iAncestor = src.indexOf('findSymlinkAncestor(file)');
+    const iIsFile = src.indexOf('file.isFile()');
+    assert.ok(iSensitive > 0 && iAncestor > iSensitive && iIsFile > iAncestor, 'expected order: sensitive path, then ancestors, then file type');
   });
 });
 
@@ -1423,8 +1533,13 @@ describe('isSensitiveFilePath: benign paths pass through', () => {
     assert.equal(isSensitiveFilePath('/home/user/medical/pemphigus.txt'), false);
     // "etc" inside a path that doesn't start at /etc/
     assert.equal(isSensitiveFilePath('/home/user/etc-notes.md'), false);
-    // Profile-root names require a full path-component boundary.
-    assert.equal(isSensitiveFilePath('/home/user/.thunderbird-notes/report.txt'), false);
+    // Not a look-alike escape any more: every dotfile/dot-directory
+    // component is blocked outright (hasSensitivePathComponent), a
+    // deliberately broader rule than the old profile-name-only check.
+    assert.equal(isSensitiveFilePath('/home/user/.thunderbird-notes/report.txt'), true);
+    // A non-dotfile look-alike of "thunderbird" still passes: only the
+    // profile-directory patterns and the generic dotfile rule apply.
+    assert.equal(isSensitiveFilePath('/home/user/thunderbird-notes/report.txt'), false);
   });
 
   it('returns false on non-string / empty input rather than throwing', () => {

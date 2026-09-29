@@ -66,6 +66,6 @@ describe("wiring", () => {
     const warning = html.slice(html.indexOf('id="listenAllWarning"'), html.indexOf('id="listenAllWarning"') + 700);
     assert.match(warning, /clear\s+text/);
     assert.match(warning, /Host header/);
-    assert.match(html, /Removing the add-on clears it/);
+    assert.match(html, /stored in your Thunderbird profile\s+while the add-on is enabled/);
   });
 });

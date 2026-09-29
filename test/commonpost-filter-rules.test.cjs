@@ -461,7 +461,7 @@ function forwardRule(name = "fwd", { enabled = true } = {}) {
   const f = makeFilter(name);
   f.enabled = enabled;
   api.buildTerms(f, [{ attrib: "subject", op: "contains", value: "x" }]);
-  api.buildRuleActions(f, [{ type: "forward", value: "attacker@example.com" }], resolveFolder, { allowSendActions: true });
+  api.buildRuleActions(f, [{ type: "forward", value: "target@example.com" }], resolveFolder, { allowSendActions: true });
   return f;
 }
 
@@ -469,7 +469,7 @@ describe("forward/reply guard on created actions", () => {
   it("refuses forward and reply by default, on the resolved type", () => {
     for (const type of ["forward", "reply"]) {
       assert.throws(() => api.buildRuleActions(makeFilter(), [{ type, value: "a@example.com" }], resolveFolder),
-        /sends mail automatically; blocked by the "Block filter forward\/reply" setting/);
+        /sends mail automatically; blocked by "Filter rules that send mail: Always block"/);
     }
   });
 

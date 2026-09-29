@@ -116,4 +116,12 @@ describe("wiring", () => {
     assert.match(optionsJs, /if \(allChecked && accountRestrictionInvalid && !openAllConfirmed\)/);
     assert.ok(optionsJs.indexOf("checked.length === 0") < optionsJs.indexOf("const allowedIds = allChecked ? [] : checked;"));
   });
+
+  it("Collected Addresses (dirType 101) is not defaulted to local-allowed under a restriction", () => {
+    const i = apiSource.indexOf("function getAccessibleAddressBooks()");
+    assert.ok(i > 0);
+    const fn = apiSource.slice(i, apiSource.indexOf("\n            }\n", i));
+    assert.match(fn, /remote: dirType !== 2,/);
+    assert.doesNotMatch(fn, /dirType !== 101/);
+  });
 });

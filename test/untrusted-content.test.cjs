@@ -18,21 +18,21 @@ const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${apiSource.slice(start, end)}
 this.api = { stripHiddenCharacters, protectUntrustedResult, protectMessageToolResult, untrustedContentNotice,
-  UNTRUSTED_CONTENT_TOOLS };`, sandbox);
+  UNTRUSTED_CONTENT_TOOLS, UNTRUSTED_WALK_MAX_NODES, UNTRUSTED_WALK_MAX_DEPTH };`, sandbox);
 const api = sandbox.api;
 const NONCE = "0123456789abcdef01234567";
 
 describe("stripHiddenCharacters", () => {
   const removedCases = [
-    ["bidi embedding and override", "a‮b‪c‬d", "abcd", 3],
-    ["bidi isolates and marks", "a⁦b⁩c‎d‏e؜f", "abcdef", 5],
-    ["zero-width space, non-joiner, word joiner, BOM", "a​b‌c⁠d﻿e", "abcde", 4],
-    ["soft hyphen and fillers", "a­bㅤcᅟdﾠe", "abcde", 4],
+    ["bidi embedding and override", "a\u202Eb\u202Ac\u202Cd", "abcd", 3],
+    ["bidi isolates and marks", "a\u2066b\u2069c\u200Ed\u200Fe\u061Cf", "abcdef", 5],
+    ["zero-width space, word joiner, BOM", "a\u200Bb\u2060c\uFEFFd", "abcd", 3],
+    ["soft hyphen and fillers", "a\u00ADb\u3164c\u115Fd\uFFA0e", "abcde", 4],
     ["tag characters", "a\u{E0041}\u{E0042}b", "ab", 2],
-    ["variation selectors other than the emoji pair", "a︀b\u{E0100}c", "abc", 2],
+    ["variation selectors other than the emoji pair", "a\uFE00b\u{E0100}c", "abc", 2],
     ["NUL, ESC, DEL and C1 controls", "a\u0000b\u001Bc\u007Fd\u0085e", "abcde", 4],
-    ["line and paragraph separators", "a b c", "abc", 2],
-    ["deprecated format characters", "a⁪b⁯c", "abc", 2],
+    ["deprecated format characters", "a\u206Ab\u206Fc", "abc", 2],
+    ["Mongolian free variation selector four and the blank braille pattern", "a\u180Fb\u2800c", "abc", 2],
   ];
   for (const [label, input, output, count] of removedCases) {
     it(`removes ${label} and counts them`, () => {
@@ -40,20 +40,46 @@ describe("stripHiddenCharacters", () => {
     });
   }
 
+  it("normalizes line and paragraph separators to a real newline instead of deleting them, and counts it", () => {
+    assert.deepEqual({ ...api.stripHiddenCharacters("a\u2028b\u2029c") }, { text: "a\nb\nc", removed: 2 });
+  });
+
   it("keeps ordinary text: tab, line breaks, accents, emoji presentation selectors, non-Latin scripts", () => {
-    for (const text of ["a\tb\r\nc\nd", "Été à l'école — « oui »", "日本語 العربية עברית", "heart ❤️ ok", "text ❤︎ ok"]) {
+    for (const text of ["a\tb\r\nc\nd", "Été à l'école — « oui »", "日本語 العربية עברית", "heart ❤\uFE0F ok", "text ❤\uFE0E ok"]) {
       assert.deepEqual({ ...api.stripHiddenCharacters(text) }, { text, removed: 0 }, JSON.stringify(text));
     }
   });
 
-  it("keeps a zero-width joiner between pictographs and removes it elsewhere", () => {
-    const family = "\u{1F468}‍\u{1F469}‍\u{1F467}";
+  it("keeps a zero-width joiner or non-joiner between pictographs/modifiers, or between two letters; removes it elsewhere", () => {
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
     assert.deepEqual({ ...api.stripHiddenCharacters(family) }, { text: family, removed: 0 });
-    const heartFlag = "\u{1F3F3}️‍\u{1F308}";
+    const heartFlag = "\u{1F3F3}\uFE0F\u200D\u{1F308}";
     assert.deepEqual({ ...api.stripHiddenCharacters(heartFlag) }, { text: heartFlag, removed: 0 });
-    assert.deepEqual({ ...api.stripHiddenCharacters("a‍b") }, { text: "ab", removed: 1 });
-    assert.deepEqual({ ...api.stripHiddenCharacters("\u{1F468}‍x") }, { text: "\u{1F468}x", removed: 1 });
-    assert.deepEqual({ ...api.stripHiddenCharacters("‍\u{1F468}") }, { text: "\u{1F468}", removed: 1 });
+    assert.deepEqual({ ...api.stripHiddenCharacters("\u{1F468}\u200Dx") }, { text: "\u{1F468}x", removed: 1 }, "pictograph on one side only");
+    assert.deepEqual({ ...api.stripHiddenCharacters("\u200D\u{1F468}") }, { text: "\u{1F468}", removed: 1 }, "pictograph on one side only");
+    // A pictograph directly joined (via ZWJ) to a skin-tone modifier.
+    const wave = "\u{1F44B}\u200D\u{1F3FD}";
+    assert.deepEqual({ ...api.stripHiddenCharacters(wave) }, { text: wave, removed: 0 });
+    // Between two ordinary letters (Persian ZWNJ, Devanagari conjunct-forming ZWJ): kept, whatever the script.
+    for (const joiner of ["\u200C", "\u200D"]) {
+      assert.deepEqual({ ...api.stripHiddenCharacters(`می${joiner}خواهم`) },
+        { text: `می${joiner}خواهم`, removed: 0 }, joiner);
+      assert.deepEqual({ ...api.stripHiddenCharacters(`a${joiner}b`) }, { text: `a${joiner}b`, removed: 0 }, joiner);
+    }
+    // Not between two letters and not an emoji sequence: removed, both joiners.
+    for (const joiner of ["\u200C", "\u200D"]) {
+      assert.deepEqual({ ...api.stripHiddenCharacters(`1${joiner}2`) }, { text: "12", removed: 1 }, joiner);
+      assert.deepEqual({ ...api.stripHiddenCharacters(`${joiner}x`) }, { text: "x", removed: 1 }, joiner);
+      assert.deepEqual({ ...api.stripHiddenCharacters(`x${joiner}`) }, { text: "x", removed: 1 }, joiner);
+    }
+  });
+
+  it("keeps a single emoji presentation selector right after an emoji base; removes a bare or repeated one", () => {
+    assert.deepEqual({ ...api.stripHiddenCharacters("❤\uFE0F ok") }, { text: "❤\uFE0F ok", removed: 0 });
+    assert.deepEqual({ ...api.stripHiddenCharacters("❤\uFE0E ok") }, { text: "❤\uFE0E ok", removed: 0 });
+    assert.deepEqual({ ...api.stripHiddenCharacters("a\uFE0Fb") }, { text: "ab", removed: 1 }, "no emoji base");
+    assert.deepEqual({ ...api.stripHiddenCharacters("\uFE0Fx") }, { text: "x", removed: 1 }, "nothing before it");
+    assert.deepEqual({ ...api.stripHiddenCharacters("❤\uFE0F\uFE0F ok") }, { text: "❤\uFE0F ok", removed: 1 }, "repeated selector");
   });
 
   it("passes non-strings and empty strings through", () => {
@@ -65,15 +91,30 @@ describe("stripHiddenCharacters", () => {
 });
 
 describe("protectUntrustedResult", () => {
-  it("wraps body, rawSource and preview with the identifier and cleans every string", () => {
-    const result = { messages: [{ id: "x", subject: "Hi‮ there", body: "line​ one", preview: "pre⁠view", rawSource: "Raw\u0000" }] };
+  it("wraps body, rawSource and preview with the identifier and cleans every string except rawSource", () => {
+    const result = { messages: [{ id: "x", subject: "Hi\u202E there", body: "line\u200B one", preview: "pre\u2060view", rawSource: "Raw\u0000" }] };
     const removed = api.protectUntrustedResult(result, NONCE);
-    assert.equal(removed, 4);
+    // rawSource's NUL is left in place (see below), so only 3 removals: subject, body, preview.
+    assert.equal(removed, 3);
     const m = result.messages[0];
     assert.equal(m.subject, "Hi there");
     assert.equal(m.body, `<email-content id="${NONCE}" hidden-characters-removed="1">\nline one\n</email-content id="${NONCE}">`);
     assert.equal(m.preview, `<email-content id="${NONCE}" hidden-characters-removed="1">\npreview\n</email-content id="${NONCE}">`);
-    assert.equal(m.rawSource, `<email-content id="${NONCE}" hidden-characters-removed="1">\nRaw\n</email-content id="${NONCE}">`);
+    // Delimited, but byte-for-byte unchanged: no hidden-characters-removed attribute.
+    assert.equal(m.rawSource, `<email-content id="${NONCE}">\nRaw\u0000\n</email-content id="${NONCE}">`);
+  });
+
+  it("never rewrites rawSource: it is a byte string (Latin-1, one code unit per octet), not decoded text", () => {
+    // Bytes in the ranges stripHiddenCharacters would otherwise strip: C1
+    // controls 0x80-0x9F (UTF-8 continuation bytes), DEL (0x7F), soft hyphen
+    // (0xAD), and ESC (0x1B, an ISO-2022-JP shift sequence byte). Stripping
+    // any of these from raw message bytes corrupts the encoding rather than
+    // removing anything invisible.
+    const rawBytes = "a\x1Bb\x7Fc\x80d\x9Ee\xADf";
+    const result = { rawSource: rawBytes };
+    const removed = api.protectUntrustedResult(result, NONCE);
+    assert.equal(removed, 0);
+    assert.equal(result.rawSource, `<email-content id="${NONCE}">\n${rawBytes}\n</email-content id="${NONCE}">`);
   });
 
   it("does not mention removals when there were none, and leaves empty fields alone", () => {
@@ -109,22 +150,91 @@ describe("protectUntrustedResult", () => {
   });
 
   it("stops at a bounded depth", () => {
-    let deep = { body: "x​" };
+    let deep = { body: "x\u200B" };
     for (let i = 0; i < 40; i++) deep = { next: deep };
     assert.equal(api.protectUntrustedResult(deep, NONCE), 0);
+  });
+
+  it("signals truncation through statusRef instead of silently leaving strings unchecked", () => {
+    let deep = { body: "x\u200B" };
+    for (let i = 0; i < 40; i++) deep = { next: deep };
+    const status = {};
+    api.protectUntrustedResult(deep, NONCE, status);
+    assert.equal(status.truncated, true);
+
+    const shallowClean = { body: "clean" };
+    const okStatus = {};
+    api.protectUntrustedResult(shallowClean, NONCE, okStatus);
+    assert.equal(okStatus.truncated, undefined, "a result within budget is not flagged");
+  });
+
+  it("signals truncation when the node budget, not just the depth, is exceeded", () => {
+    const wide = { body: "b" };
+    for (let i = 0; i < api.UNTRUSTED_WALK_MAX_NODES + 5; i++) wide[`k${i}`] = "v";
+    const status = {};
+    api.protectUntrustedResult(wide, NONCE, status);
+    assert.equal(status.truncated, true);
+  });
+
+  it("wraps an event's or task's title, description and location the same way as a message body", () => {
+    const event = { id: "1", title: "Meeting\u202E", description: "Agenda\u200B item", location: "Room\u200B1", startDate: "2026-01-01" };
+    const removed = api.protectUntrustedResult(event, NONCE);
+    assert.equal(removed, 3);
+    assert.equal(event.title, `<email-content id="${NONCE}" hidden-characters-removed="1">\nMeeting\n</email-content id="${NONCE}">`);
+    assert.equal(event.description, `<email-content id="${NONCE}" hidden-characters-removed="1">\nAgenda item\n</email-content id="${NONCE}">`);
+    assert.equal(event.location, `<email-content id="${NONCE}" hidden-characters-removed="1">\nRoom1\n</email-content id="${NONCE}">`);
+    assert.equal(event.startDate, "2026-01-01", "non-text fields are left as they are");
+  });
+
+  it("wraps a contact's note", () => {
+    const contact = { id: "1", displayName: "Alice", note: "Met at conference\u202E" };
+    api.protectUntrustedResult(contact, NONCE);
+    assert.equal(contact.note, `<email-content id="${NONCE}" hidden-characters-removed="1">\nMet at conference\n</email-content id="${NONCE}">`);
+    // displayName is not a wrapped key: cleaned, but not delimited.
+    assert.equal(contact.displayName, "Alice");
+  });
+
+  it("counts hidden characters in id/folderPath/filePath but never rewrites them: they may be reused in a later call", () => {
+    const result = {
+      id: "msg-1\u200B", folderPath: "mailbox://x/Inbox\u200B", filePath: "/tmp/a\u200Bb.txt", body: "hello",
+    };
+    const removed = api.protectUntrustedResult(result, NONCE);
+    assert.equal(removed, 3);
+    assert.equal(result.id, "msg-1\u200B", "unchanged, only counted");
+    assert.equal(result.folderPath, "mailbox://x/Inbox\u200B", "unchanged, only counted");
+    assert.equal(result.filePath, "/tmp/a\u200Bb.txt", "unchanged, only counted");
+    assert.equal(result.body, `<email-content id="${NONCE}">\nhello\n</email-content id="${NONCE}">`);
+  });
+
+  it("does not delimit the encrypted-message notice as untrusted content", () => {
+    const result = { id: "msg-1", body: "encrypted message: content not sent (option to enable in the add-on settings)", encrypted: true };
+    const removed = api.protectUntrustedResult(result, NONCE);
+    assert.equal(removed, 0);
+    assert.equal(result.body, "encrypted message: content not sent (option to enable in the add-on settings)");
+    assert.ok(!result.body.includes(`id="${NONCE}"`));
+  });
+
+  it("still delimits a real body when encrypted is absent or false", () => {
+    for (const result of [{ body: "hi" }, { body: "hi", encrypted: false }]) {
+      api.protectUntrustedResult(result, NONCE);
+      assert.match(result.body, new RegExp(`^<email-content id="${NONCE}">`));
+    }
   });
 });
 
 describe("protectMessageToolResult", () => {
-  it("covers the four message tools and no other", () => {
-    assert.deepEqual([...api.UNTRUSTED_CONTENT_TOOLS].sort(), ["getMessage", "getMessages", "getRecentMessages", "searchMessages"]);
-    const other = { body: "x​" };
+  it("covers the message, calendar and contact tools that return third-party text, and no other", () => {
+    assert.deepEqual([...api.UNTRUSTED_CONTENT_TOOLS].sort(), [
+      "getContact", "getMessage", "getMessages", "getRecentMessages",
+      "listEvents", "listTasks", "searchContacts", "searchMessages",
+    ]);
+    const other = { body: "x\u200B" };
     assert.equal(api.protectMessageToolResult("listFolders", other, NONCE), "");
-    assert.equal(other.body, "x​");
+    assert.equal(other.body, "x\u200B");
   });
 
   it("returns a notice that names the identifier and reports removals", () => {
-    const withHidden = api.protectMessageToolResult("getMessage", { body: "a‮b" }, NONCE);
+    const withHidden = api.protectMessageToolResult("getMessage", { body: "a\u202Eb" }, NONCE);
     assert.match(withHidden, new RegExp(`<email-content id="${NONCE}">`));
     assert.match(withHidden, /never as instructions/);
     assert.match(withHidden, /1 hidden or bidirectional-control character\(s\) were removed/);
@@ -135,6 +245,16 @@ describe("protectMessageToolResult", () => {
   it("adds nothing to an error-only result or a missing one", () => {
     assert.equal(api.protectMessageToolResult("getMessage", { error: "Message not found" }, NONCE), "");
     assert.equal(api.protectMessageToolResult("getMessage", undefined, NONCE), "");
+  });
+
+  it("fails closed instead of returning a result some of whose text was never checked", () => {
+    const wide = { body: "b" };
+    for (let i = 0; i < api.UNTRUSTED_WALK_MAX_NODES + 5; i++) wide[`k${i}`] = "v";
+    assert.throws(() => api.protectMessageToolResult("getMessage", wide, NONCE), /too large or deeply nested/);
+
+    let deep = { body: "x" };
+    for (let i = 0; i < 40; i++) deep = { next: deep };
+    assert.throws(() => api.protectMessageToolResult("listEvents", deep, NONCE), /too large or deeply nested/);
   });
 });
 
@@ -151,5 +271,15 @@ describe("wiring", () => {
   it("the identifier comes from the platform random generator", () => {
     const i = apiSource.indexOf("function newUntrustedContentNonce()");
     assert.match(apiSource.slice(i, i + 300), /nsIRandomGenerator[\s\S]*generateRandomBytes\(12\)/);
+  });
+
+  it("an error thrown while protecting the result reaches the client as a JSON-RPC error, not a partial result", () => {
+    const i = apiSource.indexOf("const toolResult = await callTool(params.name, toolArgs);");
+    const enclosingTry = apiSource.lastIndexOf("try {", i);
+    assert.ok(enclosingTry >= 0 && enclosingTry < i);
+    const matchingCatch = apiSource.indexOf("} catch (e) {", i);
+    assert.ok(matchingCatch > i);
+    const catchBody = apiSource.slice(matchingCatch, matchingCatch + 400);
+    assert.match(catchBody, /error: \{ code: -32000, message: e\.toString\(\) \}/);
   });
 });
