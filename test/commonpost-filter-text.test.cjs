@@ -253,21 +253,23 @@ describe("planFilterUpdate validates what it is given", () => {
 });
 
 describe("wiring in the tools", () => {
+  // The tools prepare (validate + build) in prepare<Tool>(a,
+  // policy), then write; a confirmed change is prepared again before writing.
   const body = (name) => {
-    const start = apiSource.indexOf(`function ${name}(accountId`);
+    const start = apiSource.indexOf(`function ${name}(a, policy)`);
     assert.ok(start > 0, name);
     return apiSource.slice(start, apiSource.indexOf("\n            }\n", start));
   };
   it("createFilter validates the name and type before creating the filter", () => {
-    const src = body("createFilter");
-    assert.ok(src.indexOf("validateFilterName(name)") > 0);
-    assert.ok(src.indexOf("validateFilterName(name)") < src.indexOf("filterList.createFilter(name)"));
-    assert.ok(src.indexOf("validateFilterType(type)") < src.indexOf("filterList.createFilter(name)"));
+    const src = body("prepareCreateFilter");
+    assert.ok(src.indexOf("validateFilterName(a.name)") > 0);
+    assert.ok(src.indexOf("validateFilterName(a.name)") < src.indexOf("filterList.createFilter(a.name)"));
+    assert.ok(src.indexOf("validateFilterType(a.type)") < src.indexOf("filterList.createFilter(a.name)"));
   });
   it("updateFilter validates the name and type before touching the filter", () => {
-    const src = body("updateFilter");
-    assert.ok(src.indexOf("validateFilterName(name)") > 0);
-    assert.ok(src.indexOf("validateFilterName(name)") < src.indexOf("planFilterUpdate("));
-    assert.ok(src.indexOf("validateFilterType(type)") < src.indexOf("planFilterUpdate("));
+    const src = body("prepareUpdateFilter");
+    assert.ok(src.indexOf("validateFilterName(a.name)") > 0);
+    assert.ok(src.indexOf("validateFilterName(a.name)") < src.indexOf("planFilterUpdate("));
+    assert.ok(src.indexOf("validateFilterType(a.type)") < src.indexOf("planFilterUpdate("));
   });
 });
