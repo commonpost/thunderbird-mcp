@@ -96,8 +96,11 @@ resolve_version() {
     esr) key="THUNDERBIRD_ESR" ;;&
     esr-next) key="THUNDERBIRD_ESR_NEXT" ;;&
     stable|beta|esr|esr-next)
-      curl -fsSL https://product-details.mozilla.org/1.0/thunderbird_versions.json \
-        | TB_VERSIONS_KEY="$key" node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s)[process.env.TB_VERSIONS_KEY]))" ;;
+      local versions_json
+      versions_json="$(curl -fsSL https://product-details.mozilla.org/1.0/thunderbird_versions.json)" \
+        || die "failed to download the Thunderbird version list"
+      TB_VERSIONS_JSON="$versions_json" TB_VERSIONS_KEY="$key" \
+        node -e "process.stdout.write(String(JSON.parse(process.env.TB_VERSIONS_JSON)[process.env.TB_VERSIONS_KEY] || ''))" ;;
     *) die "unsupported TB_CHANNEL: $TB_CHANNEL" ;;
   esac
 }
