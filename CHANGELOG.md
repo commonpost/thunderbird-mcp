@@ -42,7 +42,8 @@ project is kept in this repository.
   oldest first. Headers are read first and then joined by References (union-find), so the result does not depend
   on folder order. A `Re:` message without threading headers joins by subject only the earlier message whose
   author (or, for own mail, a recipient) it involves (`linkedBy: "subject"`), so the same mail sent separately to
-  several companies and repeated notifications stay apart. See `docs/thunderbird-internals.md`.
+  several companies and repeated notifications stay apart. It reads at most 10,000 headers (the search limit) and
+  sets `incomplete: true` when it stops there. See `docs/thunderbird-internals.md`.
 - `searchMessages` `groupBy: "sender" | "thread"`: one row per sender or conversation, with `count` and `latestId`
   (the newest message that is not a draft).
 - `format: "table"` (`{ columns, rows }`) for `searchMessages`, `getRecentMessages`, `searchContacts`,
@@ -51,17 +52,33 @@ project is kept in this repository.
   an empty full-text query. The description says that only English words are stemmed.
 - `getMessage` / `getMessages`: `maxBodyChars` (default 20000 / 4000) and `bodyOffset` page long bodies and raw
   sources (`bodyTruncated`, `nextBodyOffset`, `bodyTotalChars`).
-- `rawSource` is decoded as text (strict UTF-8, else the charset declared in `Content-Type`, else Thunderbird's
-  charset detector) and names it in `rawCharset`. Before, 8-bit sources came back as Latin-1 mojibake.
+- `rawSource` is decoded as text and names the charset in `rawCharset`: strict UTF-8, else the charset of the
+  top-level `Content-Type`, then those of the parts, else Thunderbird's charset detector. Encodings that cannot
+  decode a whole message are refused, declared or detected: the "replacement" labels (`iso-2022-kr`, `hz-gb-2312`,
+  ...), UTF-16 and `x-user-defined`. When parts declare different charsets, `rawMixedCharsets` lists them and a
+  `warning` says that some parts may be garbled. `rawEncoding: "base64"` returns the exact bytes instead, for
+  8bit/binary parts; its pages are multiples of 4 characters, so each one decodes on its own. Before, 8-bit sources
+  came back as Latin-1 mojibake.
 - `searchContacts` also matches the organization; empty fields are omitted.
 
-### Changed (search and reading, output format)
-- `searchMessages` and `getRecentMessages` always return `{ messages, totalMatches, offset, limit, hasMore }`
-  (default 20 rows, max 200). Before, they returned a plain array unless `offset` was passed.
-- Rows are compact: `folder` (display name), `threadId`, empty fields and `flagged: false` are omitted, `preview`
-  is cut to 120 characters; `subject` shows `Re:` as Thunderbird displays it.
-- Trash and Junk are skipped unless `includeTrash: true` or an explicit `folderPath`.
-- `getRecentMessages` runs the same search code: all folders except Trash/Junk (was Inboxes only), newest first.
+### Breaking: `searchMessages` and `getRecentMessages` output
+The envelope and the rows change for every client. `format: "legacy"` returns the 0.8 envelope and rows for the
+0.9 releases and will then be removed; it keeps the new folder default (pass `includeTrash: true` for the old one)
+and the decoded `ccList`, and cannot be combined with `groupBy`.
+
+| | 0.8 | 0.9 |
+|---|---|---|
+| Result | a plain array; `{ messages, totalMatches, offset, limit, hasMore }` only when `offset` is passed | always `{ messages, totalMatches, offset, limit, hasMore }`, plus `incomplete: true` when the scan stopped at 10,000 matches |
+| Default rows | 50 (max 200) | 20 (max 200) |
+| Folders | all folders, Trash and Junk included | Trash and Junk skipped unless `includeTrash: true` or an explicit `folderPath` |
+| `threadId`, `folder` | present | omitted (`threadId` is folder-local; `folderPath` identifies the folder) |
+| Empty fields, `flagged: false` | present (`""`, `[]`, `false`) | omitted |
+| `preview` | the whole stored preview | the first 120 characters, then `...` |
+| `subject` of a reply | without `Re:`, as stored in the database | with `Re:`, as Thunderbird displays it |
+| `ccList` | as stored (may hold MIME encoded-words) | decoded |
+
+`getRecentMessages` now runs the search code with a date filter, so it also asks each IMAP folder to update
+(`updateFolder`) before reading it, as `searchMessages` already did.
 
 
 ### Fixed

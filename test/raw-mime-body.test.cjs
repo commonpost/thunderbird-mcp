@@ -381,4 +381,34 @@ describe("decodeRawSource (R1)", () => {
     assert.deepEqual(seen, [unlabeled]);
     assert.deepEqual(plain(decodeRawSource(raw("x-unknown", cp1251("я")), () => { throw new Error("no"); })), { text: raw("x-unknown", cp1251("я")), charset: "iso-8859-1" });
   });
+
+  it("refuses replacement, UTF-16 and x-user-defined encodings, declared or detected", () => {
+    for (const label of ["iso-2022-kr", "hz-gb-2312", "csiso2022kr", "iso-2022-cn", "utf-16", "utf-16le", "UTF-16BE", "x-user-defined"]) {
+      const source = raw(label, cp1251(TEXT));
+      assert.deepEqual(plain(decodeRawSource(source)), { text: source, charset: "iso-8859-1" }, label);
+      assert.equal(decodeRawSource(source, () => "windows-1251").charset, "windows-1251", label);
+    }
+    const unlabeled = `Subject: t\n\n${cp1251(TEXT)}\n`;
+    for (const detected of ["UTF-16LE", "UTF-16BE", "replacement", "x-user-defined"]) {
+      assert.equal(decodeRawSource(unlabeled, () => detected).charset, "iso-8859-1", detected);
+    }
+  });
+
+  it("prefers the top-level Content-Type over the parts", () => {
+    const koiTop = `Content-Type: text/plain; charset=koi8-r\n\n${koi8r(TEXT)}\n\nContent-Type: text/plain; charset=windows-1251\n`;
+    const out = decodeRawSource(koiTop);
+    assert.equal(out.charset, "koi8-r");
+    assert.ok(out.text.includes(TEXT));
+    const nested = `Content-Type: multipart/mixed; boundary=b\n\n--b\nContent-Type: text/plain; charset=koi8-r\n\n${koi8r(TEXT)}\n--b--\n`;
+    assert.equal(decodeRawSource(nested).charset, "koi8-r");
+  });
+
+  it("lists the declared encodings when parts mix charsets", () => {
+    const mixed = `Content-Type: multipart/mixed; boundary=b\n\n--b\nContent-Type: text/plain; charset=cp1251\n\n${cp1251(TEXT)}\n--b\nContent-Type: text/plain; charset=koi8-r\n\n${koi8r(TEXT)}\n--b--\n`;
+    const out = plain(decodeRawSource(mixed));
+    assert.equal(out.charset, "windows-1251");
+    assert.deepEqual(out.mixedCharsets, ["windows-1251", "koi8-r"]);
+    const aliases = `Content-Type: multipart/mixed; boundary=b\n\n--b\nContent-Type: text/plain; charset=cp1251\n\n${cp1251("я")}\n--b\nContent-Type: text/plain; charset=windows-1251\n\nx\n--b\nContent-Type: text/plain; charset=us-ascii\n\nx\n--b--\n`;
+    assert.equal(plain(decodeRawSource(aliases)).mixedCharsets, undefined);
+  });
 });
