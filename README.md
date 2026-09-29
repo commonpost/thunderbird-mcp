@@ -107,11 +107,11 @@ The Thunderbird extension embeds a local HTTP server with session-scoped auth to
 | Tool | Description |
 |------|-------------|
 | `sendMail` | Compose a new email -- opens a review window; direct sending requires explicitly disabling the `skipReview` safety block |
-| `replyToMessage` | Reply with quoted original and proper threading, from the identity Thunderbird would pick -- `skipReview` needs explicit `to` and `from` and is subject to the same safety block |
-| `forwardMessage` | Forward with all original attachments preserved, from the identity Thunderbird would pick -- `skipReview` needs an explicit `from` and is subject to the same safety block |
-| `saveDraft` | Save a new message to the Drafts folder without opening a window or sending |
+| `replyToMessage` | Reply with quoted original and proper threading, from the identity Thunderbird would pick. `mode`: `window` (default) opens a review window, `draft` saves a draft with the recipients Thunderbird's Reply / Reply All computes, `send` (or `skipReview: true`) sends directly -- it needs explicit `to` and `from` and is subject to the same safety block |
+| `forwardMessage` | Forward with all original attachments preserved, from the identity Thunderbird would pick. `mode` as for `replyToMessage`; `to` is optional except with `send`, which needs explicit `to` and `from` |
+| `saveDraft` | Save a new message as a draft, as Thunderbird's compose window saves it -- returns its `messageId` and `folderPath` |
 
-All compose tools open a window for you to review and edit before sending by default. The **Block `skipReview`** preference is on by default, so `skipReview: true` is rejected until you explicitly disable the preference; only then can it send directly. Attachments can be file paths or inline base64 objects.
+All compose tools open a window for you to review and edit before sending by default. The **Block `skipReview`** preference is on by default, so `skipReview: true` (and `mode: "send"`) is rejected until you explicitly disable the preference; only then can it send directly. `mode: "draft"` only saves a draft, so the preference does not block it. Attachments can be file paths or inline base64 objects.
 
 A direct send can take a while: the bridge waits up to 150 s for Thunderbird (30 s for every other call). Your MCP client may also have its own time limit for a tool call; if it is shorter than 150 s, the client can give up while Thunderbird goes on sending, so check the Sent folder and the Outbox before retrying to avoid sending the message twice.
 
@@ -168,7 +168,7 @@ OpenPGP and S/MIME messages are not decrypted for the assistant by default: `get
 
 Account and tool access are configured via the extension settings page (Tools > Add-ons > Commonpost MCP for Thunderbird > Options). Access control is not MCP-exposed -- only the user can change it.
 
-The same settings page has a "Send Safety" section. **Block `skipReview`** is enabled by default and rejects `skipReview: true` for `sendMail`, `replyToMessage`, `forwardMessage`, `createEvent`, and `createTask`; their review window or dialog still opens normally. `skipReview` is honored only after you explicitly disable this preference.
+The same settings page has a "Send Safety" section. **Block `skipReview`** is enabled by default and rejects `skipReview: true` for `sendMail`, `replyToMessage`, `forwardMessage`, `createEvent`, and `createTask` (and `mode: "send"` for `replyToMessage` and `forwardMessage`); their review window or dialog still opens normally. `skipReview` is honored only after you explicitly disable this preference.
 
 ---
 

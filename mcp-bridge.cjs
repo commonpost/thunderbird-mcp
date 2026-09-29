@@ -21,10 +21,11 @@ const UNREACHABLE_HINT =
   '(https://github.com/commonpost/thunderbird-mcp#if-thunderbird-disables-experiment-add-ons-on-the-release-channel).';
 const REQUEST_TIMEOUT = 30000;
 // Tools that can send mail over SMTP straight from Thunderbird, without a
-// compose window, when called with a truthy skipReview (the extension tests
-// it for truthiness, so the bridge does too). Thunderbird itself gives up on a
-// direct send after 120 s, so the bridge must wait longer than that or it
-// reports a failure for a message that may still go out.
+// compose window, when called with mode "send" or a truthy skipReview (the
+// extension tests it for truthiness, so the bridge does too; next to another
+// mode it still counts, the longer wait is the safe side). Thunderbird itself
+// gives up on a direct send after 120 s, so the bridge must wait longer than
+// that or it reports a failure for a message that may still go out.
 const DIRECT_SEND_TOOLS = new Set(['sendMail', 'replyToMessage', 'forwardMessage']);
 const DIRECT_SEND_TIMEOUT = 150000;
 const CONNECTION_RETRY_DELAY_MS = 1000;
@@ -1594,9 +1595,10 @@ function toolErrorResponse(id, message) {
 
 // Whether a JSON-RPC message is a tools/call that may send mail directly.
 function isDirectSendCall(message) {
+  const args = message?.params?.arguments;
   return message?.method === 'tools/call'
     && DIRECT_SEND_TOOLS.has(message.params?.name)
-    && Boolean(message.params?.arguments?.skipReview);
+    && (Boolean(args?.skipReview) || args?.mode === 'send');
 }
 
 function requestOptionsFor(message) {

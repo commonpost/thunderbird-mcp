@@ -16,6 +16,19 @@ project is kept in this repository.
 
 ### Added
 
+- `replyToMessage` and `forwardMessage` take `mode`: `window` (the default, the review window as before), `draft` or
+  `send`. `mode: "send"` is a direct send, the same as `skipReview: true`, with the same rules: explicit `to` and
+  `from`, subject to **Block `skipReview`**, and the bridge waits up to 150 s for it. `mode: "draft"` saves the
+  reply or forward to the identity's Drafts folder without opening a window and returns its `messageId` and
+  `folderPath`. It sends nothing, so **Block `skipReview`** does not block it. By @mazixs in #27.
+  - A reply draft gets the recipients Thunderbird's Reply / Reply All computes (`nsMsgCompose.cpp`, ported to a
+    pure function): Reply-To and Mail-Reply-To, Mail-Followup-To for Reply All, the author instead of a mailing list
+    that rewrites Reply-To, the recipients of your own message from the identity that sent it, your own addresses
+    dropped, and the identity's automatic Cc / Bcc and Reply-To. A `to` or `cc` from the caller replaces the
+    computed one.
+  - The draft stores the state Thunderbird's own reply or forward draft stores (`origURIs`, `queuedDisposition`), so
+    the original is marked as replied or forwarded when the draft is sent, not when it is saved.
+  - The body is quoted by the tool, as for a direct send.
 - The bridge tells the user, once per connection, when its version and the add-on's differ. After the first `tools/list` or `tools/call` that Thunderbird answers, it sends the add-on an `initialize` on the same validated connection (1.5 s at most, answer capped at 64 KB) and, if the two `X.Y.Z` versions differ, appends one text item to the result of the next `tools/call` and writes one line to stderr. It never does so for a direct send (`skipReview`), says nothing when a version is missing, `0.0.0` or malformed, or when the server is not `commonpost-mcp`, and only digits from the add-on reach the text. The version is used for this notice only. Known limit: a bridge 0.11 or older with an add-on 0.12 or newer does not warn (the old bridge has no such code); both sides are covered once they are 0.12 or newer.
 - A `.mcpb` bundle for Claude Desktop (macOS and Windows), attached to each release from the next one on: `commonpost-mcp-v<version>.mcpb`, with a provenance attestation. It contains only the stdio bridge (`mcp-bridge.cjs`, `LICENSE`, `THIRD-PARTY.md`, an icon and a `manifest.json` in `mcpb/`, manifest_version 0.3), needs Node.js 22 or later and the add-on of the same version, has no settings and is not signed. It is built by `scripts/build-mcpb-reproducible.cjs` like the XPI (committed files only, sorted stored entries, fixed date: the same bytes on any Node version), and the release job rebuilds it from the tag and refuses any difference. The zip writer moved to `scripts/zip-stored.cjs` (the XPI is byte for byte unchanged). The Version sync check and the tag check now cover `mcpb/manifest.json` too.
 - The bridge ignores `COMMONPOST_MCP_CONNECTION_FILE` when its value is exactly an unexpanded `${user_config.…}` placeholder (a client passing an empty optional field through as text) and runs the automatic discovery, instead of pinning itself to a path that cannot exist.
@@ -31,6 +44,17 @@ project is kept in this repository.
   accounts, as `findIdentity` already did. Fetching the original message for that choice gives up after 20 s: a
   compose window or a draft then opens without it, and a direct send returns an error instead of hanging. Encrypted
   messages stay withheld from a direct reply or forward while the "read encrypted messages" option is off.
+- `saveDraft` saves through `nsIMsgCompose`, as Thunderbird's compose window does, and returns the new draft's
+  `messageId` and `folderPath`. If `nsIMsgCompose` cannot be used, it falls back to the previous `nsIMsgSend` path.
+  By @mazixs in #27.
+- `forwardMessage` no longer requires `to`, except with `mode: "send"` (or `skipReview`). By @mazixs in #27.
+- A reply's References header is the original's References plus its Message-ID, as Thunderbird's reply builds it
+  (it used to be the original's Message-ID only); Thunderbird trims a chain longer than the header limit when it
+  writes the message, as for its own reply. A reply to a message without Message-ID gets no References. In-Reply-To
+  is no longer set by the tool: Thunderbird derives it from the last References entry. By @mazixs in #27.
+- `mcp-bridge.cjs`: a `replyToMessage` or `forwardMessage` call with `mode: "send"` is a direct send like
+  `skipReview: true`, so it waits up to 150 s and gets the same "outcome unknown" error on a timeout. By @mazixs in
+  #27.
 - README: a "Quick install" section at the top, in five steps, with the Claude Code command (Windows example included) and a bold reminder that the bridge is not updated with the extension. It also corrects the old advice to replace the bridge's `package.json` too: the release ships only `mcp-bridge.cjs`, which needs nothing else.
 - README: a new "Other MCP clients" section with the configuration file, location and format of Claude Desktop, VS Code, Cursor, OpenAI Codex CLI and Gemini CLI, checked against each client's documentation, and when and how to set `COMMONPOST_MCP_CONNECTION_FILE` (only if the bridge cannot find the connection file). The bridge is not tied to any client, and `mcpServers` is not the key every client uses.
 - RELEASING: the verification step now says that a rebase merge rewrites the commit date, so the reproducible hash built from the pull request branch cannot match the release; compare with a rebuild from a checkout of the tag.
