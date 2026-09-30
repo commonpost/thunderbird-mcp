@@ -133,8 +133,7 @@ sender can write), and applied the review of #17.
   without rewriting them, like `id` and `folderPath`: the assistant passes them back to `getMessage`.
 - Argument coercion: enum values match case-insensitively, object parameters passed as JSON strings are parsed.
   Calendar and contact tool descriptions say which ids they take and what they return.
-- README lists `saveDraft` and `listCategories`, which were missing from the tool tables, and counts 41 tools
-  (`getFilterConfirmation` was added in 0.10.0).
+- README lists `saveDraft` and `listCategories`, which were missing from the tool tables, and gives the tool count (40, after `getFilterConfirmation` was folded into `listFilters`).
 - A test fails on any regular expression literal that strips a trailing run (`/x+$/`, `/^<+|>+$/g`), which backtracks
   quadratically (CodeQL `js/polynomial-redos`); the remaining ones use a linear `stripTrailing` / `stripLeading`.
 
