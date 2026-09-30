@@ -11368,7 +11368,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   msgComposeParams.origMsgHdr = msgHdr;
                 } catch {}
 
-                const mimeMsg = await loadMimeMessage(msgHdr, !!skipReview);
+                const mimeMsg = await loadMimeMessage(msgHdr, composeMode === "send");
                 const identityResult = setReplyIdentity(msgComposeParams, from, msgHdr, compType, mimeMsg);
                 if (identityResult && identityResult.error) {
                   return identityResult;
@@ -11440,9 +11440,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     // The original is marked as replied when the draft is sent
                     const result = await saveComposeFieldsAsDraft(composeFields, msgComposeParams.identity, fileDescs, replyUseHtml, msgURI, compType);
                     if (result.success) {
-                      let msg = "Reply draft saved";
-                      if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
-                      result.message = msg;
+                      result.message = "Reply draft saved";
                       Object.assign(result, composeAddresses(composeFields), { subject: composeFields.subject });
                     }
                     return result;
@@ -11539,7 +11537,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   msgComposeParams.origMsgHdr = msgHdr;
                 } catch {}
 
-                const mimeMsg = await loadMimeMessage(msgHdr, !!skipReview);
+                const mimeMsg = await loadMimeMessage(msgHdr, composeMode === "send");
                 const identityResult = setReplyIdentity(msgComposeParams, from, msgHdr, compType, mimeMsg);
                 if (identityResult && identityResult.error) {
                   return identityResult;
@@ -11619,7 +11617,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     const result = await saveComposeFieldsAsDraft(composeFields, msgComposeParams.identity, allDescs, fwdUseHtml, msgURI, compType);
                     if (result.success) {
                       let msg = `Forward draft saved with ${allDescs.length} attachment(s)`;
-                      if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
                       result.message = msg;
                       Object.assign(result, composeAddresses(composeFields), { subject: composeFields.subject });
                     }

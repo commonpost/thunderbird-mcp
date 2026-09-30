@@ -103,8 +103,8 @@ describe("wiring", () => {
     assert.match(apiSource.slice(i, i + 1400), /body: ENCRYPTED_CONTENT_NOTICE[\s\S]*encrypted: true[\s\S]*attachments: \[\]/);
   });
 
-  it("the direct reply and forward paths stop before quoting an encrypted message", () => {
-    const hits = [...apiSource.matchAll(/if \(!isEncryptedContentAllowed\(\) && isEncryptedMimeMessage\(mimeMsg\)\) \{\s*return \{ error: `\$\{ENCRYPTED_CONTENT_NOTICE\}; nothing was sent` \};\s*\}\s*const originalBody/g)];
+  it("the send and draft modes of reply and forward stop before quoting an encrypted message", () => {
+    const hits = [...apiSource.matchAll(/if \(composeMode !== "window"\) \{\s*if \(!isEncryptedContentAllowed\(\) && isEncryptedMimeMessage\(mimeMsg\)\) \{\s*return \{ error: `\$\{ENCRYPTED_CONTENT_NOTICE\}; nothing was \$\{composeMode === "send" \? "sent" : "saved"\}` \};\s*\}\s*const originalBody/g)];
     assert.equal(hits.length, 2);
   });
 
