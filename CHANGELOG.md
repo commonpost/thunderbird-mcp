@@ -14,6 +14,10 @@ project is kept in this repository.
   identity's Reply-To (a direct reply-all no longer adds the original's To / Cc). The result of a direct send lists
   the `from`, `to`, `cc`, `bcc` and `replyTo` it went out with. By @mazixs in #26.
 
+### Added
+
+- The bridge tells the user, once per connection, when its version and the add-on's differ. After the first `tools/list` or `tools/call` that Thunderbird answers, it sends the add-on an `initialize` on the same validated connection (1.5 s at most, answer capped at 64 KB) and, if the two `X.Y.Z` versions differ, appends one text item to the result of the next `tools/call` and writes one line to stderr. It never does so for a direct send (`skipReview`), says nothing when a version is missing, `0.0.0` or malformed, or when the server is not `commonpost-mcp`, and only digits from the add-on reach the text. The version is used for this notice only. Known limit: a bridge 0.11 or older with an add-on 0.12 or newer does not warn (the old bridge has no such code); both sides are covered once they are 0.12 or newer.
+
 ### Changed
 
 - Without `from`, `replyToMessage` and `forwardMessage` use the identity Thunderbird's own Reply / Forward picks
