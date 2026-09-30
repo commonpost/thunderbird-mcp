@@ -63,6 +63,7 @@ escaping of what is left, the table and `dupLocations` handling and the disabled
   needs a `/` separator, so a look-alike such as `abook.sqlite2` is still refused.
 - README: troubleshooting entry for a bridge in a container or under WSL that is refused after it used to find the
   connection file through a mounted temp folder.
+- README: the automatic-updates section now says that the bridge does not update itself and must be replaced with the one from the same release.
 
 ## [0.10.1] - 2026-09-30
 
