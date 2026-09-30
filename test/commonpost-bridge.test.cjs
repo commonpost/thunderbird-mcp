@@ -713,3 +713,96 @@ describe('validateAttachmentStat and hard links', () => {
     assert.throws(() => validateAttachmentStat('/x/a.txt', regular(2)), /has other hard links; attach a copy instead/);
   });
 });
+
+describe('a stale or foreign connection file is refused (process id)', { skip: typeof process.getuid !== 'function' }, () => {
+  let root;
+  let connFile;
+  const fail = (code) => () => { throw Object.assign(new Error(code), { code }); };
+  const write = (data) => {
+    fs.writeFileSync(connFile, JSON.stringify({ port: 8765, token: 'a'.repeat(64), ...data }), { mode: 0o600 });
+    fs.chmodSync(connFile, 0o600);
+  };
+  const exeLink = (pid, target) => {
+    const dir = path.join(root, 'proc', String(pid));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.symlinkSync(target, path.join(dir, 'exe'));
+  };
+  const discover = ({ kill = () => true, env = {}, platform = 'linux' } = {}) => {
+    clearConnectionCache();
+    return discoverConnectionInfo({
+      env, fsImpl: fs, pathImpl: path, platform, uid: process.getuid(),
+      osImpl: { tmpdir: () => path.join(root, 'tmp'), homedir: () => root }, homeDir: root,
+      procRoot: path.join(root, 'proc'), runtimeDir: path.join(root, 'run'),
+      processImpl: { env, platform, kill },
+    });
+  };
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-pid-'));
+    connFile = path.join(root, 'tmp', 'commonpost-mcp', 'connection.json');
+    fs.mkdirSync(path.dirname(connFile), { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.dirname(connFile), 0o700);
+  });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('accepts a living Thunderbird process', () => {
+    write({ pid: 4242 });
+    exeLink(4242, '/usr/lib/thunderbird/thunderbird-bin');
+    assert.equal(discover().candidates.length, 1);
+  });
+
+  it('accepts a file without pid (older extension) or with an unusable one', () => {
+    write({});
+    assert.equal(discover({ kill: fail('ESRCH') }).candidates.length, 1);
+    write({ pid: 'abc' });
+    assert.equal(discover({ kill: fail('ESRCH') }).candidates.length, 1);
+  });
+
+  it('refuses a process that is not running', () => {
+    write({ pid: 4242 });
+    const result = discover({ kill: fail('ESRCH') });
+    assert.equal(result.candidates.length, 0);
+    assert.ok(result.attempts.some((a) => /stale connection file: process 4242 is not running/.test(JSON.stringify(a))));
+  });
+
+  it('refuses a process of another user (EPERM) on POSIX, but not a process check that cannot tell', () => {
+    write({ pid: 4242 });
+    const result = discover({ kill: fail('EPERM') });
+    assert.equal(result.candidates.length, 0);
+    assert.ok(result.attempts.some((a) => /belongs to another user/.test(JSON.stringify(a))));
+    assert.equal(discover({ kill: fail('EINVAL') }).candidates.length, 1);
+  });
+
+  it('on Linux refuses a readable exe that is not Thunderbird or Betterbird', () => {
+    write({ pid: 4242 });
+    exeLink(4242, '/usr/bin/python3');
+    const result = discover();
+    assert.equal(result.candidates.length, 0);
+    assert.ok(result.attempts.some((a) => /not Thunderbird or Betterbird/.test(JSON.stringify(a))));
+    fs.rmSync(path.join(root, 'proc'), { recursive: true });
+    exeLink(4242, '/snap/thunderbird/100/usr/lib/thunderbird/thunderbird');
+    assert.equal(discover().candidates.length, 1);
+    fs.rmSync(path.join(root, 'proc'), { recursive: true });
+    exeLink(4242, '/opt/betterbird/betterbird');
+    assert.equal(discover().candidates.length, 1);
+  });
+
+  it('an unreadable /proc entry does not refuse by itself', () => {
+    write({ pid: 4242 });
+    assert.equal(discover().candidates.length, 1);
+  });
+
+  it('the exe name is not checked outside Linux', () => {
+    write({ pid: 4242 });
+    exeLink(4242, '/usr/bin/python3');
+    assert.equal(discover({ platform: 'darwin' }).candidates.length, 1);
+  });
+
+  it('with the pinned file, a refusal stops the bridge instead of falling through', () => {
+    write({ pid: 4242 });
+    const result = discover({ kill: fail('ESRCH'), env: { COMMONPOST_MCP_CONNECTION_FILE: connFile } });
+    assert.equal(result.candidates.length, 0);
+    assert.equal(result.attempts.length, 1);
+    assert.match(JSON.stringify(result.attempts[0]), /stale connection file/);
+  });
+});

@@ -91,8 +91,9 @@ function sendToBridge(message, { timeout = 10000 } = {}) {
  */
 function writeTestConnectionInfo(port, token) {
   fs.mkdirSync(CONN_DIR, { recursive: true });
-  fs.writeFileSync(CONN_FILE, JSON.stringify({ port, token, pid: process.pid }), { encoding: 'utf8', mode: 0o600 });
-  // The bridge only trusts a 0600 file.
+  fs.writeFileSync(CONN_FILE, JSON.stringify({ port, token }), { encoding: 'utf8', mode: 0o600 });
+  // The bridge only trusts a 0600 file. No pid: the test process is not a Thunderbird
+  // (the bridge checks the process named by the file).
   fs.chmodSync(CONN_FILE, 0o600);
 }
 
@@ -506,7 +507,7 @@ describe('Auth: connection file corruption', () => {
     try {
       fs.mkdirSync(CONN_DIR, { recursive: true });
       fs.writeFileSync(CONN_FILE, JSON.stringify({
-        port: TEST_PORT, token: TEST_TOKEN, pid: 12345,
+        port: TEST_PORT, token: TEST_TOKEN,
         version: '2.0', extraField: 'should be ignored'
       }), 'utf8');
       // The bridge only trusts a 0600 file.
