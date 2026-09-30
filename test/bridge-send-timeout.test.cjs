@@ -43,6 +43,29 @@ describe('direct-send timeout selection', () => {
     }
   });
 
+  it('classifies the mode cautiously: trimmed and lower-cased, so a spelling the extension refuses still counts as a send', () => {
+    // The extension rejects "SEND" through its enum; the bridge only decides how long to wait and what to tell, and
+    // missing a send would cost the 150 s wait, the silence about versions and the "outcome unknown" error
+    for (const mode of ['send', 'SEND', 'Send', ' send ', '\tSEND\n']) {
+      for (const name of ['replyToMessage', 'forwardMessage']) {
+        const message = call(name, { mode });
+        assert.equal(isDirectSendCall(message), true, `${name} ${JSON.stringify(mode)}`);
+        assert.deepEqual(requestOptionsFor(message), { timeoutMs: 150000, directSend: true });
+      }
+    }
+    for (const mode of ['sendx', 'se nd', '', 'window', 'draft', 1, true, ['send'], null, {}]) {
+      assert.equal(isDirectSendCall(call('replyToMessage', { mode })), false, JSON.stringify(mode));
+    }
+  });
+
+  it('does not change what is sent to the extension', () => {
+    const message = call('replyToMessage', { mode: ' SEND ', to: 'a@example.com' });
+    const before = JSON.stringify(message);
+    isDirectSendCall(message);
+    requestOptionsFor(message);
+    assert.equal(JSON.stringify(message), before);
+  });
+
   it('treats any truthy skipReview as a possible direct send, like the extension does', () => {
     assert.equal(isDirectSendCall(call('sendMail', { skipReview: 'false' })), true);
   });
@@ -71,7 +94,7 @@ describe('direct-send timeout selection', () => {
 describe('draft timeout selection', () => {
   it('waits 150 s for replyToMessage and forwardMessage with mode draft, as for a direct send, but not as a send', () => {
     for (const name of ['replyToMessage', 'forwardMessage']) {
-      for (const mode of ['draft']) {
+      for (const mode of ['draft', 'DRAFT', ' draft ']) {
         const message = call(name, { mode });
         assert.equal(isDirectSendCall(message), false, `${name} ${mode}`);
         assert.deepEqual(requestOptionsFor(message), { timeoutMs: 150000, directSend: false, draft: true }, `${name} ${mode}`);

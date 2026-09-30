@@ -1598,8 +1598,14 @@ function toolErrorResponse(id, message) {
   };
 }
 
-// The mode the caller asked for (what the extension tests; it rejects any other spelling through its enum).
-const requestedMode = (message) => message?.params?.arguments?.mode;
+// The mode the caller asked for, for classification only: trimmed and lower-cased. The value sent to the extension
+// is never changed (it rejects "SEND" through its enum). Sorting a call as a send on a spelling the extension would
+// refuse costs nothing, while missing a send costs the long wait, the silence about versions and the "outcome
+// unknown" error, so the classification errs on the side of a send.
+function requestedMode(message) {
+  const mode = message?.params?.arguments?.mode;
+  return typeof mode === 'string' ? mode.trim().toLowerCase() : '';
+}
 
 // Whether a JSON-RPC message is a tools/call that may send mail directly.
 function isDirectSendCall(message) {
