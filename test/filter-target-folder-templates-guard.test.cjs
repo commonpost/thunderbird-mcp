@@ -13,7 +13,8 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const TEMPLATES_FLAG = 0x400000;
-const Ci = { nsMsgFolderFlags: { Templates: TEMPLATES_FLAG } };
+const QUEUE_FLAG = 0x800; // nsMsgFolderFlags.Queue: the Outbox ("Unsent Messages")
+const Ci = { nsMsgFolderFlags: { Templates: TEMPLATES_FLAG, Queue: QUEUE_FLAG } };
 
 function loadResolveFilterTargetFolder(getAccessibleFolder) {
   const apiPath = path.resolve(__dirname, "../extension/mcp_server/api.js");
@@ -37,9 +38,12 @@ describe("resolveFilterTargetFolder: a filter action cannot target a Templates f
   const archiveUri = "mailbox://n@Local%20Folders/Archive";
   const templatesFolder = { URI: templatesUri, getFlag: (f) => (f & TEMPLATES_FLAG) !== 0 };
   const archiveFolder = { URI: archiveUri, getFlag: () => false };
+  const outboxUri = "mailbox://n@Local%20Folders/Unsent%20Messages";
+  const outboxFolder = { URI: outboxUri, getFlag: (f) => (f & QUEUE_FLAG) !== 0 };
   const resolveFilterTargetFolder = loadResolveFilterTargetFolder((uri) => {
     if (uri === templatesUri) return { folder: templatesFolder };
     if (uri === archiveUri) return { folder: archiveFolder };
+    if (uri === outboxUri) return { folder: outboxFolder };
     return { error: `Folder not found: ${uri}` };
   });
 
@@ -47,6 +51,12 @@ describe("resolveFilterTargetFolder: a filter action cannot target a Templates f
     const result = resolveFilterTargetFolder(templatesUri);
     assert.ok(result.error, JSON.stringify(result));
     assert.match(result.error, /Templates folder/);
+  });
+
+  it("refuses the Outbox (Unsent Messages) as a moveToFolder/copyToFolder target", () => {
+    const result = resolveFilterTargetFolder(outboxUri);
+    assert.ok(result.error, JSON.stringify(result));
+    assert.match(result.error, /Outbox/);
   });
 
   it("still resolves an ordinary folder", () => {

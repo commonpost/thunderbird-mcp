@@ -13,7 +13,8 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const TEMPLATES_FLAG = 0x400000;
-const Ci = { nsMsgFolderFlags: { Templates: TEMPLATES_FLAG } };
+const QUEUE_FLAG = 0x800; // nsMsgFolderFlags.Queue: the Outbox ("Unsent Messages")
+const Ci = { nsMsgFolderFlags: { Templates: TEMPLATES_FLAG, Queue: QUEUE_FLAG } };
 
 function loadUpdateMessage(dependencies) {
   const apiPath = path.resolve(__dirname, "../extension/mcp_server/api.js");
@@ -35,7 +36,8 @@ function makeHdr(messageId) {
   return { messageId };
 }
 
-function makeHarness({ templatesFolderUri = "mailbox://n@Local%20Folders/Templates", otherFolderUri = "mailbox://n@Local%20Folders/Archive" } = {}) {
+function makeHarness({ templatesFolderUri = "mailbox://n@Local%20Folders/Templates", otherFolderUri = "mailbox://n@Local%20Folders/Archive",
+  outboxUri = "mailbox://n@Local%20Folders/Unsent%20Messages" } = {}) {
   const hdr = makeHdr("msg-1@example.test");
   const sourceFolder = {
     markMessagesRead() {}, markMessagesFlagged() {}, addKeywordsToMessages() {}, removeKeywordsFromMessages() {},
@@ -43,6 +45,7 @@ function makeHarness({ templatesFolderUri = "mailbox://n@Local%20Folders/Templat
   const db = { getMsgHdrForMessageID: (id) => (id === hdr.messageId ? hdr : null), enumerateMessages: () => [] };
   const templatesFolder = { URI: templatesFolderUri, getFlag: (f) => (f & TEMPLATES_FLAG) !== 0 };
   const otherFolder = { URI: otherFolderUri, getFlag: () => false };
+  const outboxFolder = { URI: outboxUri, getFlag: (f) => (f & QUEUE_FLAG) !== 0 };
   const copyCalls = [];
   const deps = {
     openFolder: () => ({ folder: sourceFolder, db }),
@@ -50,6 +53,7 @@ function makeHarness({ templatesFolderUri = "mailbox://n@Local%20Folders/Templat
     getAccessibleFolder: (uri) => {
       if (uri === templatesFolderUri) return { folder: templatesFolder };
       if (uri === otherFolderUri) return { folder: otherFolder };
+      if (uri === outboxUri) return { folder: outboxFolder };
       return { error: `Folder not found: ${uri}` };
     },
     MailServices: { copy: { copyMessages: (...args) => copyCalls.push(args) } },
@@ -73,5 +77,23 @@ describe("updateMessage: moveTo a Templates folder", () => {
       undefined, undefined, "mailbox://n@Local%20Folders/Archive", undefined);
     assert.ok(!result.error, JSON.stringify(result));
     assert.equal(copyCalls.length, 1);
+  });
+});
+
+describe("updateMessage: moveTo the Outbox", () => {
+  it("refuses to move a message into the Outbox", () => {
+    const { updateMessage, copyCalls } = makeHarness();
+    const result = updateMessage("msg-1@example.test", undefined, "mailbox://n@Local%20Folders/Inbox", undefined, undefined,
+      undefined, undefined, "mailbox://n@Local%20Folders/Unsent%20Messages", undefined);
+    assert.match(result.error, /Cannot move a message into the Outbox \(Unsent Messages\) through MCP/);
+    assert.equal(copyCalls.length, 0, "nothing was actually moved");
+  });
+
+  it("refuses it in a bulk move too", () => {
+    const { updateMessage, copyCalls } = makeHarness();
+    const result = updateMessage(undefined, ["msg-1@example.test"], "mailbox://n@Local%20Folders/Inbox", undefined, undefined,
+      undefined, undefined, "mailbox://n@Local%20Folders/Unsent%20Messages", undefined);
+    assert.match(result.error, /Outbox/);
+    assert.equal(copyCalls.length, 0);
   });
 });

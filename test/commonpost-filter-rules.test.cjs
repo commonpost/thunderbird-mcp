@@ -590,7 +590,9 @@ describe("applyFilters runs only enabled, Manually Run rules with accessible tar
   const ARCHIVE = "mailbox://nobody@Local%20Folders/Archive";
   const OTHER = "imap://other@example.org/Archive";
   const MANUAL = api.FILTER_TYPE_MANUAL;
-  const allowArchive = (uri) => uri === ARCHIVE;
+  const OUTBOX = "mailbox://nobody@Local%20Folders/Unsent%20Messages";
+  // What the handlers' checkExistingFilterTarget returns: true, or the reason.
+  const allowArchive = (uri) => (uri === ARCHIVE ? true : uri === OUTBOX ? "move/copy target is the Outbox" : false);
 
   function rule(name, { enabled = true, temporary = false, filterType = MANUAL, actions = [{ type: "markRead" }] } = {}) {
     const f = makeFilter(name);
@@ -648,6 +650,17 @@ describe("applyFilters runs only enabled, Manually Run rules with accessible tar
     ]);
   });
 
+  it("skips a rule whose move or copy target is the Outbox, with its own reason", () => {
+    const list = listOf(
+      rule("to-outbox", { actions: [{ type: "moveToFolder", value: OUTBOX }] }),
+      rule("copy-outbox", { actions: [{ type: "markRead" }, { type: "copyToFolder", value: OUTBOX }] }),
+      rule("fine", { actions: [{ type: "moveToFolder", value: ARCHIVE }] }),
+    );
+    const sel = plain(api.selectManualRunFilters(list, MANUAL, allowArchive));
+    assert.deepEqual(sel.run, [[2, "fine"]]);
+    assert.deepEqual(sel.skipped.map((r) => r.reason), ["move/copy target is the Outbox", "move/copy target is the Outbox"]);
+  });
+
   it("an isTargetAllowed that throws skips the rule", () => {
     const list = listOf(rule("t", { actions: [{ type: "moveToFolder", value: ARCHIVE }] }));
     const sel = plain(api.selectManualRunFilters(list, MANUAL, () => { throw new Error("boom"); }));
@@ -687,10 +700,11 @@ describe("applyFilters runs only enabled, Manually Run rules with accessible tar
   });
 });
 
-describe("updateFilter refuses to keep a move/copy target in an account that is not authorized", () => {
+describe("updateFilter refuses to keep a move/copy target in an unauthorized account or the Outbox", () => {
   const ARCHIVE = "mailbox://nobody@Local%20Folders/Archive";
   const OTHER = "imap://other@example.org/Archive";
-  const opts = { isKeptTargetAllowed: (uri) => uri === ARCHIVE };
+  const OUTBOX = "mailbox://nobody@Local%20Folders/Unsent%20Messages";
+  const opts = { isKeptTargetAllowed: (uri) => (uri === ARCHIVE ? true : uri === OUTBOX ? "move/copy target is the Outbox" : false) };
   function ruleTo(uri, type = "moveToFolder") {
     const f = makeFilter("r");
     api.buildTerms(f, [{ attrib: "subject", op: "contains", value: "x" }]);
@@ -701,14 +715,22 @@ describe("updateFilter refuses to keep a move/copy target in an account that is 
   it("refuses a rename or enable/disable that keeps an inaccessible move target", () => {
     const list = makeFilterList();
     assert.throws(() => api.planFilterUpdate(list, ruleTo(OTHER), { name: "y" }, resolveFolder, opts),
-      /not authorized.*provide new actions, or delete the rule/s);
-    assert.throws(() => api.planFilterUpdate(list, ruleTo(OTHER), { enabled: false }, resolveFolder, opts), /not authorized/);
+      /does not allow \(move\/copy target not accessible.*provide new actions, or delete the rule/s);
+    assert.throws(() => api.planFilterUpdate(list, ruleTo(OTHER), { enabled: false }, resolveFolder, opts), /does not allow/);
   });
 
   it("refuses when only the conditions change and a copy target is kept", () => {
     const list = makeFilterList();
     assert.throws(() => api.planFilterUpdate(list, ruleTo(OTHER, "copyToFolder"),
-      { conditions: [{ attrib: "subject", op: "contains", value: "z" }] }, resolveFolder, opts), /not authorized/);
+      { conditions: [{ attrib: "subject", op: "contains", value: "z" }] }, resolveFolder, opts), /does not allow/);
+  });
+
+  it("refuses to keep a move or copy target that is the Outbox", () => {
+    const list = makeFilterList();
+    assert.throws(() => api.planFilterUpdate(list, ruleTo(OUTBOX), { name: "y" }, resolveFolder, opts),
+      /move\/copy target is the Outbox.*provide new actions, or delete the rule/s);
+    assert.throws(() => api.planFilterUpdate(list, ruleTo(OUTBOX, "copyToFolder"), { enabled: false }, resolveFolder, opts),
+      /Outbox/);
   });
 
   it("allows the update when the kept targets are accessible, or when new actions replace them", () => {
@@ -722,7 +744,7 @@ describe("updateFilter refuses to keep a move/copy target in an account that is 
   it("an isKeptTargetAllowed that throws refuses (fail closed)", () => {
     const list = makeFilterList();
     assert.throws(() => api.planFilterUpdate(list, ruleTo(ARCHIVE), { name: "y" }, resolveFolder,
-      { isKeptTargetAllowed: () => { throw new Error("boom"); } }), /not authorized/);
+      { isKeptTargetAllowed: () => { throw new Error("boom"); } }), /does not allow/);
   });
 });
 
@@ -731,7 +753,7 @@ describe("applyFilters wiring", () => {
     const start = apiSource.indexOf("function prepareApplyFilters");
     const end = apiSource.indexOf("function prepareFilterOperation");
     const body = apiSource.slice(start, end);
-    assert.match(body, /selectManualRunFilters\(filterList, FILTER_TYPE_MANUAL, isFilterTargetAccessible\)/);
+    assert.match(body, /selectManualRunFilters\(filterList, FILTER_TYPE_MANUAL, checkExistingFilterTarget\)/);
     assert.match(body, /getTempFilterList\(folder\)/);
     assert.match(body, /applyFiltersToFolders\(tempList, \[folder\], null\)/);
     assert.doesNotMatch(body, /applyFiltersToFolders\(filterList/);
@@ -742,7 +764,11 @@ describe("applyFilters wiring", () => {
   });
 
   it("updateFilter re-checks kept targets against the account restriction only", () => {
-    assert.match(apiSource, /isKeptTargetAllowed: isFilterTargetAccessible/);
-    assert.match(apiSource, /function isFilterTargetAccessible\(uri\) \{\s*return !getAccessibleFolder\(uri\)\.error;/);
+    assert.match(apiSource, /isKeptTargetAllowed: checkExistingFilterTarget/);
+    const start = apiSource.indexOf("function checkExistingFilterTarget(uri)");
+    const body = apiSource.slice(start, apiSource.indexOf("\n            }\n", start));
+    assert.match(body, /getAccessibleFolder\(uri\)/);
+    assert.match(body, /Queue\)\) return FILTER_TARGET_IS_OUTBOX/);
+    assert.doesNotMatch(body, /Templates/);
   });
 });
