@@ -4,7 +4,7 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## [Unreleased]
+## [0.10.1] - 2026-09-30
 
 ### Changed
 - Attachments: the bridge refuses a file that has other hard links ("attach a copy instead"). The extension alone
