@@ -105,6 +105,13 @@ recommended.
   `onTransportSecurityError`); the copy to Sent (`onStopCopy`) no longer counts. Drafts still complete on the
   promise or on `onStopCopy`. When a send hits the 120 s timeout, the error says that the outcome is unknown and
   to check Sent and the Outbox before retrying.
+- `applyFilters` runs only the rules that are enabled and marked "Manually Run", as Thunderbird's own "Run Filters on
+  Folder" does, and skips a rule that moves or copies to a folder of an account the restriction does not allow; the
+  result lists what ran and what was skipped. It used to run every rule of the list, disabled or not. `updateFilter`
+  no longer keeps such a move/copy target on a rule it modifies.
+- The Outbox ("Unsent Messages") is refused as a destination: `updateMessage` `moveTo` and filter rules created or
+  changed through MCP cannot file messages there. `applyFilters` skips an existing rule that moves or copies to it,
+  and `updateFilter` refuses to keep such a target.
 
 ## [0.8.3] - 2026-09-27
 
