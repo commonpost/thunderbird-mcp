@@ -208,6 +208,14 @@ describe('subject linking', () => {
     assert.equal(api.threadSubjectKey('Report: Q3'), 'report: q3');
   });
 
+  it('reads at most 1000 characters of a subject, so thousands of prefixes stay cheap', () => {
+    const started = Date.now();
+    assert.equal(api.threadSubjectKey(`${'Re: '.repeat(20000)}Quarterly plan`), '');
+    assert.ok(Date.now() - started < 500, `took ${Date.now() - started} ms`);
+    assert.equal(api.threadSubjectKey(`Re: ${'x'.repeat(5000)}`), 'x'.repeat(996));
+    assert.equal(api.threadSubjectKey(`Re: ${'x'.repeat(5000)}`), api.threadSubjectKey(`Re: ${'x'.repeat(6000)}`));
+  });
+
   it('ignores subjects too short to identify a conversation', () => {
     assert.equal(api.threadSubjectKey('Re: Hi'), '');
     assert.equal(api.threadSubjectKey(''), '');

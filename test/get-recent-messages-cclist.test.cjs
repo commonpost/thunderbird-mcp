@@ -32,7 +32,8 @@ function load() {
     searchMessages: (args, options) => { searches.push(args); searches.options = options; return { messages: [] }; },
   };
   vm.createContext(sandbox);
-  vm.runInContext(`${region("SEARCH ROW BUILDER")}
+  vm.runInContext(`${region("FOLDER NAME HELPERS")}
+${region("SEARCH ROW BUILDER")}
 ${region("RECENT MESSAGES")}
 this.buildSearchRow = buildSearchRow;
 this.getRecentMessages = getRecentMessages;`, sandbox);

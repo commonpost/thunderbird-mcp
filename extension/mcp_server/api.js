@@ -1942,10 +1942,13 @@ function senderGroupKey(author) {
 // Reply / forward / auto-reply prefixes, incl. Russian and German clients.
 const THREAD_SUBJECT_PREFIX_RE = /^(?:re|fwd?|aw|wg|sv|tr|отв|ответ|пересл|автоматический ответ|automatic reply|autoreply|out of office)\s*(?:\[\d+\]|\(\d+\))?\s*:\s*/iu;
 const MIN_THREAD_SUBJECT_CHARS = 6;
+// Only the start of a subject is read: each pass of the prefix loop below copies the string, so a subject of
+// thousands of "Re:" would make it quadratic.
+const MAX_THREAD_SUBJECT_CHARS = 1000;
 
 // Subject key for linking mail sent without threading headers; "" when too generic.
 function threadSubjectKey(subject) {
-  let s = String(subject || "").replace(/\s+/g, " ").trim();
+  let s = String(subject || "").slice(0, MAX_THREAD_SUBJECT_CHARS).replace(/\s+/g, " ").trim();
   for (let prev = ""; prev !== s;) {
     prev = s;
     s = s.replace(THREAD_SUBJECT_PREFIX_RE, "");
@@ -7410,8 +7413,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               if (isDraftFolder(folder)) row._draft = true;
               if (legacy) {
                 row._threadId = msgHdr.threadId;
-                // nsIMsgFolder.prettyName is localizedName since Thunderbird 141
-                row._folderName = folder.localizedName ?? folder.prettyName;
+                row._folderName = folderDisplayName(folder);
                 row._legacySubject = encrypted ? subject : (msgHdr.mime2DecodedSubject || msgHdr.subject);
               }
               const preview = encrypted ? "" : (msgHdr.getStringProperty("preview") || "");
