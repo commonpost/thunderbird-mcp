@@ -62,7 +62,10 @@ function load({ withDom }) {
   const end = source.indexOf('// END HTML HIDDEN CONTENT HELPERS');
   assert.ok(start >= 0 && end > start, 'HTML HIDDEN CONTENT HELPERS marker missing');
   const names = ['stripHtml', 'htmlExceedsDomLimit', 'safeEmailUrl', 'htmlToMarkdown', 'isHiddenElementNode'];
-  vm.runInContext(`${source.slice(start, end)}\nthis.api = { ${names.join(', ')} };`, sandbox);
+  const stripStart = source.indexOf('// BEGIN STRIP HELPERS');
+  const stripEnd = source.indexOf('// END STRIP HELPERS');
+  assert.ok(stripStart >= 0 && stripEnd > stripStart, 'STRIP HELPERS marker missing');
+  vm.runInContext(`${source.slice(stripStart, stripEnd)}\n${source.slice(start, end)}\nthis.api = { ${names.join(', ')} };`, sandbox);
   return sandbox.api;
 }
 

@@ -20,7 +20,10 @@ function loadInlineImageContentHelpers() {
   const untrustedStart = source.indexOf("// BEGIN UNTRUSTED CONTENT HELPERS");
   const untrustedEnd = source.indexOf("// END UNTRUSTED CONTENT HELPERS");
   assert.ok(untrustedStart >= 0 && untrustedEnd > untrustedStart, "untrusted content helpers block missing");
-  const snippet = `${source.slice(start, end)}\n${source.slice(untrustedStart, untrustedEnd)}`;
+  const stripStart = source.indexOf("// BEGIN STRIP HELPERS");
+  const stripEnd = source.indexOf("// END STRIP HELPERS");
+  assert.ok(stripStart >= 0 && stripEnd > stripStart, "strip helpers block missing");
+  const snippet = `${source.slice(stripStart, stripEnd)}\n${source.slice(start, end)}\n${source.slice(untrustedStart, untrustedEnd)}`;
   const sandbox = { btoa: globalThis.btoa };
   vm.createContext(sandbox);
   vm.runInContext(

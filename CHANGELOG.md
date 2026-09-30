@@ -59,6 +59,8 @@ escaping of what is left, the table and `dupLocations` handling and the disabled
   Calendar and contact tool descriptions say which ids they take and what they return.
 - README lists `saveDraft` and `listCategories`, which were missing from the tool tables, and counts 41 tools
   (`getFilterConfirmation` was added in 0.10.0).
+- A test fails on any regular expression literal that strips a trailing run (`/x+$/`, `/^<+|>+$/g`), which backtracks
+  quadratically (CodeQL `js/polynomial-redos`); the remaining ones use a linear `stripTrailing` / `stripLeading`.
 
 ### Fixed
 - `searchMessages`: the folder URIs in `dupLocations` had their hidden characters removed by the untrusted-content

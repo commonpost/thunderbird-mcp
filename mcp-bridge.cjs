@@ -510,12 +510,13 @@ function buildCandidateGroups(options = {}) {
 // containment check is redone on the real path at read time rather than
 // trusted from the earlier, by-then-possibly-stale result. Returns null
 // when the file is acceptable, else the refusal reason.
-// Drops trailing "/" and "\\" without a regular expression: /[\\/]+$/
-// backtracks quadratically on a long run of separators that does not end the
-// string.
-function stripTrailingSeparators(s) {
+// Drops trailing characters without a regular expression: a pattern such as
+// /[\\/]+$/ or / +$/ backtracks quadratically on a long run of the character
+// that does not end the string (CodeQL js/polynomial-redos). `chars` is a
+// string of the characters to drop.
+function stripTrailing(s, chars) {
   let end = s.length;
-  while (end > 0 && (s[end - 1] === '/' || s[end - 1] === '\\')) end--;
+  while (end > 0 && chars.includes(s[end - 1])) end--;
   return s.slice(0, end);
 }
 
@@ -544,7 +545,7 @@ function checkWindowsTempContainment(candidatePath, context) {
   } catch (err) {
     return `refused: cannot resolve the connection file or %TEMP% (${normalizeFsError(err)})`;
   }
-  const norm = (p) => stripTrailingSeparators(winPath.resolve(p)).toLowerCase();
+  const norm = (p) => stripTrailing(winPath.resolve(p), '/\\').toLowerCase();
   if (!norm(realFile).startsWith(`${norm(realTemp)}\\`)) {
     return `refused: connection file is not under the current user's %TEMP% (${tempDir})`;
   }
@@ -1009,14 +1010,6 @@ function isUncOrDevicePath(attachmentPath) {
 // extension, trailing dots and spaces ignored) opens the device, not a file.
 const WINDOWS_DEVICE_NAME = /^(con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3]|conin\$|conout\$)$/i;
 
-// Drops trailing spaces without a regular expression (/ +$/ backtracks
-// quadratically on a long run of spaces that does not end the string).
-function stripTrailingSpaces(s) {
-  let end = s.length;
-  while (end > 0 && s[end - 1] === ' ') end--;
-  return s.slice(0, end);
-}
-
 // Windows path forms that Windows resolves to ANOTHER name than the one the
 // lexical deny-list sees:
 //   - an alternate data stream (logins.json::$DATA, a.kdbx:s) reads a file or
@@ -1049,7 +1042,7 @@ function windowsPathAmbiguity(attachmentPath, knownTempDir) {
   }
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
-    if (WINDOWS_DEVICE_NAME.test(stripTrailingSpaces(part.split('.')[0]))) {
+    if (WINDOWS_DEVICE_NAME.test(stripTrailing(part.split('.')[0], ' '))) {
       return `has a component naming a Windows device (${JSON.stringify(part)})`;
     }
     if (/[. ]$/.test(part)) {
@@ -1076,7 +1069,7 @@ function isHomeLibraryPath(normalized) {
     return false;
   }
   if (!home) return false;
-  const normalizedHome = stripTrailingSeparators(home.replace(/\\/g, '/').toLowerCase());
+  const normalizedHome = stripTrailing(home.replace(/\\/g, '/').toLowerCase(), '/\\');
   if (!normalizedHome) return false;
   return normalized === `${normalizedHome}/library` || normalized.startsWith(`${normalizedHome}/library/`);
 }
@@ -1940,6 +1933,7 @@ module.exports = {
   checkConnectionOwnerProcess,
   checkWindowsTempContainment,
   readConnectionFileVerified,
+  stripTrailing,
   MAX_CONNECTION_FILE_BYTES,
   forwardFailureResponse,
   handleMessage,
