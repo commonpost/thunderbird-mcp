@@ -4,7 +4,7 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## [Unreleased]
+## [0.11.0] - 2026-09-30
 
 The MCP protocol changes below come from #16 by Konstantin (mazixs), rebased on 0.10.1. Its own removal of
 invisible characters was replaced by 0.10.0's handling of untrusted content, which covers the same ground; the
