@@ -1224,6 +1224,14 @@ function isWindowsHost() {
 // extension, trailing dots and spaces ignored) opens the device, not a file.
 const WINDOWS_DEVICE_NAME = /^(con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3]|conin\$|conout\$)$/i;
 
+// Drops trailing spaces without a regular expression (/ +$/ backtracks
+// quadratically on a long run of spaces that does not end the string).
+function stripTrailingSpaces(s) {
+  let end = s.length;
+  while (end > 0 && s[end - 1] === " ") end--;
+  return s.slice(0, end);
+}
+
 // Windows path forms that Windows resolves to ANOTHER name than the one the
 // lexical deny-list sees:
 //   - an alternate data stream (logins.json::$DATA, a.kdbx:s) reads a file or
@@ -1256,7 +1264,7 @@ function windowsPathAmbiguity(attachmentPath, knownTempDir) {
   }
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
-    if (WINDOWS_DEVICE_NAME.test(part.split(".")[0].replace(/[. ]+$/, ""))) {
+    if (WINDOWS_DEVICE_NAME.test(stripTrailingSpaces(part.split(".")[0]))) {
       return `has a component naming a Windows device (${JSON.stringify(part)})`;
     }
     if (/[. ]$/.test(part)) {
