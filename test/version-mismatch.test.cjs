@@ -275,14 +275,25 @@ describe('version notice', () => {
     assert.equal(bridge.noticeLines().length, 2);
   });
 
-  it('never probes, and never adds anything, for a direct send', async () => {
-    const fake = await startFake({ onInitialize: extension('99.0.0') });
-    const bridge = startBridge(fake.port);
-    const response = await bridge.call('sendMail', { to: 'a@example.com', subject: 's', body: 'b', skipReview: true });
-    assert.deepEqual(response.result, TOOL_RESULT);
-    assert.equal(probeCount(fake), 0);
-    assert.equal(bridge.noticeLines().length, 0);
-  });
+  // Whatever makes a call a direct send (skipReview or mode send): the
+  // result stays exactly what Thunderbird said, and the add-on is not even probed
+  const DIRECT_SENDS = [
+    ['sendMail with skipReview', 'sendMail', { to: 'a@example.com', subject: 's', body: 'b', skipReview: true }],
+    ['replyToMessage with mode send', 'replyToMessage', { mode: 'send' }],
+    ['forwardMessage with mode send', 'forwardMessage', { mode: 'send' }],
+    ['replyToMessage with skipReview', 'replyToMessage', { skipReview: true }],
+    ['replyToMessage with mode draft and skipReview', 'replyToMessage', { mode: 'draft', skipReview: true }],
+  ];
+  for (const [label, name, args] of DIRECT_SENDS) {
+    it(`never probes, and never adds anything, for a direct send: ${label}`, async () => {
+      const fake = await startFake({ onInitialize: extension('99.0.0') });
+      const bridge = startBridge(fake.port);
+      const response = await bridge.call(name, args);
+      assert.deepEqual(response.result, TOOL_RESULT);
+      assert.equal(probeCount(fake), 0);
+      assert.equal(bridge.noticeLines().length, 0);
+    });
+  }
 
   it('refuses a sensitive attachment the same way whatever version the add-on announces', async () => {
     const results = [];

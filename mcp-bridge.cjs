@@ -28,6 +28,10 @@ const REQUEST_TIMEOUT = 30000;
 // that or it reports a failure for a message that may still go out.
 const DIRECT_SEND_TOOLS = new Set(['sendMail', 'replyToMessage', 'forwardMessage']);
 const DIRECT_SEND_TIMEOUT = 150000;
+// replyToMessage and forwardMessage with mode "draft" save through a window-less
+// compose that Thunderbird gives up on after 120 s too: the bridge waits as long
+// as for a direct send, or an agent that retries would end up with two drafts.
+const DRAFT_TOOLS = new Set(['replyToMessage', 'forwardMessage']);
 const CONNECTION_RETRY_DELAY_MS = 1000;
 const CONNECTION_MAX_RETRIES = 5;
 const CONNECTION_CACHE_TTL_MS = 5000; // 5 seconds
@@ -1578,7 +1582,8 @@ async function handleMessage(line) {
 
 function forwardFailureResponse(message, error) {
   // A direct send's error already says that the outcome is unknown
-  const text = !isDirectSendCall(message) && /timed out/i.test(error.message)
+  // (and a draft's, that it may still appear)
+  const text = !isDirectSendCall(message) && !isDraftCall(message) && /timed out/i.test(error.message)
     ? `${error.message.replace(/\.?$/, '.')} The operation may still complete in Thunderbird.`
     : error.message;
   return toolErrorResponse(message.id, text);
@@ -1593,18 +1598,28 @@ function toolErrorResponse(id, message) {
   };
 }
 
+// The mode the caller asked for (what the extension tests; it rejects any other spelling through its enum).
+const requestedMode = (message) => message?.params?.arguments?.mode;
+
 // Whether a JSON-RPC message is a tools/call that may send mail directly.
 function isDirectSendCall(message) {
-  const args = message?.params?.arguments;
   return message?.method === 'tools/call'
     && DIRECT_SEND_TOOLS.has(message.params?.name)
-    && (Boolean(args?.skipReview) || args?.mode === 'send');
+    && (Boolean(message.params?.arguments?.skipReview) || requestedMode(message) === 'send');
+}
+
+// Whether it is a tools/call that saves a reply or forward as a draft (a call that may also send counts as a send).
+function isDraftCall(message) {
+  return message?.method === 'tools/call'
+    && DRAFT_TOOLS.has(message.params?.name)
+    && requestedMode(message) === 'draft'
+    && !isDirectSendCall(message);
 }
 
 function requestOptionsFor(message) {
-  return isDirectSendCall(message)
-    ? { timeoutMs: DIRECT_SEND_TIMEOUT, directSend: true }
-    : { timeoutMs: REQUEST_TIMEOUT, directSend: false };
+  if (isDirectSendCall(message)) return { timeoutMs: DIRECT_SEND_TIMEOUT, directSend: true };
+  if (isDraftCall(message)) return { timeoutMs: DIRECT_SEND_TIMEOUT, directSend: false, draft: true };
+  return { timeoutMs: REQUEST_TIMEOUT, directSend: false };
 }
 
 // What a direct send that lost contact with Thunderbird must tell the client:
@@ -1614,7 +1629,14 @@ const OUTCOME_UNKNOWN_ADVICE =
   'Check the Sent folder and the Outbox in Thunderbird before retrying, ' +
   'otherwise the message may be sent twice.';
 
-function timeoutError({ timeoutMs, directSend }) {
+function timeoutError({ timeoutMs, directSend, draft }) {
+  if (draft) {
+    return new Error(
+      `Request to Thunderbird timed out after ${timeoutMs / 1000} s while saving a draft. ` +
+      'The draft may still appear in the Drafts folder later: check it before retrying, ' +
+      'otherwise a second draft may be created.'
+    );
+  }
   if (!directSend) {
     return new Error('Request to Thunderbird timed out');
   }
@@ -2079,6 +2101,7 @@ module.exports = {
   validateAttachmentStat,
   versionCore,
   isDirectSendCall,
+  isDraftCall,
   isSensitiveFilePath,
   isUncOrDevicePath,
   windowsPathAmbiguity,
