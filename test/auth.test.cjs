@@ -86,11 +86,17 @@ function sendToBridge(message, { timeout = 10000 } = {}) {
   });
 }
 
+// The bridge also requires the folder of connection.json to be closed to group and others.
+function mkConnDir() {
+  fs.mkdirSync(CONN_DIR, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') fs.chmodSync(CONN_DIR, 0o700);
+}
+
 /**
  * Write a test connection.json file.
  */
 function writeTestConnectionInfo(port, token) {
-  fs.mkdirSync(CONN_DIR, { recursive: true });
+  mkConnDir();
   fs.writeFileSync(CONN_FILE, JSON.stringify({ port, token }), { encoding: 'utf8', mode: 0o600 });
   // The bridge only trusts a 0600 file. No pid: the test process is not a Thunderbird
   // (the bridge checks the process named by the file).
@@ -113,7 +119,7 @@ function backupConnectionFile() {
 
 function restoreConnectionFile() {
   if (savedConnectionData !== null) {
-    fs.mkdirSync(CONN_DIR, { recursive: true });
+    mkConnDir();
     fs.writeFileSync(CONN_FILE, savedConnectionData, { encoding: 'utf8', mode: 0o600 });
     fs.chmodSync(CONN_FILE, 0o600);
   } else {
@@ -369,7 +375,7 @@ describe('Auth: connection file corruption', () => {
 
   it('rejects empty connection file', async (t) => {
     if (thunderbirdRunning) return t.skip('Thunderbird running, skipping connection file mutation test');
-    fs.mkdirSync(CONN_DIR, { recursive: true });
+    mkConnDir();
     fs.writeFileSync(CONN_FILE, '', 'utf8');
 
     const response = await sendToBridge({
@@ -384,7 +390,7 @@ describe('Auth: connection file corruption', () => {
 
   it('rejects connection file with invalid JSON', async (t) => {
     if (thunderbirdRunning) return t.skip('Thunderbird running');
-    fs.mkdirSync(CONN_DIR, { recursive: true });
+    mkConnDir();
     fs.writeFileSync(CONN_FILE, '{not valid json!!!', 'utf8');
 
     const response = await sendToBridge({
@@ -399,7 +405,7 @@ describe('Auth: connection file corruption', () => {
 
   it('rejects connection file with missing port', async (t) => {
     if (thunderbirdRunning) return t.skip('Thunderbird running');
-    fs.mkdirSync(CONN_DIR, { recursive: true });
+    mkConnDir();
     fs.writeFileSync(CONN_FILE, JSON.stringify({ token: 'abc' }), 'utf8');
 
     const response = await sendToBridge({
@@ -415,7 +421,7 @@ describe('Auth: connection file corruption', () => {
 
   it('rejects connection file with missing token', async (t) => {
     if (thunderbirdRunning) return t.skip('Thunderbird running');
-    fs.mkdirSync(CONN_DIR, { recursive: true });
+    mkConnDir();
     fs.writeFileSync(CONN_FILE, JSON.stringify({ port: 19999 }), 'utf8');
 
     const response = await sendToBridge({
@@ -431,7 +437,7 @@ describe('Auth: connection file corruption', () => {
 
   it('rejects connection file with null port', async (t) => {
     if (thunderbirdRunning) return t.skip('Thunderbird running');
-    fs.mkdirSync(CONN_DIR, { recursive: true });
+    mkConnDir();
     fs.writeFileSync(CONN_FILE, JSON.stringify({ port: null, token: 'abc' }), 'utf8');
 
     const response = await sendToBridge({
@@ -446,7 +452,7 @@ describe('Auth: connection file corruption', () => {
 
   it('rejects connection file with empty string token', async (t) => {
     if (thunderbirdRunning) return t.skip('Thunderbird running');
-    fs.mkdirSync(CONN_DIR, { recursive: true });
+    mkConnDir();
     fs.writeFileSync(CONN_FILE, JSON.stringify({ port: 19999, token: '' }), 'utf8');
 
     const response = await sendToBridge({
@@ -461,7 +467,7 @@ describe('Auth: connection file corruption', () => {
 
   it('rejects connection file with port=0', async (t) => {
     if (thunderbirdRunning) return t.skip('Thunderbird running');
-    fs.mkdirSync(CONN_DIR, { recursive: true });
+    mkConnDir();
     fs.writeFileSync(CONN_FILE, JSON.stringify({ port: 0, token: 'abc' }), 'utf8');
 
     const response = await sendToBridge({
@@ -476,7 +482,7 @@ describe('Auth: connection file corruption', () => {
 
   it('handles binary garbage in connection file', async (t) => {
     if (thunderbirdRunning) return t.skip('Thunderbird running');
-    fs.mkdirSync(CONN_DIR, { recursive: true });
+    mkConnDir();
     fs.writeFileSync(CONN_FILE, Buffer.from([0x00, 0xff, 0xfe, 0x80, 0x90]));
 
     const response = await sendToBridge({
@@ -505,7 +511,7 @@ describe('Auth: connection file corruption', () => {
     });
 
     try {
-      fs.mkdirSync(CONN_DIR, { recursive: true });
+      mkConnDir();
       fs.writeFileSync(CONN_FILE, JSON.stringify({
         port: TEST_PORT, token: TEST_TOKEN,
         version: '2.0', extraField: 'should be ignored'

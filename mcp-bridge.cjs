@@ -711,8 +711,41 @@ function checkConnectionOwnerProcess(data, candidate, context) {
   return null;
 }
 
-function tryReadConnectionCandidate(candidate, context) {
-  const unsafe = checkConnectionFileSafety(candidate.path, context);
+// The folder that holds connection.json decides who can rename or replace
+// the file: on POSIX, for a DISCOVERED candidate (not a path the user named),
+// it must be a real folder (not a link) owned by the current user, closed to
+// group and others. Returns null when acceptable, else the refusal reason.
+function checkConnectionDirSafety(candidatePath, context) {
+  if (context.platform === 'win32') return null;
+  const { fsImpl, pathImpl } = context;
+  const dir = pathImpl.dirname(candidatePath);
+  let stat;
+  try {
+    stat = fsImpl.lstatSync(dir);
+  } catch (err) {
+    return normalizeFsError(err);
+  }
+  if (stat.isSymbolicLink()) {
+    return 'refused: connection file folder is a symlink';
+  }
+  if (!stat.isDirectory()) {
+    return 'refused: connection file folder is not a directory';
+  }
+  if (context.uid === null || context.uid === undefined) {
+    return 'refused: cannot determine the current user id to check the connection file folder owner';
+  }
+  if (stat.uid !== context.uid) {
+    return `refused: connection file folder is owned by uid ${stat.uid}, not the current uid ${context.uid}`;
+  }
+  if ((stat.mode & 0o077) !== 0) {
+    return `refused: connection file folder mode ${(stat.mode & 0o777).toString(8)} gives group/other access (expected 700)`;
+  }
+  return null;
+}
+
+function tryReadConnectionCandidate(candidate, context, { pinned = false } = {}) {
+  const unsafe = checkConnectionFileSafety(candidate.path, context)
+    || (pinned ? null : checkConnectionDirSafety(candidate.path, context));
   if (unsafe) {
     return {
       ok: false,
@@ -777,7 +810,7 @@ function discoverConnectionInfo(options = {}) {
     attempts.push(...group.notes);
 
     for (const candidate of group.candidates) {
-      const result = tryReadConnectionCandidate(candidate, group.context);
+      const result = tryReadConnectionCandidate(candidate, group.context, { pinned: group.stopOnFailure === true });
       attempts.push(result.attempt);
       if (result.ok) {
         candidates.push({ data: result.data, path: candidate.path });
@@ -1844,6 +1877,7 @@ module.exports = {
   FLATPAK_APP_IDS,
   formatDiscoveryAttempts,
   compactToolResultJsonText,
+  checkConnectionDirSafety,
   checkConnectionFileSafety,
   checkConnectionOwnerProcess,
   checkWindowsTempContainment,
