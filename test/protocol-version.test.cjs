@@ -8,10 +8,11 @@
  * but does NOT echo unknown future versions back as if it knew them.
  */
 
-const { describe, it } = require('node:test');
+const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const vm = require('vm');
 
@@ -43,9 +44,9 @@ function runProductionNotificationBranch(method) {
   return calls;
 }
 
-function sendInitialize(protocolVersion) {
+function sendInitialize(protocolVersion, bridgePath = BRIDGE_PATH) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [BRIDGE_PATH], {
+    const child = spawn(process.execPath, [bridgePath], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -197,6 +198,47 @@ describe('protocolVersion negotiation', () => {
     const response = await sendInitialize('2024-11-05');
     assert.equal(response.result.serverInfo.name, 'commonpost-mcp');
     assert.ok(response.result.serverInfo.version, 'serverInfo.version should be non-empty');
+  });
+
+  describe('bridge version', () => {
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf8'));
+    const manifest = JSON.parse(
+      fs.readFileSync(path.resolve(__dirname, '..', 'extension', 'manifest.json'), 'utf8')
+    );
+    const tmpDirs = [];
+
+    function copyBridgeToTempDir() {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'commonpost-bridge-version-'));
+      tmpDirs.push(dir);
+      const copy = path.join(dir, 'mcp-bridge.cjs');
+      fs.copyFileSync(BRIDGE_PATH, copy);
+      return { dir, copy };
+    }
+
+    after(() => {
+      for (const dir of tmpDirs) {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('announces the version of package.json and of the manifest', async () => {
+      const response = await sendInitialize('2024-11-05');
+      assert.equal(response.result.serverInfo.version, pkg.version);
+      assert.equal(response.result.serverInfo.version, manifest.version);
+    });
+
+    it('announces the same version when the bridge is copied alone, as in a release', async () => {
+      const { copy } = copyBridgeToTempDir();
+      const response = await sendInitialize('2024-11-05', copy);
+      assert.equal(response.result.serverInfo.version, pkg.version);
+    });
+
+    it('ignores a package.json of another project next to the bridge', async () => {
+      const { dir, copy } = copyBridgeToTempDir();
+      fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'other', version: '3.1.4' }));
+      const response = await sendInitialize('2024-11-05', copy);
+      assert.equal(response.result.serverInfo.version, pkg.version);
+    });
   });
 
   it('includes tools capability', async () => {
