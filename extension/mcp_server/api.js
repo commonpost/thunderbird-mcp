@@ -1046,6 +1046,9 @@ function isToolErrorResult(toolResult) {
     && toolResult.success !== true;
 }
 
+// For results that hold no third-party text (the errors below): it does not
+// run protectMessageToolResult, which tools/call applies to what a tool
+// returns before building that result itself.
 function toolCallResult(toolResult) {
   const result = { content: buildToolResultContent(toolResult) };
   if (isToolErrorResult(toolResult)) result.isError = true;
@@ -12277,7 +12280,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                         throw Object.assign(new Error(`Unknown tool: ${params.name}`), { rpcCode: -32602 });
                       }
                       if (!isToolEnabled(params.name)) {
-                        result = toolCallError(`Tool is disabled: ${params.name}. The user can enable it in the Commonpost MCP for Thunderbird extension settings.`);
+                        // Stated, not suggested: text that invites the assistant to ask
+                        // the user to turn a tool back on would work against the setting.
+                        result = toolCallError(`This tool (${params.name}) is disabled in the add-on settings.`);
                         break;
                       }
                       const toolArgs = coerceToolArgs(params.name, params.arguments || {});
