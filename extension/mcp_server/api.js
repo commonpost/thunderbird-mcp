@@ -1521,11 +1521,12 @@ const UNTRUSTED_CONTENT_TOOLS = new Set([
 const UNTRUSTED_WRAPPED_KEYS = new Set(["body", "rawSource", "preview", "title", "description", "location", "note"]);
 // Identifiers the caller is expected to pass back into a later call
 // (getMessage's id, a folder or file path, the other folders of a
-// deduplicated search row...): hidden characters in them are still counted
-// for the notice, but the value itself is left exactly as it came in.
-// Rewriting an identifier -- even to remove something invisible -- could
-// desync it from the real message, folder or file it names.
-const UNTRUSTED_COUNT_ONLY_KEYS = new Set(["id", "folderPath", "filePath", "dupLocations"]);
+// deduplicated search row, the newest message of a groupBy row...): hidden
+// characters in them are still counted for the notice, but the value itself
+// is left exactly as it came in. Rewriting an identifier -- even to remove
+// something invisible -- could desync it from the real message, folder or
+// file it names.
+const UNTRUSTED_COUNT_ONLY_KEYS = new Set(["id", "folderPath", "filePath", "dupLocations", "latestId", "latestFolderPath"]);
 const UNTRUSTED_WALK_MAX_NODES = 50000;
 const UNTRUSTED_WALK_MAX_DEPTH = 12;
 
@@ -1697,7 +1698,7 @@ function protectUntrustedResult(result, nonce, statusRef = {}) {
         // stripping them corrupts the message. Never rewritten (delimited
         // below like any other wrapped key).
         const isRawBytes = name === "rawSource";
-        // id/folderPath/filePath/dupLocations: see UNTRUSTED_COUNT_ONLY_KEYS above.
+        // Identifiers (id, folderPath, latestId...): see UNTRUSTED_COUNT_ONLY_KEYS above.
         const isCountOnly = UNTRUSTED_COUNT_ONLY_KEYS.has(name);
         if (isCountOnly) {
           removedTotal += stripHiddenCharacters(value).removed;
