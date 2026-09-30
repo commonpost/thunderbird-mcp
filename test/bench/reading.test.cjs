@@ -2,7 +2,7 @@
 // Reading on a real Thunderbird: libmime decodes bodies and headers, search finds the fixtures.
 const { describe, it, after } = require("node:test");
 const assert = require("node:assert/strict");
-const { SKIP, mcp, tb, closeAll, FOLDER } = require("./helpers.cjs");
+const { SKIP, mcp, tb, closeAll, FOLDER, unwrapUntrusted } = require("./helpers.cjs");
 
 describe("reading", { skip: SKIP }, () => {
   after(closeAll);
@@ -63,8 +63,8 @@ describe("reading", { skip: SKIP }, () => {
   });
 
   it("getRecentMessages rows carry ccList like searchMessages rows", async () => {
-    const recent = await mcp().call("getRecentMessages", { daysBack: 36500, folderPath: FOLDER.inbox, maxResults: 200 });
-    const found = await mcp().call("searchMessages", { query: "", folderPath: FOLDER.inbox, maxResults: 200 });
+    const recent = unwrapUntrusted(await mcp().call("getRecentMessages", { daysBack: 36500, folderPath: FOLDER.inbox, maxResults: 200 }));
+    const found = unwrapUntrusted(await mcp().call("searchMessages", { query: "", folderPath: FOLDER.inbox, maxResults: 200 }));
     const row = recent.messages.find(m => m.id === "chain3@alpha.test");
     assert.equal(row?.ccList, "Bob Alpha <bob@alpha.test>", JSON.stringify(row));
     assert.deepEqual(row, found.messages.find(m => m.id === "chain3@alpha.test"));

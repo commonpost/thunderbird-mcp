@@ -204,4 +204,14 @@ const FOLDER = {
   trash: "mailbox://benchuser@127.0.0.1/Trash",
 };
 
-module.exports = { ROOT, state, SKIP, mcp, tb, tbLib, chrome, closeAll, FOLDER };
+// Third-party text comes back delimited in <email-content id="..."> markers, with a new identifier on every call
+// (0.10.0): the text inside, to compare results of two calls or to decode a base64 rawSource.
+const UNTRUSTED_WRAP = /^<email-content id="[0-9a-f]{24}"(?: hidden-characters-removed="\d+")?>\n([\s\S]*)\n<\/email-content id="[0-9a-f]{24}">$/;
+function unwrapUntrusted(value) {
+  if (typeof value === "string") return value.match(UNTRUSTED_WRAP)?.[1] ?? value;
+  if (Array.isArray(value)) return value.map(unwrapUntrusted);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, unwrapUntrusted(v)]));
+  return value;
+}
+
+module.exports = { ROOT, state, SKIP, mcp, tb, tbLib, chrome, closeAll, FOLDER, unwrapUntrusted };
