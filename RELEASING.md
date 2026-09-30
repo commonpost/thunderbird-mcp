@@ -37,6 +37,7 @@ environment can publish.
 - `gh attestation verify <xpi> -R commonpost/thunderbird-mcp --format json` (and the same for `mcp-bridge.cjs`).
   Use `--format json`: some `gh` versions print nothing in text mode, even on success.
 - The SHA-256 of the released XPI equals your local reproducible build of the tagged commit.
+  A rebase merge rewrites the commit date, which is part of the reproducible build (`SOURCE_DATE_EPOCH` is the committer date of `HEAD`, and the commit hash is recorded too), so the hash built from the pull request branch before merging cannot match the release; compare with a rebuild from a checkout of the tag.
 - <https://commonpost.github.io/thunderbird-mcp/updates.json> lists the new version with the same hash.
 
 ## Security releases
