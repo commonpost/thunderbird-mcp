@@ -823,12 +823,12 @@ describe('a stale or foreign connection file is refused (process id)', { skip: t
     assert.equal(discover({ platform: 'darwin' }).candidates.length, 1);
   });
 
-  it('with the pinned file, a refusal stops the bridge instead of falling through', () => {
+  it('the pinned file is not checked: under WSL or in a container its pid belongs to another system', () => {
     write({ pid: 4242 });
+    exeLink(4242, '/usr/bin/python3');
     const result = discover({ kill: fail('ESRCH'), env: { COMMONPOST_MCP_CONNECTION_FILE: connFile } });
-    assert.equal(result.candidates.length, 0);
-    assert.equal(result.attempts.length, 1);
-    assert.match(JSON.stringify(result.attempts[0]), /stale connection file/);
+    assert.equal(result.candidates.length, 1);
+    assert.doesNotMatch(JSON.stringify(result.attempts), /stale connection file|is not Thunderbird/);
   });
 });
 
