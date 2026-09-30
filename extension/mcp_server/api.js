@@ -1512,11 +1512,12 @@ const UNTRUSTED_CONTENT_TOOLS = new Set([
 ]);
 const UNTRUSTED_WRAPPED_KEYS = new Set(["body", "rawSource", "preview", "title", "description", "location", "note"]);
 // Identifiers the caller is expected to pass back into a later call
-// (getMessage's id, a folder or file path...): hidden characters in them are
-// still counted for the notice, but the value itself is left exactly as it
-// came in. Rewriting an identifier -- even to remove something invisible --
-// could desync it from the real message, folder or file it names.
-const UNTRUSTED_COUNT_ONLY_KEYS = new Set(["id", "folderPath", "filePath"]);
+// (getMessage's id, a folder or file path, the other folders of a
+// deduplicated search row...): hidden characters in them are still counted
+// for the notice, but the value itself is left exactly as it came in.
+// Rewriting an identifier -- even to remove something invisible -- could
+// desync it from the real message, folder or file it names.
+const UNTRUSTED_COUNT_ONLY_KEYS = new Set(["id", "folderPath", "filePath", "dupLocations"]);
 const UNTRUSTED_WALK_MAX_NODES = 50000;
 const UNTRUSTED_WALK_MAX_DEPTH = 12;
 
@@ -1627,27 +1628,42 @@ function stripEmailContentMarkers(value) {
 // bounded depth and size; anything beyond that sets `statusRef.truncated = true`
 // (default a throwaway object) so a caller can fail closed instead of handing
 // back a result where some of the text was never checked or delimited.
+//
+// A string is judged by the name it stands for: its property name in an
+// object; in a row of a { columns, rows } table (format: "table"), the name of
+// its column, so that a cell is treated exactly like the same property of the
+// object form; in an array held by a count-only key (dupLocations), that key.
+// Any other array entry has no name: cleaned, never wrapped.
+function isColumnarTable(node) {
+  return Array.isArray(node.columns) && Array.isArray(node.rows)
+    && node.columns.every((column) => typeof column === "string");
+}
+
 function protectUntrustedResult(result, nonce, statusRef = {}) {
   let removedTotal = 0;
   let visited = 0;
-  const walk = (node, depth) => {
+  // entryName (arrays only): index -> the name that entry stands for.
+  // rowColumns (the rows array of a table only): the table's columns.
+  const walk = (node, depth, entryName, rowColumns) => {
     if (!node || typeof node !== "object") return;
     if (depth > UNTRUSTED_WALK_MAX_DEPTH) { statusRef.truncated = true; return; }
-    const keys = Array.isArray(node) ? node.keys() : Object.keys(node);
+    const isArray = Array.isArray(node);
+    const columns = !isArray && isColumnarTable(node) ? node.columns : null;
+    const keys = isArray ? node.keys() : Object.keys(node);
     for (const key of keys) {
       if (++visited > UNTRUSTED_WALK_MAX_NODES) { statusRef.truncated = true; return; }
       const value = node[key];
+      const name = isArray ? entryName?.(key) : key;
       if (typeof value === "string") {
-        const inObject = !Array.isArray(node);
         // rawSource is a byte string (readMessageStreamFully), one JS code
         // unit per octet, not decoded text: the hidden-character ranges this
         // strips (C1 controls 0x80-0x9F, DEL, soft hyphen...) are ordinary
         // continuation bytes in UTF-8 and escape bytes in ISO-2022-JP, so
         // stripping them corrupts the message. Never rewritten (delimited
         // below like any other wrapped key).
-        const isRawBytes = inObject && key === "rawSource";
-        // id/folderPath/filePath: see UNTRUSTED_COUNT_ONLY_KEYS above.
-        const isCountOnly = inObject && UNTRUSTED_COUNT_ONLY_KEYS.has(key);
+        const isRawBytes = name === "rawSource";
+        // id/folderPath/filePath/dupLocations: see UNTRUSTED_COUNT_ONLY_KEYS above.
+        const isCountOnly = UNTRUSTED_COUNT_ONLY_KEYS.has(name);
         if (isCountOnly) {
           removedTotal += stripHiddenCharacters(value).removed;
           continue;
@@ -1657,12 +1673,20 @@ function protectUntrustedResult(result, nonce, statusRef = {}) {
         // The encrypted-message notice in `body` (see ENCRYPTED_CONTENT_NOTICE)
         // is our own text, not the sender's: counted and cleaned like any
         // other string, but never delimited as untrusted third-party content.
-        const skipWrap = inObject && key === "body" && node.encrypted === true;
-        node[key] = inObject && UNTRUSTED_WRAPPED_KEYS.has(key) && !skipWrap && text !== ""
+        const skipWrap = !isArray && key === "body" && node.encrypted === true;
+        node[key] = UNTRUSTED_WRAPPED_KEYS.has(name) && !skipWrap && text !== ""
           ? `${untrustedContentOpen(nonce, removed)}\n${text}\n${untrustedContentClose(nonce)}`
           : text;
       } else if (value && typeof value === "object") {
-        walk(value, depth + 1);
+        if (rowColumns && Array.isArray(value)) {
+          walk(value, depth + 1, (i) => rowColumns[i]);
+        } else if (columns && key === "rows" && Array.isArray(value)) {
+          walk(value, depth + 1, undefined, columns);
+        } else if (Array.isArray(value) && UNTRUSTED_COUNT_ONLY_KEYS.has(name)) {
+          walk(value, depth + 1, () => name);
+        } else {
+          walk(value, depth + 1);
+        }
       }
     }
   };
