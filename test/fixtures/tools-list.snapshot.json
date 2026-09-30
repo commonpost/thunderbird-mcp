@@ -1320,7 +1320,7 @@
           },
           "to": {
             "type": "string",
-            "description": "Override recipient email (default: original sender)"
+            "description": "Override the recipients Thunderbird computes (required with skipReview)"
           },
           "cc": {
             "type": "string",
@@ -1332,11 +1332,11 @@
           },
           "from": {
             "type": "string",
-            "description": "Sender identity (email address or identity ID from listAccounts)"
+            "description": "Sender identity (email address or identity ID from listAccounts); default: the identity the message was addressed to, as in Thunderbird. Required with skipReview."
           },
           "skipReview": {
             "type": "boolean",
-            "description": "Request direct sending without a compose window. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)."
+            "description": "Request direct sending without a compose window; needs to and from, nothing is taken from the original message. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)."
           },
           "attachments": {
             "type": "array",
@@ -1446,11 +1446,11 @@
           },
           "from": {
             "type": "string",
-            "description": "Sender identity (email address or identity ID from listAccounts)"
+            "description": "Sender identity (email address or identity ID from listAccounts); default: the identity the message was addressed to, as in Thunderbird. Required with skipReview."
           },
           "skipReview": {
             "type": "boolean",
-            "description": "Request direct sending without a compose window. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)."
+            "description": "Request direct sending without a compose window; needs from. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)."
           },
           "attachments": {
             "type": "array",
