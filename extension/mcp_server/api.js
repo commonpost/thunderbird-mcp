@@ -1393,6 +1393,45 @@ function isCollectionAllowed(state, hints, accounts) {
 }
 // END ACCOUNT RESTRICTION HELPERS
 
+// BEGIN CALENDAR WRITE TARGET HELPERS
+// Thunderbird creates its default "Home" calendar disabled until the user
+// turns it on (initHomeCalendar in calendar/base/content/calendar-management.js),
+// and a disabled calendar returns nothing to getItems/getItemsAsArray while
+// addItem still succeeds on it (CalStorageCalendar). Writing to one would
+// report success for an event or task that neither Thunderbird nor
+// listEvents/listTasks shows, so createEvent and createTask write only to a
+// calendar that is turned on. A calendar whose state cannot be read counts as
+// disabled.
+function isCalendarDisabled(calendar) {
+  try {
+    return Boolean(calendar.getProperty("disabled"));
+  } catch {
+    return true;
+  }
+}
+
+const TURN_ON_CALENDAR_HINT = "Turn it on in Thunderbird's calendar list (Calendar tab), then retry.";
+
+function disabledCalendarError(calendar) {
+  return `Calendar is disabled: ${calendar.name}. ${TURN_ON_CALENDAR_HINT}`;
+}
+
+// The calendar a create tool writes to when the caller names none: the first
+// writable calendar of `calendars` (already limited to the allowed accounts)
+// that `accepts` takes and that is turned on. `kind` names it in the error
+// ("calendar", "task-capable calendar"). Returns { calendar } or { error }.
+function pickDefaultWriteCalendar(calendars, accepts, kind) {
+  const writable = calendars.filter((c) => !c.readOnly && accepts(c));
+  const enabled = writable.find((c) => !isCalendarDisabled(c));
+  if (enabled) return { calendar: enabled };
+  if (writable.length === 0) return { error: `No writable ${kind} found` };
+  return {
+    error: `No enabled writable ${kind} found: ${writable.length === 1 ? "the only writable one is" : "all writable ones are"} `
+      + `disabled (Thunderbird creates its default calendar disabled). ${TURN_ON_CALENDAR_HINT}`,
+  };
+}
+// END CALENDAR WRITE TARGET HELPERS
+
 // BEGIN UNTRUSTED CONTENT HELPERS
 // What these tools return is text written by third parties: a message's
 // body, but also an event's or task's title/description/location (from an
@@ -3916,7 +3955,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "listCalendars",
         group: "calendar", crud: "read",
         title: "List Calendars",
-        description: "Return the user's calendars",
+        description: "Return the user's calendars. A calendar with disabled: true is turned off in Thunderbird: it lists no events or tasks and createEvent/createTask refuse it until the user turns it on.",
         inputSchema: { type: "object", properties: {}, required: [] },
       },
       {
@@ -7300,6 +7339,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   name: c.name,
                   type: c.type,
                   readOnly: c.readOnly,
+                  disabled: isCalendarDisabled(c),
                   supportsEvents: c.getProperty("capabilities.events.supported") !== false,
                   supportsTasks: c.getProperty("capabilities.tasks.supported") !== false,
                 }));
@@ -7425,11 +7465,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (targetCalendar.readOnly) {
                     return { error: `Calendar is read-only: ${targetCalendar.name}` };
                   }
-                } else {
-                  targetCalendar = calendars.find(c => !c.readOnly);
-                  if (!targetCalendar) {
-                    return { error: "No writable calendar found" };
+                  if (isCalendarDisabled(targetCalendar)) {
+                    return { error: disabledCalendarError(targetCalendar) };
                   }
+                } else {
+                  const picked = pickDefaultWriteCalendar(calendars, () => true, "calendar");
+                  if (picked.error) return { error: picked.error };
+                  targetCalendar = picked.calendar;
                 }
 
                 event.calendar = targetCalendar;
@@ -8078,6 +8120,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (targetCalendar.getProperty("capabilities.tasks.supported") === false) {
                     return { error: `Calendar "${targetCalendar.name}" does not support tasks. Use listCalendars to find one with supportsTasks=true.` };
                   }
+                  if (isCalendarDisabled(targetCalendar)) return { error: disabledCalendarError(targetCalendar) };
                 }
 
                 // Build a fully-populated CalTodo. The extension runs in addon_parent
@@ -8100,10 +8143,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
                 if (skipReview) {
                   if (!targetCalendar) {
-                    targetCalendar = getAccessibleCalendars().find(
-                      c => !c.readOnly && c.getProperty("capabilities.tasks.supported") !== false
+                    const picked = pickDefaultWriteCalendar(
+                      getAccessibleCalendars(),
+                      c => c.getProperty("capabilities.tasks.supported") !== false,
+                      "task-capable calendar"
                     );
-                    if (!targetCalendar) return { error: "No writable task-capable calendar found" };
+                    if (picked.error) return { error: picked.error };
+                    targetCalendar = picked.calendar;
                     todo.calendar = targetCalendar;
                   }
                   await targetCalendar.addItem(todo);

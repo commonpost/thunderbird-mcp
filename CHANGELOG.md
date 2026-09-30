@@ -19,6 +19,14 @@ project is kept in this repository.
 - `updateFilter` can switch a rule off even if it keeps a move/copy target that is no longer accessible; any other
   change is still refused.
 
+### Fixed
+- `createEvent` and `createTask` no longer write to a disabled calendar. Thunderbird creates its default "Home"
+  calendar disabled until the user turns it on, and a disabled calendar accepts new items but shows and lists none:
+  the call reported success for an event or task that neither Thunderbird nor `listEvents` / `listTasks` showed.
+  Without a `calendarId` the first writable calendar that is turned on is used; when every writable calendar is
+  disabled, or the `calendarId` names a disabled one, the call fails and says to turn the calendar on.
+  `listCalendars` now reports `disabled` for each calendar.
+
 ### Thanks
 - The `SNAP_NAME` check in the Snap Thunderbird detection (0.10.0) was first proposed by @mazixs in #14.
 
