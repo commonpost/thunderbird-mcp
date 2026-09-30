@@ -37,7 +37,7 @@ Give your AI assistant full access to Thunderbird -- search mail, compose messag
      claude mcp add commonpost-mail -- node C:\Users\<you>\commonpost-mcp\mcp-bridge.cjs
      ```
 
-   - Other clients: add this to the client's MCP config. In JSON, write Windows paths with `/` or double the backslashes (`"C:/Users/<you>/commonpost-mcp/mcp-bridge.cjs"`).
+   - Other clients: add this to the client's MCP config (Claude Desktop, VS Code, Cursor, Codex CLI and Gemini CLI have their own file and format: see [Other MCP clients](#other-mcp-clients)). In JSON, write Windows paths with `/` or double the backslashes (`"C:/Users/<you>/commonpost-mcp/mcp-bridge.cjs"`).
 
      ```json
      {
@@ -198,6 +198,73 @@ Add to your MCP client config (e.g. `~/.claude.json` for Claude Code):
   }
 }
 ```
+
+### Other MCP clients
+
+The bridge is a standard MCP stdio server and is not tied to any client: it works with any client that can launch a local server. The `mcpServers` layout above is common but not universal, so each client below has its own file and format. In every case use the absolute path of `mcp-bridge.cjs` and the server name `commonpost-mail`, then restart the client.
+
+**Claude Desktop.** Edit `claude_desktop_config.json` (Settings > Developer > Edit Config opens it): `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows. In JSON, double the backslashes of Windows paths.
+
+```json
+{
+  "mcpServers": {
+    "commonpost-mail": {
+      "command": "node",
+      "args": ["C:\\Users\\<you>\\commonpost-mcp\\mcp-bridge.cjs"]
+    }
+  }
+}
+```
+
+**Visual Studio Code.** Edit `.vscode/mcp.json` in a workspace, or run "MCP: Open User Configuration" for your user profile. The top-level key is `servers` (not `mcpServers`), and a stdio server needs `"type": "stdio"`.
+
+```json
+{
+  "servers": {
+    "commonpost-mail": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/absolute/path/to/mcp-bridge.cjs"]
+    }
+  }
+}
+```
+
+**Cursor.** Edit `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` (one project). The top-level key is `mcpServers`.
+
+```json
+{
+  "mcpServers": {
+    "commonpost-mail": {
+      "command": "node",
+      "args": ["/absolute/path/to/mcp-bridge.cjs"]
+    }
+  }
+}
+```
+
+**OpenAI Codex CLI.** Edit `~/.codex/config.toml` (or `.codex/config.toml` in a trusted project). This is TOML, not JSON: one table per server.
+
+```toml
+[mcp_servers.commonpost-mail]
+command = "node"
+args = ["/absolute/path/to/mcp-bridge.cjs"]
+```
+
+**Gemini CLI.** Edit `~/.gemini/settings.json` (or `.gemini/settings.json` in a project). The top-level key is `mcpServers`. Its `env` block expands `$VAR`, `${VAR}` and, on Windows, `%VAR%` references, so a value containing `$` or `%` would be altered.
+
+```json
+{
+  "mcpServers": {
+    "commonpost-mail": {
+      "command": "node",
+      "args": ["/absolute/path/to/mcp-bridge.cjs"]
+    }
+  }
+}
+```
+
+The bridge normally finds Thunderbird's connection file by itself, so no environment variable is needed. Only if it cannot, set `COMMONPOST_MCP_CONNECTION_FILE` to the file's real path in the server's environment: an `"env": { ... }` object next to `args` in the JSON formats, a `[mcp_servers.commonpost-mail.env]` table for Codex (see [Sandbox-aware connection discovery](#sandbox-aware-connection-discovery); on Windows the file must be under the bridge's own `%TEMP%`). A path set there replaces the automatic discovery, so never leave a placeholder in it. Client formats change; if one of these no longer matches, follow the client's own MCP documentation and keep the same command and arguments.
 
 ### Sandbox-aware connection discovery
 
