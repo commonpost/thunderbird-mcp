@@ -261,6 +261,43 @@ describe("protectUntrustedResult", () => {
     assert.equal(result.body, `<email-content id="${NONCE}">\nhello\n</email-content id="${NONCE}">`);
   });
 
+  it("counts hidden characters in dupLocations entries but leaves those folder paths unchanged", () => {
+    const row = {
+      id: "m@x", folderPath: "imap://a/INBOX", subject: "s",
+      dupLocations: ["imap://a/Arch\u200Bive", "imap://a/Other"],
+      tags: ["tag\u200B"],
+    };
+    const removed = api.protectUntrustedResult([row], NONCE);
+    assert.equal(removed, 2);
+    assert.deepEqual([...row.dupLocations], ["imap://a/Arch\u200Bive", "imap://a/Other"], "unchanged, only counted");
+    assert.deepEqual([...row.tags], ["tag"], "an array not held by a count-only key is still cleaned");
+  });
+
+  it("judges a table row cell by its column, like the same property of the object form", () => {
+    const table = {
+      columns: ["id", "folderPath", "subject", "preview", "dupLocations"],
+      rows: [["m\u200B@x", "imap://a/IN\u202EBOX", "Hi\u200B", "text\u200B", ["imap://a/B\u200B"]]],
+    };
+    const removed = api.protectUntrustedResult({ messages: table }, NONCE);
+    assert.equal(removed, 5);
+    const [id, folderPath, subject, preview, dupLocations] = table.rows[0];
+    assert.equal(id, "m\u200B@x", "id column: unchanged, only counted");
+    assert.equal(folderPath, "imap://a/IN\u202EBOX", "folderPath column: unchanged, only counted");
+    assert.equal(subject, "Hi", "other columns are cleaned");
+    assert.equal(preview, `<email-content id="${NONCE}" hidden-characters-removed="1">\ntext\n</email-content id="${NONCE}">`,
+      "a body-like column is delimited");
+    assert.deepEqual([...dupLocations], ["imap://a/B\u200B"], "a dupLocations cell holds folder paths, as in the object form");
+  });
+
+  it("cleans a table cell past the last column, or a table whose columns are not all names, as an unnamed entry", () => {
+    const longRow = { columns: ["id"], rows: [["m\u200B", "extra\u200B"]] };
+    assert.equal(api.protectUntrustedResult(longRow, NONCE), 2);
+    assert.deepEqual([...longRow.rows[0]], ["m\u200B", "extra"]);
+    const notATable = { columns: ["id", 3], rows: [["m\u200B", "x"]] };
+    api.protectUntrustedResult(notATable, NONCE);
+    assert.deepEqual([...notATable.rows[0]], ["m", "x"]);
+  });
+
   it("does not delimit the encrypted-message notice as untrusted content", () => {
     const result = { id: "msg-1", body: "encrypted message: content not sent (option to enable in the add-on settings)", encrypted: true };
     const removed = api.protectUntrustedResult(result, NONCE);
