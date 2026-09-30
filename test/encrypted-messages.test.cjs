@@ -89,9 +89,11 @@ describe("wiring", () => {
     assert.match(fn, /catch \{\s*return false;/);
   });
 
-  it("all three message readers pass the option to Thunderbird, none hard-codes true", () => {
+  it("all message readers pass the option to Thunderbird, none hard-codes true", () => {
     assert.ok(!apiSource.includes("examineEncryptedParts: true"));
-    assert.equal(apiSource.match(/examineEncryptedParts: encryptedAllowed/g).length, 3);
+    // getMessage, and loadMimeMessage which the reply and forward tools share.
+    assert.equal(apiSource.match(/examineEncryptedParts: encryptedAllowed/g).length, 1);
+    assert.equal(apiSource.match(/examineEncryptedParts: isEncryptedContentAllowed\(\)/g).length, 1);
   });
 
   it("getMessage returns the notice before any body extraction", () => {
@@ -102,7 +104,7 @@ describe("wiring", () => {
   });
 
   it("the direct reply and forward paths stop before quoting an encrypted message", () => {
-    const hits = [...apiSource.matchAll(/if \(!encryptedAllowed && isEncryptedMimeMessage\(aMimeMsg\)\) \{\s*resolve\(\{ error: `\$\{ENCRYPTED_CONTENT_NOTICE\}; nothing was sent` \}\);\s*return;\s*\}\s*const originalBody/g)];
+    const hits = [...apiSource.matchAll(/if \(!isEncryptedContentAllowed\(\) && isEncryptedMimeMessage\(mimeMsg\)\) \{\s*return \{ error: `\$\{ENCRYPTED_CONTENT_NOTICE\}; nothing was sent` \};\s*\}\s*const originalBody/g)];
     assert.equal(hits.length, 2);
   });
 
