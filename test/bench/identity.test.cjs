@@ -79,7 +79,9 @@ const toolWindowDraft = (uri, id) => tbLib(`${HEADERS}
 // SMTP sink for direct sends: accepts every command, keeps the envelope recipients and the DATA of each message.
 async function smtpSink() {
   const messages = [];
+  let connections = 0;
   const server = net.createServer(socket => {
+    connections++;
     let buffer = "";
     let inData = false;
     let rcpt = [];
@@ -110,7 +112,7 @@ async function smtpSink() {
     });
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  return { messages, port: server.address().port, close: () => server.close() };
+  return { messages, port: server.address().port, connections: () => connections, close: () => server.close() };
 }
 
 const allowDirectSend = allow => tbLib(`
@@ -280,6 +282,60 @@ describe("identity for replies and forwards", { skip: SKIP }, () => {
       assert.deepEqual({ from: sent.from, to: sent.to, cc: sent.cc, replyTo: sent.replyTo, bcc: sent.bcc }, { ...expected, bcc: undefined });
     } finally {
       if (serverKey) await dropSmtp(work, serverKey, sentId);
+      sink.close();
+    }
+  });
+
+  // The block of skipReview is on by default. Nothing may reach the SMTP server while it is, and mode draft is not a send.
+  const listDrafts = () => tbLib("return hdrs(args.drafts).map(h => h.messageId);", { drafts: FOLDER.drafts });
+  const clearDrafts = () => tbLib("clearFolder(args.drafts);", { drafts: FOLDER.drafts });
+  const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  it("with the block on, mode send (or skipReview) is refused and nothing reaches SMTP", async () => {
+    await allowDirectSend(false);
+    const sink = await smtpSink();
+    let serverKey = null;
+    try {
+      serverKey = await useSmtp(work, sink.port);
+      for (const tool of ["replyToMessage", "forwardMessage"]) {
+        for (const send of [{ mode: "send" }, { skipReview: true }, { mode: "send", skipReview: true }]) {
+          const result = await mcp().call(tool, {
+            messageId: idOf("replyTo"), folderPath: FOLDER.inbox, body: "c3", to: "Zed <zed@example.test>", from: "work@bench.test", ...send,
+          });
+          assert.match(result.error || "", /blocks direct sending/, `${tool} ${JSON.stringify(send)}: ${JSON.stringify(result)}`);
+        }
+      }
+      await pause(500);
+      assert.equal(sink.connections(), 0, "no connection to the SMTP server");
+      assert.deepEqual(sink.messages, []);
+    } finally {
+      if (serverKey) await dropSmtp(work, serverKey, null);
+      sink.close();
+    }
+  });
+
+  it("with the block on, mode draft and skipReview true save one draft and make no SMTP call", async () => {
+    await allowDirectSend(false);
+    await clearDrafts();
+    const sink = await smtpSink();
+    let serverKey = null;
+    try {
+      serverKey = await useSmtp(work, sink.port);
+      for (const tool of ["replyToMessage", "forwardMessage"]) {
+        const saved = await mcp().call(tool, {
+          messageId: idOf("replyTo"), folderPath: FOLDER.inbox, body: "c3", to: "Zed <zed@example.test>", from: "work@bench.test",
+          mode: "draft", skipReview: true,
+        });
+        assert.equal(saved.success, true, `${tool}: ${JSON.stringify(saved)}`);
+        assert.deepEqual(await listDrafts(), [saved.messageId], tool);
+        await clearDrafts();
+      }
+      await pause(500);
+      assert.equal(sink.connections(), 0, "no connection to the SMTP server");
+      assert.deepEqual(sink.messages, []);
+    } finally {
+      await clearDrafts();
+      if (serverKey) await dropSmtp(work, serverKey, null);
       sink.close();
     }
   });

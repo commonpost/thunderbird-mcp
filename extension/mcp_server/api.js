@@ -4245,6 +4245,15 @@ function resolveComposeMode(mode, skipReview) {
   return skipReview ? "send" : "window";
 }
 
+const DIRECT_SEND_BLOCKED_ERROR = "User preference blocks direct sending (mode \"send\" or skipReview). Use mode \"draft\" to save a draft, or \"window\" (the default) to open a review window.";
+
+// Why a reply or forward in this mode must not go on, or null. Only a direct send is a send: the draft and window
+// modes send nothing, so the block of skipReview does not apply to them (whatever skipReview says next to them).
+function composeModeRefusal(composeMode, { skipReviewBlocked }) {
+  if (composeMode === "send" && skipReviewBlocked) return DIRECT_SEND_BLOCKED_ERROR;
+  return null;
+}
+
 const mailboxKey = mailbox => String(mailbox?.email || "").toLowerCase();
 
 // RemoveDuplicateAddresses (MimeJSComponents): drops mailboxes already seen or listed in `remove`.
@@ -11316,8 +11325,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
-            const DIRECT_SEND_BLOCKED_ERROR = "User preference blocks direct sending (mode \"send\" or skipReview). Use mode \"draft\" to save a draft, or \"window\" (the default) to open a review window.";
-
             /**
              * Replies to a message with quoted original. mode "window" (default)
              * opens a compose window for review, "draft" saves the reply to Drafts,
@@ -11335,8 +11342,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             async function replyToMessage(messageId, folderPath, body, replyAll, isHtml, to, cc, bcc, from, attachments, skipReview, mode) {
               try {
                 const composeMode = resolveComposeMode(mode, skipReview);
-                if (composeMode === "send" && isSkipReviewBlocked()) {
-                  return { error: DIRECT_SEND_BLOCKED_ERROR };
+                const refusal = composeModeRefusal(composeMode, { skipReviewBlocked: isSkipReviewBlocked() });
+                if (refusal) {
+                  return { error: refusal };
                 }
                 if (composeMode === "send" && (!to || !from)) {
                   return { error: "mode \"send\" (or skipReview) needs explicit to and from: a direct reply takes no address from the original message. Pass them, or use mode \"draft\" or \"window\" to review the reply first." };
@@ -11504,8 +11512,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             async function forwardMessage(messageId, folderPath, to, body, isHtml, cc, bcc, from, attachments, skipReview, mode) {
               try {
                 const composeMode = resolveComposeMode(mode, skipReview);
-                if (composeMode === "send" && isSkipReviewBlocked()) {
-                  return { error: DIRECT_SEND_BLOCKED_ERROR };
+                const refusal = composeModeRefusal(composeMode, { skipReviewBlocked: isSkipReviewBlocked() });
+                if (refusal) {
+                  return { error: refusal };
                 }
                 if (composeMode === "send" && (!to || !from)) {
                   return { error: "mode \"send\" (or skipReview) needs explicit to and from: a direct forward does not take the sender from the original message. Pass them, or use mode \"draft\" or \"window\" to review the forward first." };
