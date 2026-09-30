@@ -28,7 +28,8 @@ function load() {
     Ci: { nsMsgFolderFlags: { Drafts: 0x400, Templates: 0x400000, Queue: 0x800 }, nsMsgMessageFlags: { HasRe: HAS_RE } },
     decodeHeaderValue: value => (value === ENCODED_CC ? "Bob Ålpha <bob@alpha.test>" : value || ""),
     getUserTags: () => [],
-    searchMessages: args => { searches.push(args); return { messages: [] }; },
+    outerWireSubject: (msgHdr, fallback) => msgHdr.wireSubject ?? fallback,
+    searchMessages: (args, options) => { searches.push(args); searches.options = options; return { messages: [] }; },
   };
   vm.createContext(sandbox);
   vm.runInContext(`${region("SEARCH ROW BUILDER")}
@@ -64,6 +65,8 @@ describe("getRecentMessages result rows", () => {
       { query: "", folderPath: folder.URI, startDate: undefined, maxResults: 5, offset: 2, sortOrder: "desc", unreadOnly: true,
         flaggedOnly: undefined, includeSubfolders: undefined, includeTrash: true, format: "legacy" }
     );
+    // No query: an encrypted message is listed with its content withheld, as getRecentMessages did in 0.10.x.
+    assert.deepEqual({ ...searches.options }, { listEncrypted: true });
     const start = Date.parse(args.startDate);
     assert.ok(start >= before - 3 * 86400000 - 1000 && start <= Date.now() - 3 * 86400000);
     getRecentMessages({});
@@ -82,5 +85,11 @@ describe("getRecentMessages result rows", () => {
     assert.deepEqual([legacy._threadId, legacy._folderName, legacy._legacySubject], [3, "Inbox", "Project kickoff"]);
     const renamed = { URI: folder.URI, localizedName: "Posteingang", isSpecialFolder: () => false };
     assert.equal(buildSearchRow(hdr, renamed, true)._folderName, "Posteingang");
+  });
+
+  it("withholds the subject and preview of an encrypted message", () => {
+    const { buildSearchRow } = load();
+    const row = JSON.parse(JSON.stringify(buildSearchRow({ ...hdr, wireSubject: "..." }, folder, true, true)));
+    assert.deepEqual([row.subject, row._legacySubject, row.encrypted, row.preview], ["...", "...", true, undefined]);
   });
 });

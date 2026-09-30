@@ -2146,6 +2146,7 @@ function legacySearchRow(row) {
     recipients: row.recipients, ccList: row.ccList, date: row.date, folder: row._folderName, folderPath: row.folderPath,
     read: row.read, flagged: row.flagged, tags: row.tags,
   };
+  if (row.encrypted) out.encrypted = true;
   if (row.preview) out.preview = row.preview;
   for (const key of ["dupLocations", "linkedBy"]) if (row[key] !== undefined) out[key] = row[key];
   return out;
@@ -7349,6 +7350,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	              return { msgHdr, folder, db };
 	            }
 
+            // Search paths of searchMessages / getRecentMessages (XPCOM glue of MESSAGE SEARCH HELPERS).
+            // BEGIN SEARCH MESSAGES
             function isTrashOrJunkFolder(folder, checkAncestors) {
               try {
                 return folder.isSpecialFolder(Ci.nsMsgFolderFlags.Trash | Ci.nsMsgFolderFlags.Junk, !!checkAncestors);
@@ -7386,10 +7389,16 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return msgHdr.flags & Ci.nsMsgMessageFlags.HasRe ? `Re: ${s}` : s;
             }
 
-            function buildSearchRow(msgHdr, folder, legacy) {
+            // encrypted: an encrypted message listed without a query (getRecentMessages). The subject and preview
+            // Thunderbird stores for it can be what OpenPGP wrote back after decrypting a protected-header message
+            // once, so the row carries the wire-level subject, no preview and encrypted: true, as in 0.10.x.
+            function buildSearchRow(msgHdr, folder, legacy, encrypted) {
+              const subject = encrypted
+                ? outerWireSubject(msgHdr, msgHdr.mime2DecodedSubject || msgHdr.subject)
+                : displaySubject(msgHdr);
               const row = {
                 id: msgHdr.messageId,
-                subject: displaySubject(msgHdr),
+                subject,
                 author: msgHdr.mime2DecodedAuthor || msgHdr.author,
                 recipients: msgHdr.mime2DecodedRecipients || msgHdr.recipients,
                 ccList: decodeHeaderValue(msgHdr.ccList),
@@ -7400,14 +7409,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 tags: getUserTags(msgHdr),
                 _dateTs: msgHdr.date || 0,
               };
+              if (encrypted) row.encrypted = true;
               if (isDraftFolder(folder)) row._draft = true;
               if (legacy) {
                 row._threadId = msgHdr.threadId;
                 // nsIMsgFolder.prettyName is localizedName since Thunderbird 141
                 row._folderName = folder.localizedName ?? folder.prettyName;
-                row._legacySubject = msgHdr.mime2DecodedSubject || msgHdr.subject;
+                row._legacySubject = encrypted ? subject : (msgHdr.mime2DecodedSubject || msgHdr.subject);
               }
-              const preview = msgHdr.getStringProperty("preview") || "";
+              const preview = encrypted ? "" : (msgHdr.getStringProperty("preview") || "");
               if (preview) row.preview = preview;
               return row;
             }
@@ -7557,7 +7567,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               });
             }
 
-	            function searchMessages(args) {
+	            function searchMessages(args, options = {}) {
 	              const prepared = prepareSearch(args);
 	              if (prepared.error) return prepared;
 
@@ -7581,6 +7591,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
 	              const ownEmails = args.groupBy === "thread" ? getOwnEmails() : null;
 	              const encryptedAllowed = isEncryptedContentAllowed();
+	              // getRecentMessages (no query terms) lists an encrypted message with its content withheld, as in
+	              // 0.10.x; a message a query matched is never listed that way (see below).
+	              const listEncrypted = options.listEncrypted === true && terms.length === 0;
 	              const rows = [];
 	              let incomplete = false;
 	              const walked = walkSearchFolders(args, (folder, db) => {
@@ -7593,8 +7606,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                  // protected-header message once, so a candidate matched (or
 	                  // listed, with no query) on those is excluded outright rather
 	                  // than trusted to show only what it should.
-	                  if (!encryptedAllowed && isRawMimeEnvelopeEncrypted(msgHdr)) continue;
-	                  const row = buildSearchRow(msgHdr, folder, args.format === "legacy");
+	                  const encrypted = !encryptedAllowed && isRawMimeEnvelopeEncrypted(msgHdr);
+	                  if (encrypted && !listEncrypted) continue;
+	                  const row = buildSearchRow(msgHdr, folder, args.format === "legacy", encrypted);
 	                  if (ownEmails) addThreadGroupingFields(row, msgHdr, null, ownEmails);
 	                  rows.push(row);
 	                }
@@ -7699,12 +7713,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
 	              const hdrAt = i => sources[i].hdr || sources[i].folder.msgDatabase.getMsgHdrForKey(sources[i].key);
 	              const ownEmails = getOwnEmails();
+	              const encryptedAllowed = isEncryptedContentAllowed();
+	              // Read only for messages whose subject key could link them. An encrypted message takes no part in
+	              // subject linking, neither as a reply nor as its target: the subject Thunderbird stores for it can
+	              // be the decrypted one, and which messages it pulled into the conversation would reveal it.
+	              const noPeople = { key: [], all: new Set() };
 	              const members = conversationMembers(items, seedIndex, i => {
 	                const h = hdrAt(i);
+	                if (!encryptedAllowed && isRawMimeEnvelopeEncrypted(h)) return noPeople;
 	                return threadPeople({ author: h.author, recipients: h.recipients, ccList: h.ccList, bccList: h.bccList }, ownEmails);
 	              });
 
-	              const encryptedAllowed = isEncryptedContentAllowed();
 	              const rows = [];
 	              let incomplete = scanCapped;
 	              for (const [i, how] of members) {
@@ -7722,6 +7741,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	              }
 	              return finishSearch(rows, args, prepared, incomplete);
 	            }
+
+            // END SEARCH MESSAGES
 
             // BEGIN SEARCH CONTACTS
             function searchContacts(query, maxResults, format) {
@@ -9457,7 +9478,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                      if (rawEncoding === "base64") {
 	                        resolve({
 	                          id: msgHdr.messageId,
-	                          subject: displaySubject(msgHdr),
+	                          subject: outerWireSubject(msgHdr, msgHdr.mime2DecodedSubject || msgHdr.subject),
 	                          rawSource: encodeByteStringToBase64(raw),
 	                          rawEncoding: "base64",
 	                        });
@@ -10912,7 +10933,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 includeSubfolders: args.includeSubfolders,
                 includeTrash: args.includeTrash,
                 format: args.format,
-              });
+              }, { listEncrypted: true });
             }
             // END RECENT MESSAGES
 
