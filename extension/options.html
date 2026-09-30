@@ -314,11 +314,15 @@
 <div class="section">
   <h2>Send Safety</h2>
   <p class="mode-note">
-    This setting is enabled by default. While enabled, MCP clients requesting
-    <code>skipReview: true</code> on sendMail, replyToMessage, forwardMessage,
-    createEvent, or createTask are rejected; the review window or dialog remains
-    available. <code>skipReview</code> is honored only after you explicitly disable
-    this setting.
+    This setting is enabled by default. While enabled, MCP clients asking for a
+    direct send are rejected: <code>skipReview: true</code> on sendMail,
+    replyToMessage, forwardMessage, createEvent, or createTask, and
+    <code>mode: "send"</code> on replyToMessage or forwardMessage; the review
+    window or dialog remains available. <code>mode: "draft"</code> on
+    replyToMessage or forwardMessage only saves a draft, sends nothing and is not
+    blocked by this setting (it needs the saveDraft tool to be enabled under Tool
+    Access). A direct send is honored only after you explicitly disable this
+    setting.
   </p>
   <ul class="account-list">
     <li>
