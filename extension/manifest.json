@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Commonpost MCP for Thunderbird",
-  "version": "0.8.3",
+  "version": "0.10.0",
   "description": "MCP server for AI assistants to access email, contacts, and calendars. Continuation of thunderbird-mcp by Tomasz Kasperczyk.",
   "homepage_url": "https://github.com/commonpost/thunderbird-mcp",
   "developer": {

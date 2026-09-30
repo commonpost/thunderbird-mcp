@@ -4,7 +4,7 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## [Unreleased]
+## [0.10.0] - 2026-09-30
 
 Security hardening in filters, attachments, the bridge's connection file, encrypted messages, account restrictions
 and message content handed to the assistant. Details will be published on November 10, 2026. Updating is
