@@ -716,7 +716,29 @@ describe("updateFilter refuses to keep a move/copy target in an unauthorized acc
     const list = makeFilterList();
     assert.throws(() => api.planFilterUpdate(list, ruleTo(OTHER), { name: "y" }, resolveFolder, opts),
       /does not allow \(move\/copy target not accessible.*provide new actions, or delete the rule/s);
-    assert.throws(() => api.planFilterUpdate(list, ruleTo(OTHER), { enabled: false }, resolveFolder, opts), /does not allow/);
+    assert.throws(() => api.planFilterUpdate(list, ruleTo(OTHER), { enabled: true }, resolveFolder, opts), /does not allow/);
+  });
+
+  it("allows an update that only disables the rule, even with an inaccessible target or the Outbox", () => {
+    const list = makeFilterList();
+    for (const rule of [ruleTo(OTHER), ruleTo(OTHER, "copyToFolder"), ruleTo(OUTBOX)]) {
+      const plan = api.planFilterUpdate(list, rule, { enabled: false }, resolveFolder, opts);
+      assert.deepEqual([...plan.changes], ["enabled"]);
+      assert.equal(plan.replacement, null);
+    }
+  });
+
+  it("anything else next to the disabling is still refused", () => {
+    const list = makeFilterList();
+    for (const update of [
+      { enabled: false, name: "y" },
+      { enabled: false, type: 1 },
+      { enabled: false, conditions: [{ attrib: "subject", op: "contains", value: "z" }] },
+      { name: "y" },
+      { type: 1 },
+    ]) {
+      assert.throws(() => api.planFilterUpdate(list, ruleTo(OTHER), update, resolveFolder, opts), /does not allow/, JSON.stringify(update));
+    }
   });
 
   it("refuses when only the conditions change and a copy target is kept", () => {
@@ -729,7 +751,7 @@ describe("updateFilter refuses to keep a move/copy target in an unauthorized acc
     const list = makeFilterList();
     assert.throws(() => api.planFilterUpdate(list, ruleTo(OUTBOX), { name: "y" }, resolveFolder, opts),
       /move\/copy target is the Outbox.*provide new actions, or delete the rule/s);
-    assert.throws(() => api.planFilterUpdate(list, ruleTo(OUTBOX, "copyToFolder"), { enabled: false }, resolveFolder, opts),
+    assert.throws(() => api.planFilterUpdate(list, ruleTo(OUTBOX, "copyToFolder"), { enabled: true }, resolveFolder, opts),
       /Outbox/);
   });
 
@@ -744,6 +766,8 @@ describe("updateFilter refuses to keep a move/copy target in an unauthorized acc
   it("an isKeptTargetAllowed that throws refuses (fail closed)", () => {
     const list = makeFilterList();
     assert.throws(() => api.planFilterUpdate(list, ruleTo(ARCHIVE), { name: "y" }, resolveFolder,
+      { isKeptTargetAllowed: () => { throw new Error("boom"); } }), /does not allow/);
+    assert.throws(() => api.planFilterUpdate(list, ruleTo(ARCHIVE), { enabled: true }, resolveFolder,
       { isKeptTargetAllowed: () => { throw new Error("boom"); } }), /does not allow/);
   });
 });

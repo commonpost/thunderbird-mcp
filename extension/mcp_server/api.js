@@ -2542,11 +2542,16 @@ function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSend
         + `it cannot be modified${outgoing ? " or marked for outgoing mail" : ""} through MCP -- ${FILTER_SEND_GUARD_NOTE}`);
     }
   }
-  if (!replaceActions && typeof isKeptTargetAllowed === "function") {
+  // An update that does nothing but switch the rule off stops it from running:
+  // it needs no check of the targets it keeps.
+  const onlyDisables = update.enabled === false && update.name === undefined && update.type === undefined
+    && !replaceConditions && !replaceActions;
+  if (!replaceActions && !onlyDisables && typeof isKeptTargetAllowed === "function") {
     // The rule keeps its move/copy targets, and runs whenever mail arrives or
     // applyFilters is used: a target in an account the restriction does not
     // allow, or the Outbox, is not kept on its behalf. Deleting the rule stays
-    // possible. isKeptTargetAllowed(uri) returns true, or the reason why not.
+    // possible, and so does only disabling it. isKeptTargetAllowed(uri)
+    // returns true, or the reason why not.
     let uris;
     try {
       uris = filterFolderTargetUris(filter);
