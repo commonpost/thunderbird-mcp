@@ -1626,9 +1626,8 @@ function stripHiddenCharacters(value) {
 // text. By then protectUntrustedResult has removed them from the free text of
 // the message, calendar and contact tools, so what is escaped is what it only
 // counts (UNTRUSTED_COUNT_ONLY_KEYS: an id or folder path passed back
-// unchanged still finds the same message or folder), rawSource, and the
-// results of the other tools, which are not cleaned (folder, account or
-// filter names...). Judged on the JSON text, so a joiner right after an
+// unchanged still finds the same message or folder) and the results of the
+// other tools, which are not cleaned (folder, account or filter names...). Judged on the JSON text, so a joiner right after an
 // escape such as \n may stay where stripHiddenCharacters would remove it;
 // a joiner hides no text of its own.
 function escapeHiddenCharacters(json) {
@@ -1691,20 +1690,17 @@ function protectUntrustedResult(result, nonce, statusRef = {}) {
       const value = node[key];
       const name = isArray ? entryName?.(key) : key;
       if (typeof value === "string") {
-        // rawSource is a byte string (readMessageStreamFully), one JS code
-        // unit per octet, not decoded text: the hidden-character ranges this
-        // strips (C1 controls 0x80-0x9F, DEL, soft hyphen...) are ordinary
-        // continuation bytes in UTF-8 and escape bytes in ISO-2022-JP, so
-        // stripping them corrupts the message. Never rewritten (delimited
-        // below like any other wrapped key).
-        const isRawBytes = name === "rawSource";
+        // rawSource is decoded text (decodeRawSource), not a byte string any
+        // more, so it is cleaned like a body; with rawEncoding "base64" it is
+        // base64, which holds nothing to remove. The exact bytes, hidden
+        // characters included, stay available through rawEncoding "base64".
         // Identifiers (id, folderPath, latestId...): see UNTRUSTED_COUNT_ONLY_KEYS above.
         const isCountOnly = UNTRUSTED_COUNT_ONLY_KEYS.has(name);
         if (isCountOnly) {
           removedTotal += stripHiddenCharacters(value).removed;
           continue;
         }
-        const { text, removed } = isRawBytes ? { text: value, removed: 0 } : stripHiddenCharacters(value);
+        const { text, removed } = stripHiddenCharacters(value);
         removedTotal += removed;
         // The encrypted-message notice in `body` (see ENCRYPTED_CONTENT_NOTICE)
         // is our own text, not the sender's: counted and cleaned like any
@@ -9254,6 +9250,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // Raw source as text: strict UTF-8; else the charset of the top-level Content-Type, then those of the
             // parts (non-UTF-8 first, since the bytes are not UTF-8); else detect(raw) (MailStringUtils.detectCharset:
             // BOM, then Gecko's EncodingDetector). mixedCharsets lists the declared encodings when they differ.
+            // lossy: decoded as UTF-8 although the bytes are not valid UTF-8 (the strict decoder failed first),
+            // so invalid bytes became U+FFFD.
             function decodeRawSource(raw, detect) {
               const bytes = rawMimeBytesFromByteString(raw);
               try {
@@ -9279,7 +9277,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const mixed = encodings.length > 1 ? { mixedCharsets: encodings } : {};
               for (const label of candidates) {
                 const decoder = rawSourceDecoder(label);
-                if (decoder) return { text: decoder.decode(bytes), charset: decoder.encoding, ...mixed };
+                if (decoder) {
+                  const lossy = decoder.encoding === "utf-8" ? { lossy: true } : {};
+                  return { text: decoder.decode(bytes), charset: decoder.encoding, ...mixed, ...lossy };
+                }
               }
               return { text: raw, charset: "iso-8859-1", ...mixed };
             }
@@ -9493,10 +9494,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                        rawSource: decoded.text,
 	                        rawCharset: decoded.charset,
 	                      };
+	                      const warnings = [];
 	                      if (decoded.mixedCharsets) {
 	                        result.rawMixedCharsets = decoded.mixedCharsets;
-	                        result.warning = `Parts declare different charsets; rawSource is decoded as ${decoded.charset}, so text in the other charsets may be garbled. rawEncoding "base64" returns the exact bytes.`;
+	                        warnings.push(`Parts declare different charsets; rawSource is decoded as ${decoded.charset}, so text in the other charsets may be garbled.`);
 	                      }
+	                      if (decoded.lossy) {
+	                        warnings.push("rawSource is not valid UTF-8: invalid bytes were replaced with U+FFFD.");
+	                      }
+	                      if (warnings.length) result.warning = `${warnings.join(" ")} rawEncoding "base64" returns the exact bytes.`;
 	                      resolve(result);
 	                    } catch (e) {
 	                      console.error("commonpost-mcp: raw source read failed:", e);
