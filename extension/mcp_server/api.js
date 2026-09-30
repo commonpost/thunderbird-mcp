@@ -6035,15 +6035,30 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return null;
             }
 
-            function loadMimeMessage(msgHdr) {
+            // Below the bridge's 30 s request timeout, so that a direct send reports this error
+            // rather than the bridge's.
+            const MIME_LOAD_TIMEOUT_MS = 20000;
+
+            // The parsed message, or null when it cannot be parsed or Thunderbird does not answer in time
+            // (an IMAP message it has to download, for instance). The reply and forward tools only use it as
+            // a hint: a window or a draft goes on without it, but a direct send (failOnTimeout) needs it to
+            // quote the original, so it fails instead of waiting.
+            async function loadMimeMessage(msgHdr, failOnTimeout) {
               const { MsgHdrToMimeMessage } = ChromeUtils.importESModule("resource:///modules/gloda/MimeMessage.sys.mjs");
-              return new Promise((resolve) => {
+              const loaded = new Promise((resolve) => {
                 try {
                   MsgHdrToMimeMessage(msgHdr, null, (aMsgHdr, aMimeMsg) => resolve(aMimeMsg || null), true, { examineEncryptedParts: isEncryptedContentAllowed() });
                 } catch {
                   resolve(null);
                 }
               });
+              try {
+                return await waitAtMost(loaded, MIME_LOAD_TIMEOUT_MS,
+                  () => new Error(`Thunderbird did not return the original message within ${MIME_LOAD_TIMEOUT_MS / 1000} s`));
+              } catch (e) {
+                if (failOnTimeout) throw new Error(`${e.message}; nothing was sent`, { cause: e });
+                return null;
+              }
             }
 
             /** Creates an nsIFile instance for the given path. */
@@ -10947,7 +10962,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   msgComposeParams.origMsgHdr = msgHdr;
                 } catch {}
 
-                const mimeMsg = await loadMimeMessage(msgHdr);
+                const mimeMsg = await loadMimeMessage(msgHdr, !!skipReview);
                 const identityResult = setReplyIdentity(msgComposeParams, from, msgHdr, compType, mimeMsg);
                 if (identityResult && identityResult.error) {
                   return identityResult;
@@ -11090,7 +11105,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   msgComposeParams.origMsgHdr = msgHdr;
                 } catch {}
 
-                const mimeMsg = await loadMimeMessage(msgHdr);
+                const mimeMsg = await loadMimeMessage(msgHdr, !!skipReview);
                 const identityResult = setReplyIdentity(msgComposeParams, from, msgHdr, compType, mimeMsg);
                 if (identityResult && identityResult.error) {
                   return identityResult;
