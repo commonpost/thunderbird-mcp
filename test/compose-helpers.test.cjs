@@ -16,7 +16,7 @@ assert.ok(start >= 0 && end > start, 'COMPOSE HELPERS markers missing');
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${apiSource.slice(start, end)}
-this.api = { resolveComposeMode, composeModeRefusal, DIRECT_SEND_BLOCKED_ERROR, DRAFT_TOOL_DISABLED_ERROR, computeReplyRecipients, switchIdentityRecipients, buildReplyReferences };`, sandbox);
+this.api = { resolveComposeMode, composeModeRefusal, DIRECT_SEND_BLOCKED_ERROR, DRAFT_TOOL_DISABLED_ERROR, computeReplyRecipients, switchIdentityRecipients, buildReplyReferences, referenceIds };`, sandbox);
 const api = sandbox.api;
 
 describe('resolveComposeMode', () => {
@@ -167,6 +167,22 @@ describe('switchIdentityRecipients (LoadIdentity)', () => {
     assert.deepEqual(
       run({ to: 'a@x.test', cc: 'Boss <boss@me.test>, boss@me.test', replyTo: 'desk@me.test' }, { cc: 'Boss <boss@me.test>', replyTo: 'desk@me.test' }, { replyTo: 'desk@me.test' }),
       { to: 'a@x.test', cc: 'boss@me.test', bcc: '', replyTo: 'desk@me.test' });
+  });
+});
+
+describe('referenceIds', () => {
+  it('extracts the ids of a References header, folded or not', () => {
+    assert.deepEqual([...api.referenceIds('<a@x> <b@y>')], ['<a@x>', '<b@y>']);
+    assert.deepEqual([...api.referenceIds('<a@x>\r\n <b@y>\t<c@z>')], ['<a@x>', '<b@y>', '<c@z>']);
+    assert.deepEqual([...api.referenceIds('')], []);
+    assert.deepEqual([...api.referenceIds(undefined)], []);
+  });
+
+  it('does not take a token that holds brackets or white space', () => {
+    assert.deepEqual([...api.referenceIds('<a@x <b@y>')], ['<b@y>']);
+    assert.deepEqual([...api.referenceIds('<a b@x> <c@y>')], ['<c@y>']);
+    assert.deepEqual([...api.referenceIds('<<a@x>> <>')], ['<a@x>']);
+    assert.deepEqual([...api.referenceIds('junk <a@x> more')], ['<a@x>']);
   });
 });
 

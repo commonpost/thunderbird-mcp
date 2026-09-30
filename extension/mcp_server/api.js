@@ -4396,6 +4396,9 @@ function switchIdentityRecipients(fields, prev, next, parse) {
   return out;
 }
 
+// The message ids of a References header: a token of "<", anything but brackets and white space, ">".
+const referenceIds = header => String(header || "").match(/<[^<>\s]+>/g) || [];
+
 // References for a reply: the original chain plus the original id (last, In-Reply-To is taken from it). Not trimmed:
 // MimeMessage keeps the header under 998 characters when it writes the message, as for Thunderbird's own reply.
 function buildReplyReferences(originalReferences, originalMessageId) {
@@ -11421,7 +11424,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   // The original's References and Message-ID, as Thunderbird's reply (a message without Message-ID has only
                   // a generated "md5:" id and adds none); MimeMessage derives In-Reply-To from the last one
                   composeFields.references = mimeMsg
-                    ? buildReplyReferences(mimeHeaderValue(mimeMsg, "references").match(/<[^>]*>/g), mimeHeaderValue(mimeMsg, "message-id"))
+                    ? buildReplyReferences(referenceIds(mimeHeaderValue(mimeMsg, "references")), mimeHeaderValue(mimeMsg, "message-id"))
                     : buildReplyReferences(Array.from({ length: msgHdr.numReferences }, (_, i) => msgHdr.getStringReference(i)),
                       msgHdr.messageId.startsWith("md5:") ? "" : msgHdr.messageId);
 
