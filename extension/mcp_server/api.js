@@ -7281,6 +7281,269 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return "";
             }
 
+            // BEGIN FOLDER SUMMARY REBUILD
+            // A local folder whose summary (.msf) Thunderbird finds out of date
+            // or missing -- mbox changed outside Thunderbird, .msf deleted or
+            // damaged -- makes msgDatabase throw instead of opening. Thunderbird
+            // rebuilds it when the folder is opened in its window; a tool that
+            // reads the folder has to ask for the rebuild itself. IMAP folders
+            // never get there: their database is recreated empty and refilled
+            // by updateFolder (nsImapMailFolder::GetDatabase).
+            const NS_MSG_ERROR_FOLDER_SUMMARY_OUT_OF_DATE = 0x80550005;
+            const NS_MSG_ERROR_FOLDER_SUMMARY_MISSING = 0x80550006;
+            const NS_ERROR_NOT_INITIALIZED = 0xC1F30001;
+            // Below the bridge's 30 s request timeout, so that the client reads
+            // this error rather than the bridge's.
+            const FOLDER_SUMMARY_REBUILD_TIMEOUT_MS = 20000;
+            // Folder URI -> promise of the rebuild in progress (one per folder).
+            const folderSummaryRebuilds = new Map();
+
+            function xpcomErrorCode(e) {
+              return typeof e === "number" ? e : e?.result;
+            }
+
+            function isStaleFolderSummaryError(e) {
+              const code = xpcomErrorCode(e);
+              return code === NS_MSG_ERROR_FOLDER_SUMMARY_OUT_OF_DATE || code === NS_MSG_ERROR_FOLDER_SUMMARY_MISSING;
+            }
+
+            function stillRebuildingError(uri) {
+              const error = new Error(`Thunderbird is still rebuilding the summary of folder ${uri}; try again in a moment`);
+              error.folderSummaryRebuilding = true;
+              return error;
+            }
+
+            // `promise`, or `timeoutError()` after `ms`.
+            function waitAtMost(promise, ms, timeoutError) {
+              return new Promise((resolve, reject) => {
+                const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+                timer.initWithCallback({ notify: () => reject(timeoutError()) }, ms, Ci.nsITimer.TYPE_ONE_SHOT);
+                promise.then((value) => {
+                  timer.cancel();
+                  resolve(value);
+                }).catch((e) => {
+                  timer.cancel();
+                  reject(e);
+                });
+              });
+            }
+
+            function asLocalMailFolder(folder) {
+              try {
+                return folder.QueryInterface(Ci.nsIMsgLocalMailFolder);
+              } catch {
+                return null;
+              }
+            }
+
+            // Starts Thunderbird's rebuild of the folder's summary, or joins the
+            // one in progress. Resolves when Thunderbird reports the folder
+            // loaded (FolderLoaded ends every rebuild, including one Thunderbird
+            // started itself); rejects with Thunderbird's error when the rebuild
+            // cannot start, or with a "still rebuilding" error after
+            // FOLDER_SUMMARY_REBUILD_TIMEOUT_MS.
+            function rebuildFolderSummary(folder, localFolder) {
+              const uri = folder.URI;
+              const running = folderSummaryRebuilds.get(uri);
+              if (running) return running;
+              let resolveRebuild;
+              let rejectRebuild;
+              const rebuild = new Promise((resolve, reject) => {
+                resolveRebuild = resolve;
+                rejectRebuild = reject;
+              });
+              folderSummaryRebuilds.set(uri, rebuild);
+              const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+              let settled = false;
+              const listener = {
+                QueryInterface: ChromeUtils.generateQI(["nsIFolderListener"]),
+                onFolderEvent(item, event) {
+                  if (event === "FolderLoaded" && item && item.URI === uri) settle(null);
+                },
+              };
+              const settle = (error) => {
+                if (settled) return;
+                settled = true;
+                if (folderSummaryRebuilds.get(uri) === rebuild) folderSummaryRebuilds.delete(uri);
+                timer.cancel();
+                try {
+                  MailServices.mailSession.RemoveFolderListener(listener);
+                } catch (e) {
+                  console.warn("commonpost-mcp: could not remove the folder listener:", e);
+                }
+                if (error) rejectRebuild(error);
+                else resolveRebuild();
+              };
+              try {
+                MailServices.mailSession.AddFolderListener(listener, Ci.nsIFolderListener.event);
+                timer.initWithCallback({ notify: () => settle(stillRebuildingError(uri)) },
+                  FOLDER_SUMMARY_REBUILD_TIMEOUT_MS, Ci.nsITimer.TYPE_ONE_SHOT);
+                // No URL listener: it is not called when Thunderbird was already
+                // rebuilding (the call then throws OUT_OF_DATE and keeps no
+                // listener), so FolderLoaded is the signal for both cases, as
+                // for Gloda's indexer.
+                localFolder.getDatabaseWithReparse(null, null);
+                settle(null); // opened after all: nothing to rebuild
+              } catch (e) {
+                const code = xpcomErrorCode(e);
+                // NOT_INITIALIZED: rebuild started; OUT_OF_DATE: already running.
+                if (code !== NS_ERROR_NOT_INITIALIZED && code !== NS_MSG_ERROR_FOLDER_SUMMARY_OUT_OF_DATE) settle(e);
+              }
+              return rebuild;
+            }
+
+            // The folder's message database. When Thunderbird reports the
+            // summary of a local folder out of date or missing, has it rebuilt,
+            // waits until `deadline` (ms since the epoch) at most, and tries once
+            // more; whatever that second try throws is thrown. Any other error is
+            // thrown as is, without a rebuild.
+            async function ensureFolderDatabase(folder, deadline = Date.now() + FOLDER_SUMMARY_REBUILD_TIMEOUT_MS) {
+              try {
+                return folder.msgDatabase;
+              } catch (e) {
+                if (!isStaleFolderSummaryError(e)) throw e;
+                const localFolder = asLocalMailFolder(folder);
+                const waitMs = deadline - Date.now();
+                // A server's root folder holds no messages: nothing to rebuild.
+                // Past the deadline, no rebuild is started: a call that reads
+                // many folders rebuilds them one after the other, never all at
+                // once.
+                if (!localFolder || folder.isServer || waitMs <= 0) throw e;
+                await waitAtMost(rebuildFolderSummary(folder, localFolder), waitMs, () => stillRebuildingError(folder.URI));
+              }
+              return folder.msgDatabase;
+            }
+
+            // Pre-flight of a tool that is about to read `folder` (see callTool):
+            // its summary is rebuilt if needed. Returns { error } only when the
+            // rebuild is still running after the time limit; any other problem
+            // is left to the tool, which reports it as before.
+            async function prepareFolderSummary(folder, deadline) {
+              try {
+                await ensureFolderDatabase(folder, deadline);
+              } catch (e) {
+                if (e && e.folderSummaryRebuilding) return { error: e.message };
+              }
+              return null;
+            }
+
+            // Same, for the folder a tool names by folderPath. Only a folder of
+            // an accessible account is touched (getAccessibleFolder).
+            async function prepareFolderDatabase(folderPath, deadline) {
+              if (typeof folderPath !== "string" || !folderPath) return null;
+              let found;
+              try {
+                found = getAccessibleFolder(folderPath);
+              } catch {
+                return null;
+              }
+              if (!found || found.error || !found.folder) return null;
+              return prepareFolderSummary(found.folder, deadline);
+            }
+
+            // Pre-flight of searchMessages / getRecentMessages, within one
+            // deadline: the folder named by folderPath and the threadOf seed's
+            // folder (an error if still rebuilding at the deadline), then, one
+            // after the other, every folder walkSearchFolders reads (a folder
+            // not ready is skipped by the walk, as before). The scope is
+            // walkSearchFolders' own: folderPath with its subfolders unless
+            // includeSubfolders is false, else every accessible account; Trash
+            // and Junk only when asked for. searchBody reads the Gloda index,
+            // not the folders: only the named folder there.
+            async function prepareSearchFolders(args) {
+              const deadline = Date.now() + FOLDER_SUMMARY_REBUILD_TIMEOUT_MS;
+              for (const folderPath of [args.folderPath, args.threadOf?.folderPath]) {
+                const notReady = await prepareFolderDatabase(folderPath, deadline);
+                if (notReady) return notReady;
+              }
+              if (args.searchBody) return null;
+              const scope = [];
+              let rootFolder = null;
+              const collect = (folder) => {
+                if (!args.includeTrash && folder !== rootFolder && isTrashOrJunkFolder(folder, false)) return;
+                scope.push(folder);
+                try {
+                  if (args.includeSubfolders !== false && folder.hasSubFolders) {
+                    for (const subfolder of folder.subFolders) collect(subfolder);
+                  }
+                } catch {
+                  // Left to the walk
+                }
+              };
+              try {
+                if (args.folderPath) {
+                  const found = getAccessibleFolder(args.folderPath);
+                  if (found.error || !found.folder) return null;
+                  rootFolder = found.folder;
+                  collect(rootFolder);
+                } else {
+                  for (const account of getAccessibleAccounts()) {
+                    rootFolder = account.incomingServer.rootFolder;
+                    collect(rootFolder);
+                  }
+                }
+              } catch {
+                // Left to the walk, which reports or skips it
+              }
+              for (const folder of scope) await prepareFolderSummary(folder, deadline);
+              return null;
+            }
+
+            // Pre-flight of the filter tools: the Templates folders that
+            // resolveReplyTemplate reads, for the reply actions of the request
+            // and of the account's rules (the confirmation dialog shows both).
+            // Only under "confirm" ("block" never reads a template), and only
+            // folders resolveReplyTemplate would read: accessible, given by
+            // their canonical URI, Templates.
+            async function prepareReplyTemplateFolders(args) {
+              try {
+                if (filterSendRulePolicy() !== "confirm") return null;
+              } catch {
+                return null; // left to the operation, which reads the policy again
+              }
+              const values = [];
+              for (const act of Array.isArray(args.actions) ? args.actions : []) {
+                if (act && act.type === "reply") values.push(act.value);
+              }
+              try {
+                const fl = getFilterListForAccount(args.accountId);
+                if (!fl.error) {
+                  for (const rule of listSendingRules(fl.filterList)) {
+                    for (const act of serializeFilter(fl.filterList.getFilterAt(rule.index), rule.index).actions) {
+                      if (act.type === "reply") values.push(act.value);
+                    }
+                  }
+                }
+              } catch {
+                // Left to the operation, which reads the list again and reports it.
+              }
+              const deadline = Date.now() + FOLDER_SUMMARY_REBUILD_TIMEOUT_MS;
+              const seen = new Set();
+              for (const value of values) {
+                let folderUri;
+                try {
+                  ({ folderUri } = parseReplyTemplateValue(value));
+                } catch {
+                  continue;
+                }
+                if (seen.has(folderUri)) continue;
+                seen.add(folderUri);
+                let folder = null;
+                try {
+                  const found = getAccessibleFolder(folderUri);
+                  if (!found.error && found.folder && found.folder.URI === folderUri
+                    && found.folder.getFlag(Ci.nsMsgFolderFlags.Templates)) folder = found.folder;
+                } catch {
+                  folder = null;
+                }
+                if (!folder) continue;
+                const notReady = await prepareFolderSummary(folder, deadline);
+                if (notReady) return notReady;
+              }
+              return null;
+            }
+            // END FOLDER SUMMARY REBUILD
+
 	            /**
 	             * Opens a folder and its message database.
 	             * Best-effort refresh for IMAP folders (db may be stale).
@@ -10340,6 +10603,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
 
               const results = [];
+              // One time limit for the summary rebuilds of the whole call.
+              const rebuildDeadline = Date.now() + FOLDER_SUMMARY_REBUILD_TIMEOUT_MS;
               for (let i = 0; i < messages.length; i++) {
                 const ref = messages[i];
                 if (!ref || typeof ref !== "object" || Array.isArray(ref)) {
@@ -10369,7 +10634,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
 
                 const result = pageMessageBody(
-                  await getMessage(messageId, folderPath, saveAttachments, bodyFormat, rawSource, false, rawEncoding),
+                  await prepareFolderDatabase(folderPath, rebuildDeadline)
+                    || await getMessage(messageId, folderPath, saveAttachments, bodyFormat, rawSource, false, rawEncoding),
                   0, maxBodyChars, DEFAULT_GET_MESSAGES_BODY_CHARS
                 );
                 results.push({ index: i, messageId, folderPath, ...result });
@@ -12632,7 +12898,27 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
             // END TOOL ARGUMENT CHECKS
 
+            // Tools that read the message folder named by args.folderPath
+            // (openFolder, findMessage): a summary Thunderbird reports out of
+            // date or missing is rebuilt first (FOLDER SUMMARY REBUILD).
+            // searchMessages and getRecentMessages: the named folder, the
+            // threadOf seed's folder and every folder they walk; the filter
+            // tools: the Templates folders of reply rules; getMessages does it
+            // for each message it reads.
+            const FOLDER_READING_TOOLS = new Set([
+              "getMessage", "replyToMessage", "forwardMessage", "displayMessage", "deleteMessages", "updateMessage",
+            ]);
+            const FOLDER_SEARCHING_TOOLS = new Set(["searchMessages", "getRecentMessages"]);
+            const REPLY_TEMPLATE_READING_TOOLS = new Set([
+              "createFilter", "updateFilter", "deleteFilter", "reorderFilters", "applyFilters",
+            ]);
+
             async function callTool(name, args) {
+              const notReady = FOLDER_READING_TOOLS.has(name) ? await prepareFolderDatabase(args.folderPath)
+                : FOLDER_SEARCHING_TOOLS.has(name) ? await prepareSearchFolders(args)
+                  : REPLY_TEMPLATE_READING_TOOLS.has(name) ? await prepareReplyTemplateFolders(args)
+                    : null;
+              if (notReady) return notReady;
               switch (name) {
                 case "listAccounts":
                   return listAccounts();
