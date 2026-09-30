@@ -10,8 +10,9 @@ project is kept in this repository.
 - Attachments: the bridge refuses a file that has other hard links ("attach a copy instead"). The extension alone
   cannot see the link count, so that check is made by the bridge only.
 - The bridge checks that the process named in the connection file is still running and, on Linux when it can be
-  read, is Thunderbird or Betterbird; a stale file is skipped. It also checks that the folder holding a discovered
-  connection file is closed to other users.
+  read, is Thunderbird or Betterbird; a stale file is skipped. A file named with `COMMONPOST_MCP_CONNECTION_FILE` is
+  not checked (under WSL or in a container, its process id belongs to another system). The bridge also checks that
+  the folder holding a discovered connection file is closed to other users.
 - Filter conditions "is / isn't in address book" follow the account restriction for address books, when a rule is
   created or updated (and for a condition an update keeps).
 - On Windows, attachment paths naming a reserved device (such as `CON`, `NUL`, `COM1`) are refused.

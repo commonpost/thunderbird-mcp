@@ -665,7 +665,8 @@ function readConnectionFileVerified(candidatePath, context) {
 //   - on Linux, when /proc/<pid>/exe can be read, it must be Thunderbird or
 //     Betterbird; an unreadable link (confinement, other user) is not a
 //     reason to refuse by itself.
-// A file without a usable pid (older extension) is accepted.
+// A file without a usable pid (older extension) is accepted. A file named by
+// COMMONPOST_MCP_CONNECTION_FILE is not checked (see tryReadConnectionCandidate).
 // The process id of a sandbox with its own PID namespace (Flatpak) means
 // nothing on this side, so those candidates are not checked.
 // Returns null when the file is acceptable, else the refusal reason.
@@ -782,7 +783,10 @@ function tryReadConnectionCandidate(candidate, context, { pinned = false } = {})
       };
     }
 
-    const stale = checkConnectionOwnerProcess(data, candidate, context);
+    // Not for a file the user named (COMMONPOST_MCP_CONNECTION_FILE): that is
+    // how a bridge under WSL or in a container reaches a Thunderbird running
+    // elsewhere, whose process id means nothing on this side.
+    const stale = pinned ? null : checkConnectionOwnerProcess(data, candidate, context);
     if (stale) {
       return {
         ok: false,
