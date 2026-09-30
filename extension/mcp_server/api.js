@@ -11001,9 +11001,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // the reason why not.
             function checkFilterAddressBook(uri) {
               if (accountRestrictionState() === "all") return true;
-              const wanted = String(uri);
+              // A mailing list of a book is the book's URI plus "/<id>", and a
+              // URI may carry a query string: drop the query, then accept the
+              // book itself or a path below it ("/" required, so abook.sqlite
+              // does not cover abook.sqlite2).
+              const wanted = String(uri).split("?")[0];
               const found = getAccessibleAddressBooks().some((book) => {
-                try { return book.URI === wanted; } catch { return false; }
+                try { return book.URI === wanted || wanted.startsWith(book.URI + "/"); } catch { return false; }
               });
               return found ? true : FILTER_ADDRESS_BOOK_NOT_ACCESSIBLE;
             }

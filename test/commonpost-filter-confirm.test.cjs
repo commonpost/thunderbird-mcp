@@ -1768,6 +1768,17 @@ describe("handlers: an address book condition under a restriction", () => {
     assert.equal(w.lists.account1.filterCount, 1);
   });
 
+  it("a mailing list of an accessible book and a URI with a query string are accepted; look-alikes are refused", () => {
+    const w = makeWorld({ prefs: { [P_BLOCK]: true } });
+    w.allowedAccounts = ["account1"];
+    const tryUri = (uri) => JSON.stringify(run(() => w.h.createFilter("account1", "ab", true, 17, AB(uri), READ)));
+    assert.doesNotMatch(tryUri("jsaddrbook://abook.sqlite/MailList1"), /address book not accessible/);
+    assert.doesNotMatch(tryUri("jsaddrbook://abook.sqlite?x=1"), /address book not accessible/);
+    assert.match(tryUri("jsaddrbook://other.sqlite/MailList1"), /address book not accessible/);
+    assert.match(tryUri("jsaddrbook://abook.sqlite2"), /address book not accessible/);
+    assert.match(tryUri("jsaddrbook://abook.sqlite2/MailList1"), /address book not accessible/);
+  });
+
   it("without a restriction every address book is accepted", () => {
     const w = makeWorld({ prefs: { [P_BLOCK]: true } });
     const r = run(() => w.h.createFilter("account1", "ab", true, 17, AB("jsaddrbook://other.sqlite"), READ));

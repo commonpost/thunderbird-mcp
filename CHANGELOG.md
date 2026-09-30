@@ -58,6 +58,11 @@ escaping of what is left, the table and `dupLocations` handling and the disabled
 - `searchMessages`: the folder URIs in `dupLocations` had their hidden characters removed by the untrusted-content
   handling of 0.10.0, which could desync them from the folder they name. They are now counted only, like
   `folderPath`.
+- Filters under an account restriction: an "is in address book" condition naming a mailing list of an accessible
+  address book (the book's URI followed by `/<id>`), or a URI with a query string, is no longer refused. The match
+  needs a `/` separator, so a look-alike such as `abook.sqlite2` is still refused.
+- README: troubleshooting entry for a bridge in a container or under WSL that is refused after it used to find the
+  connection file through a mounted temp folder.
 
 ## [0.10.1] - 2026-09-30
 

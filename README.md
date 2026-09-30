@@ -256,6 +256,7 @@ platform are on the [official Thunderbird site](https://www.thunderbird.net/en-U
 | Connection refused | Make sure Thunderbird is running and the extension is enabled |
 | Bridge can't find `connection.json` | Set `COMMONPOST_MCP_CONNECTION_FILE` explicitly if your environment uses a non-standard temp/runtime path |
 | On Windows, bridge finds the file but still refuses it | The file must be under the *bridge process's own* `%TEMP%`. Running the bridge under WSL or in a container gives it a different `%TEMP%` than the one Thunderbird (native Windows) used, even if the file is reachable through `\\wsl.localhost\...` or a mount -- this is a correct refusal, not a bug. Set `COMMONPOST_MCP_CONNECTION_FILE` to the file's real path instead |
+| Bridge in a container or under WSL, which used to find the connection file through a mounted temp folder, is now refused (stale or foreign process) | The bridge no longer trusts a file it cannot tie to a running Thunderbird. Set `COMMONPOST_MCP_CONNECTION_FILE` to the file's real path |
 | On Windows, an attachment under `%TEMP%` is refused | `%TEMP%` sits under `AppData\Local`, which the deny-list treats like the rest of AppData (it holds credentials and app data for other programs on Windows). Copy the file to another folder first, for example Documents |
 | Missing recent emails | IMAP folders can be stale. Click the folder in Thunderbird to sync, or right-click > Properties > Repair Folder |
 | Tool not found after update | Reconnect MCP (`/mcp` in Claude Code) to pick up new tools |
