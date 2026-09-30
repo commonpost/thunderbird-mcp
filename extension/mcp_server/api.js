@@ -1182,6 +1182,15 @@ function isSensitiveFilePath(attachmentPath, windows = isWindowsHost()) {
 
 // Catches a home directory that is not under /Users/ at all (the static
 // pattern above only covers the conventional location).
+// Drops trailing "/" and "\\" without a regular expression: /\/+$/
+// backtracks quadratically on a long run of separators that does not end the
+// string.
+function stripTrailingSeparators(s) {
+  let end = s.length;
+  while (end > 0 && (s[end - 1] === "/" || s[end - 1] === "\\")) end--;
+  return s.slice(0, end);
+}
+
 function isHomeLibraryPath(normalized) {
   let home;
   try {
@@ -1190,7 +1199,7 @@ function isHomeLibraryPath(normalized) {
     return false;
   }
   if (!home) return false;
-  const normalizedHome = home.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+  const normalizedHome = stripTrailingSeparators(home.replace(/\\/g, "/").toLowerCase());
   if (!normalizedHome) return false;
   return normalized === `${normalizedHome}/library` || normalized.startsWith(`${normalizedHome}/library/`);
 }

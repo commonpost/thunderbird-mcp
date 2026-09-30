@@ -501,6 +501,15 @@ function buildCandidateGroups(options = {}) {
 // containment check is redone on the real path at read time rather than
 // trusted from the earlier, by-then-possibly-stale result. Returns null
 // when the file is acceptable, else the refusal reason.
+// Drops trailing "/" and "\\" without a regular expression: /[\\/]+$/
+// backtracks quadratically on a long run of separators that does not end the
+// string.
+function stripTrailingSeparators(s) {
+  let end = s.length;
+  while (end > 0 && (s[end - 1] === '/' || s[end - 1] === '\\')) end--;
+  return s.slice(0, end);
+}
+
 function checkWindowsTempContainment(candidatePath, context) {
   const { fsImpl } = context;
   // This check compares the file to the CURRENT PROCESS's own %TEMP%
@@ -526,7 +535,7 @@ function checkWindowsTempContainment(candidatePath, context) {
   } catch (err) {
     return `refused: cannot resolve the connection file or %TEMP% (${normalizeFsError(err)})`;
   }
-  const norm = (p) => winPath.resolve(p).replace(/[\\/]+$/, '').toLowerCase();
+  const norm = (p) => stripTrailingSeparators(winPath.resolve(p)).toLowerCase();
   if (!norm(realFile).startsWith(`${norm(realTemp)}\\`)) {
     return `refused: connection file is not under the current user's %TEMP% (${tempDir})`;
   }
@@ -940,7 +949,7 @@ function isHomeLibraryPath(normalized) {
     return false;
   }
   if (!home) return false;
-  const normalizedHome = home.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '');
+  const normalizedHome = stripTrailingSeparators(home.replace(/\\/g, '/').toLowerCase());
   if (!normalizedHome) return false;
   return normalized === `${normalizedHome}/library` || normalized.startsWith(`${normalizedHome}/library/`);
 }
