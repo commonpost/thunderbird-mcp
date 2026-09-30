@@ -12,6 +12,7 @@ const MESSAGES = {
   delivered: { folder: FOLDER.inbox, raw: ["Delivered-To: work@bench.test", "From: Yuri Chi <yuri@chi.test>", "To: All <all@chi.test>", "Subject: Via an alias", "Message-ID: <c3-delivered@chi.test>"] },
   catchAll: { folder: FOLDER.inbox, raw: ["From: Zed Chi <zed@chi.test>", "To: Shop <shop@catch.test>", "Subject: Catch-all order", "Message-ID: <c3-catch@chi.test>"] },
   self: { folder: FOLDER.sent, raw: ["From: Bench Work <work@bench.test>", "To: Olga Chi <olga@chi.test>", "Subject: Sent from work", "Message-ID: <c3-self@bench.test>"] },
+  hidden: { folder: FOLDER.inbox, raw: ["From: Xena Chi <xena@chi.test>", "To: Hidden <hidden@bench.test>", "Subject: For the hidden address", "Message-ID: <c3-hidden@chi.test>"] },
   replyTo: { folder: FOLDER.inbox, raw: ["From: Xena Chi <xena@chi.test>", "Reply-To: Mallory <mallory@evil.test>", "To: Bench Work <work@bench.test>", "Cc: Eve <eve@evil.test>", "Subject: Please reply", "Message-ID: <c3-reply-to@chi.test>"] },
 };
 const idOf = key => MESSAGES[key].raw.find(l => l.startsWith("Message-ID:")).match(/<(.+)>/)[1];
@@ -247,6 +248,136 @@ describe("identity for replies and forwards", { skip: SKIP }, () => {
     } finally {
       if (serverKey) await dropSmtp(work, serverKey, sentId);
       sink.close();
+    }
+  });
+
+  it("a direct forward goes only to the given addresses and the identity's auto Cc / Reply-To", async () => {
+    await allowDirectSend(true);
+    const sink = await smtpSink();
+    let serverKey = null;
+    let sentId = null;
+    try {
+      serverKey = await useSmtp(work, sink.port);
+      // The original names Xena (From), Reply-To Mallory, To work@bench.test and Cc Eve: none of them may receive the forward
+      const sent = await mcp().call("forwardMessage", {
+        messageId: idOf("replyTo"), folderPath: FOLDER.inbox, body: "c3", skipReview: true,
+        to: "Zed <zed@example.test>", from: "work@bench.test",
+      });
+      assert.equal(sent.success, true, JSON.stringify(sent));
+      assert.equal(sink.messages.length, 1, JSON.stringify(sent));
+      const [{ rcpt, data }] = sink.messages;
+      const head = headOf(data);
+      sentId = head.messageId;
+      // Envelope: the caller's To and the identity's auto Cc, nothing from the original message
+      assert.deepEqual(rcpt.sort(), ["boss@bench.test", "zed@example.test"]);
+      // Headers
+      const expected = { from: "Bench Work <work@bench.test>", to: "Zed <zed@example.test>", cc: "Boss <boss@bench.test>", replyTo: "Desk <desk@bench.test>" };
+      assert.deepEqual({ from: head.from, to: head.to, cc: head.cc, replyTo: head.replyTo }, expected);
+      assert.doesNotMatch(data.split("\r\n\r\n")[0], /xena@chi\.test|mallory@evil\.test|eve@evil\.test/i);
+      // The result names the addresses used
+      assert.deepEqual({ from: sent.from, to: sent.to, cc: sent.cc, replyTo: sent.replyTo, bcc: sent.bcc }, { ...expected, bcc: undefined });
+    } finally {
+      if (serverKey) await dropSmtp(work, serverKey, sentId);
+      sink.close();
+    }
+  });
+});
+
+// Account restriction: the accessible accounts alone decide which identity a reply or forward can use.
+const accountKeys = () => tbLib(`
+  return {
+    main: MailServices.accounts.defaultAccount.key,
+    mainIdentity: MailServices.accounts.defaultAccount.defaultIdentity.key,
+    local: MailServices.accounts.findAccountForServer(MailServices.accounts.localFoldersServer).key,
+  };
+`);
+
+const addIdentityTo = (accountKey, values) => tbLib(`
+  const identity = MailServices.accounts.createIdentity();
+  Object.assign(identity, args.values, { valid: true });
+  identity.setCharAttribute("draft_folder", args.drafts);
+  identity.setCharAttribute("fcc_folder", args.sent);
+  MailServices.accounts.getAccount(args.accountKey).addIdentity(identity);
+  return identity.key;
+`, { accountKey, values, drafts: FOLDER.drafts, sent: FOLDER.sent });
+
+const removeIdentityFrom = (accountKey, key) => tbLib(`
+  const identity = MailServices.accounts.getIdentity(args.key);
+  MailServices.accounts.getAccount(args.accountKey).removeIdentity(identity);
+  identity.clearAllValues();
+`, { accountKey, key });
+
+const restrictTo = accountKeys => tbLib(`
+  if (args.keys) Services.prefs.setStringPref("extensions.commonpost-mcp.allowedAccounts", JSON.stringify(args.keys));
+  else Services.prefs.clearUserPref("extensions.commonpost-mcp.allowedAccounts");
+`, { keys: accountKeys });
+
+// A message in a Local Folders folder of its own.
+const LOCAL_ID = "c3-local@chi.test";
+const addLocalMessage = () => tbLib(`
+  const f = MailServices.accounts.localFoldersServer.rootFolder.createLocalSubfolder("BenchRestricted");
+  const raw = ["From: Xena Chi <xena@chi.test>", "To: Bench Work <work@bench.test>", "Subject: In Local Folders", "Message-ID: <" + args.id + ">",
+    "Date: Thu, 12 Mar 2026 10:00:00 +0000", "MIME-Version: 1.0", "Content-Type: text/plain; charset=UTF-8", "", "c3 body", ""].join("\n");
+  f.QueryInterface(Ci.nsIMsgLocalMailFolder).addMessage(raw);
+  return f.URI;
+`, { id: LOCAL_ID });
+
+const removeLocalFolder = () => tbLib(`
+  const root = MailServices.accounts.localFoldersServer.rootFolder;
+  const f = root.getChildNamed("BenchRestricted");
+  if (f) root.propagateDelete(f, true);
+`);
+
+describe("identity with account restrictions", { skip: SKIP }, () => {
+  let keys;
+  let hidden;
+  let localUri;
+  before(async () => {
+    await addMessages();
+    keys = await accountKeys();
+    // Only the Local Folders account holds this identity
+    hidden = await addIdentityTo(keys.local, { email: "hidden@bench.test", fullName: "Hidden" });
+  });
+  after(async () => {
+    await restrictTo(null);
+    await allowDirectSend(false);
+    await removeMessages();
+    await removeLocalFolder();
+    if (hidden) await removeIdentityFrom(keys.local, hidden);
+    closeAll();
+  });
+
+  it("an identity of a restricted account is not picked: the accessible account's identity is used", async () => {
+    // Control: unrestricted, Thunderbird's own pick and the tool's pick are the hidden identity
+    const free = await compare("Reply", "hidden");
+    assert.equal(free.identityKey, hidden);
+    await restrictTo([keys.main]);
+    const opened = await mcp().call("replyToMessage", { messageId: idOf("hidden"), folderPath: FOLDER.inbox, body: "c3" });
+    assert.equal(opened.success, true, JSON.stringify(opened));
+    const ours = await toolWindowDraft(FOLDER.inbox, idOf("hidden"));
+    assert.equal(ours.identityKey, keys.mainIdentity);
+    assert.notEqual(ours.identityKey, hidden);
+    assert.ok(!ours.from.some(a => /hidden@bench\.test/.test(a)), JSON.stringify(ours.from));
+    // The forward falls back the same way
+    const forwarded = await mcp().call("forwardMessage", { messageId: idOf("hidden"), folderPath: FOLDER.inbox, body: "c3", to: "zed@example.test" });
+    assert.equal(forwarded.success, true, JSON.stringify(forwarded));
+    assert.equal((await toolWindowDraft(FOLDER.inbox, idOf("hidden"))).identityKey, keys.mainIdentity);
+  });
+
+  it("naming the identity of a restricted account in from is refused", async () => {
+    await restrictTo([keys.main]);
+    const reply = await mcp().call("replyToMessage", { messageId: idOf("hidden"), folderPath: FOLDER.inbox, body: "c3", from: "hidden@bench.test" });
+    assert.ok(reply.error && !reply.success, JSON.stringify(reply));
+  });
+
+  it("returns an error when no accessible account holds an identity", async () => {
+    // The message sits in Local Folders, the only accessible account, which has no identity
+    localUri = await addLocalMessage();
+    await restrictTo([keys.local]);
+    for (const tool of [["replyToMessage", {}], ["forwardMessage", { to: "zed@example.test" }]]) {
+      const result = await mcp().call(tool[0], { messageId: LOCAL_ID, folderPath: localUri, body: "c3", ...tool[1] });
+      assert.match(result.error || "", /No accessible identity found -- all accounts are restricted/, tool[0]);
+      assert.ok(!result.success, tool[0]);
     }
   });
 });
