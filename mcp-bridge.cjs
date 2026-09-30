@@ -463,17 +463,23 @@ function findFlatpakConnectionCandidates(context) {
   return buildScanGroup('Flatpak scan', pattern, candidates, 'no matching files for a known Thunderbird/Betterbird Flatpak id');
 }
 
+// A client that could not fill in a variable of its own may pass the placeholder through as text
+// (e.g. an empty optional field of a .mcpb bundle). That is not a path the user chose: ignore it,
+// so the automatic discovery still runs instead of pinning the bridge to a file that cannot exist.
+const UNEXPANDED_PLACEHOLDER = /^\$\{user_config\.[^}]+\}$/;
+
 function buildCandidateGroups(options = {}) {
   const context = createDiscoveryContext(options);
   const groups = [];
+  const pinnedFile = context.env.COMMONPOST_MCP_CONNECTION_FILE;
 
-  if (context.env.COMMONPOST_MCP_CONNECTION_FILE) {
+  if (pinnedFile && !UNEXPANDED_PLACEHOLDER.test(pinnedFile)) {
     groups.push({
       notes: [],
       candidates: [
         makeCandidate(
           'COMMONPOST_MCP_CONNECTION_FILE',
-          context.env.COMMONPOST_MCP_CONNECTION_FILE
+          pinnedFile
         )
       ],
       stopOnFailure: true,

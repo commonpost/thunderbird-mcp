@@ -60,13 +60,14 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22.x'
-      - name: Assert package.json, manifest and bridge versions match
+      - name: Assert package.json, manifests and bridge versions match
         run: |
           PKG="$(node -p "require('./package.json').version")"
           MAN="$(node -p "require('./extension/manifest.json').version")"
+          MCPB="$(node -p "require('./mcpb/manifest.json').version")"
           BRG="$(sed -n "s/^const BRIDGE_VERSION = '\(.*\)';.*/\1/p" mcp-bridge.cjs)"
-          if [ "$PKG" != "$MAN" ] || [ "$PKG" != "$BRG" ]; then
-            echo "::error::package.json version ($PKG), extension/manifest.json version ($MAN) and BRIDGE_VERSION in mcp-bridge.cjs ($BRG) must stay in lockstep."
+          if [ "$PKG" != "$MAN" ] || [ "$PKG" != "$MCPB" ] || [ "$PKG" != "$BRG" ]; then
+            echo "::error::package.json version ($PKG), extension/manifest.json version ($MAN), mcpb/manifest.json version ($MCPB) and BRIDGE_VERSION in mcp-bridge.cjs ($BRG) must stay in lockstep."
             exit 1
           fi
           echo "Versions in sync: $PKG"
