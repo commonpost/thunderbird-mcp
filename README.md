@@ -19,6 +19,47 @@ Give your AI assistant full access to Thunderbird -- search mail, compose messag
 
 ---
 
+## Quick install (about 3 minutes)
+
+1. Install the extension. Download `commonpost-mcp-v<version>.xpi` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest). In Thunderbird: Tools > Add-ons and Themes > gear menu > Install Add-on From File. Restart Thunderbird.
+2. Download `mcp-bridge.cjs` from the **same release** and put it in a folder you will keep, for example `~/commonpost-mcp/`. Keeping `package.json` from the release next to it is optional: the bridge only reads it to report its version (`0.0.0` if the file is missing).
+3. Check Node.js: `node --version` must show 22 or later.
+4. Register the bridge with your MCP client.
+   - Claude Code (use the absolute path of the file):
+
+     ```
+     claude mcp add commonpost-mail -- node /absolute/path/to/mcp-bridge.cjs
+     ```
+
+   - Claude Code on Windows, for example:
+
+     ```
+     claude mcp add commonpost-mail -- node C:\Users\<you>\commonpost-mcp\mcp-bridge.cjs
+     ```
+
+   - Other clients: add this to the client's MCP config. In JSON, write Windows paths with `/` or double the backslashes (`"C:/Users/<you>/commonpost-mcp/mcp-bridge.cjs"`).
+
+     ```json
+     {
+       "mcpServers": {
+         "commonpost-mail": {
+           "command": "node",
+           "args": ["/absolute/path/to/mcp-bridge.cjs"]
+         }
+       }
+     }
+     ```
+
+5. Test it. Keep Thunderbird open and ask your assistant: "list my Thunderbird accounts".
+
+**The bridge is not updated automatically. After the extension updates, replace `mcp-bridge.cjs` with the one from the same release, then reconnect your MCP client (`/mcp` in Claude Code).** The extension's version is shown in Tools > Add-ons and Themes. If you kept `package.json` next to the bridge, your MCP client can show the bridge's version as the server version.
+
+Right after installing, open the extension's options page (Tools > Add-ons and Themes > Commonpost MCP for Thunderbird > Options) and choose which accounts and tools your assistant may use. Until you do, every account and tool is visible to MCP clients.
+
+Snap, Flatpak and macOS need no extra step in most cases; see [Sandbox-aware connection discovery](#sandbox-aware-connection-discovery). If something fails, see [Troubleshooting](#troubleshooting).
+
+---
+
 ## Why?
 
 Thunderbird has no official API for AI tools. Your AI assistant can't read your email, can't help you draft replies, can't organize your inbox. This extension fixes that -- it exposes 40 tools over MCP so any compatible AI (Claude, GPT, local models) can work with your mail the way you'd expect. It stays within Cursor's limit of 40 tools per server.
@@ -141,7 +182,7 @@ The MCP bridge, `mcp-bridge.cjs`, is attached to each release next to the XPI (w
 
 Requires Thunderbird 140 or later, and Node.js 22 or later for the bridge (`mcp-bridge.cjs`). Tested on Thunderbird 140.16.0esr, 153.3.1esr and 156.0.1.
 
-**Automatic updates:** the add-on checks `https://commonpost.github.io/thunderbird-mcp/updates.json` through Thunderbird's add-on update check; the file lists the hash of each release. Thunderbird downloads updates in the background and applies them on the next restart; because this add-on uses an Experiment API, updates are not hot-swapped. If updates do not arrive, check the Add-ons gear menu and make sure **Update Add-ons Automatically** is enabled. Thunderbird's default `xpinstall.signatures.required=false` lets unsigned add-ons install; a profile hardened to require signatures blocks both manual and automatic installs. Because the auto-update channel is a code-delivery channel, you can turn it off (per add-on, in its details page) and update by hand. **The bridge is not updated automatically:** after the add-on updates (automatically or by hand), replace your `mcp-bridge.cjs` (and its `package.json`) with the files from the same release, then reconnect your MCP client; some protections live in the bridge.
+**Automatic updates:** the add-on checks `https://commonpost.github.io/thunderbird-mcp/updates.json` through Thunderbird's add-on update check; the file lists the hash of each release. Thunderbird downloads updates in the background and applies them on the next restart; because this add-on uses an Experiment API, updates are not hot-swapped. If updates do not arrive, check the Add-ons gear menu and make sure **Update Add-ons Automatically** is enabled. Thunderbird's default `xpinstall.signatures.required=false` lets unsigned add-ons install; a profile hardened to require signatures blocks both manual and automatic installs. Because the auto-update channel is a code-delivery channel, you can turn it off (per add-on, in its details page) and update by hand. **The bridge is not updated automatically:** after the add-on updates (automatically or by hand), replace your `mcp-bridge.cjs` (and its `package.json`, if you keep one) with the files from the same release, then reconnect your MCP client; some protections live in the bridge.
 
 ### 2. Configure your MCP client
 
