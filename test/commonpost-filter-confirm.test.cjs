@@ -1090,7 +1090,7 @@ function getFilterConfirmationStore() {
   return __store;
 }
 ${HANDLERS}
-this.h = { listFilters, createFilter, updateFilter, deleteFilter, reorderFilters, applyFilters, getFilterConfirmation,
+this.h = { listFilters, createFilter, updateFilter, deleteFilter, reorderFilters, applyFilters,
   store: () => getFilterConfirmationStore(), serializeFilterRule, buildTerms, buildRuleActions, FILTER_CONFIRM_SEND_WARNING };`,
   Object.assign(sandbox, { __prefs: fakePrefs(w.prefs) }));
   w.h = sandbox.h;
@@ -1115,6 +1115,11 @@ this.h = { listFilters, createFilter, updateFilter, deleteFilter, reorderFilters
 
 const COND = [{ attrib: "subject", op: "contains", value: "facture" }];
 const FWD = [{ type: "forward", value: "target@example.net" }];
+
+// One confirmation by id, read through the public view of listFilters({ confirmation: true }).
+function confOf(w, id) {
+  return w.h.listFilters(undefined, true, id);
+}
 
 function seedForwardRule(w, account = "account2", address = "target@example.net") {
   const f = makeFilter("manual-transfer-rule");
@@ -1150,7 +1155,7 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
     assert.ok(!("checkLabel" in dlg.bag.props), "no \"don't ask again\" box");
     assert.ok(dlg.bag.props.text.includes("Forward to target@example.net"));
     assert.equal(r.shownToUser.text, dlg.bag.props.text);
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "pending");
+    assert.equal(confOf(w, r.confirmationId).status, "pending");
     assert.equal(w.log[0].event, "requested");
   });
 
@@ -1164,7 +1169,7 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
     assert.equal(f.filterName, "cp-fwd");
     assert.equal(f.getActionAt(0).type, ACTIONS.Forward);
     assert.equal(f.getActionAt(0).strValue, "target@example.net");
-    const v = w.h.getFilterConfirmation(r.confirmationId);
+    const v = confOf(w, r.confirmationId);
     assert.equal(v.status, "accepted");
     assert.equal(v.result.index, 0);
     assert.ok(w.timers.every((t) => t.cancelled), "expiry timer cancelled");
@@ -1180,7 +1185,7 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
       w.answer(button);
       assert.equal(w.lists.account1.filterCount, 0);
       assert.equal(w.lists.account1.saves, 0);
-      assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "refused");
+      assert.equal(confOf(w, r.confirmationId).status, "refused");
     });
   }
 
@@ -1188,7 +1193,7 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
     const r = w.h.createFilter("account1", "cp-fwd", true, 17, COND, FWD);
     w.load();
     w.lastDialog().close();
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "refused");
+    assert.equal(confOf(w, r.confirmationId).status, "refused");
     assert.equal(w.lists.account1.filterCount, 0);
   });
 
@@ -1198,7 +1203,7 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
     const dlg = w.lastDialog();
     w.clock.advance(600000 + 50);
     w.fireTimers();
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "expired");
+    assert.equal(confOf(w, r.confirmationId).status, "expired");
     assert.equal(dlg.closed, true);
     dlg.bag.setProperty("buttonNumClicked", 0);
     dlg.bag.setProperty("ok", true);
@@ -1210,7 +1215,7 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
     const r = w.h.createFilter("account1", "cp-fwd", true, 17, COND, FWD);
     w.clock.advance(600001);
     w.answer(0);
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "expired");
+    assert.equal(confOf(w, r.confirmationId).status, "expired");
     assert.equal(w.lists.account1.filterCount, 0);
   });
 
@@ -1236,7 +1241,7 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
     const r = w.h.createFilter("account1", "cp-fwd", true, 17, COND, FWD);
     w.lists.account1.filters.push(makeFilter("added meanwhile"));
     w.answer(0);
-    const v = w.h.getFilterConfirmation(r.confirmationId);
+    const v = confOf(w, r.confirmationId);
     assert.equal(v.status, "failed");
     assert.match(v.reason, /filter list changed since the request/);
     assert.equal(w.lists.account1.filterCount, 1);
@@ -1255,7 +1260,7 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
     f.searchTerms[1].beginsGrouping = true;
     f.searchTerms[2].endsGrouping = true;
     w.answer(0);
-    const v = w.h.getFilterConfirmation(r.confirmationId);
+    const v = confOf(w, r.confirmationId);
     assert.equal(v.status, "failed");
     assert.match(v.reason, /filter list changed since the request/);
     assert.equal(w.lists.account2.filterCount, 1);
@@ -1272,7 +1277,7 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
       assert.equal(r.status, "pending_user_confirmation");
       x.templateHdrs["tpl-1@example.test"] = change;
       x.answer(0);
-      const v = x.h.getFilterConfirmation(r.confirmationId);
+      const v = confOf(x, r.confirmationId);
       assert.equal(v.status, "failed", JSON.stringify(change));
       assert.match(v.reason, /what the dialog showed has changed since/);
       assert.equal(x.lists.account1.filterCount, 0);
@@ -1284,14 +1289,14 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
     const r = w.h.createFilter("account2", "cp-fwd", true, 17, COND, FWD);
     w.accounts.account2.incomingServer.prettyName = "Renamed";
     w.answer(0);
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "failed");
+    assert.equal(confOf(w, r.confirmationId).status, "failed");
     assert.equal(w.lists.account2.filterCount, 0);
     const x = makeWorld();
     const r2 = x.h.createFilter("account1", "auto", true, 17, COND,
       [{ type: "reply", value: "mailbox://nobody@Local%20Folders/Templates?messageId=tpl-1@example.test&subject=x" }]);
     x.clock.advance(9 * 60 * 1000);
     x.answer(0);
-    assert.equal(x.h.getFilterConfirmation(r2.confirmationId).status, "accepted");
+    assert.equal(confOf(x, r2.confirmationId).status, "accepted");
     assert.equal(x.lists.account1.filterCount, 1);
   });
 
@@ -1302,7 +1307,7 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
       const r = x.h.createFilter("account1", "cp-fwd", true, 17, COND, FWD);
       change(x);
       x.answer(0);
-      assert.equal(x.h.getFilterConfirmation(r.confirmationId).status, "failed");
+      assert.equal(confOf(x, r.confirmationId).status, "failed");
       assert.equal(x.lists.account1.filterCount, 0);
     }
   });
@@ -1312,7 +1317,7 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
       [...FWD, { type: "moveToFolder", value: "mailbox://nobody@Local%20Folders/Archive" }]);
     w.allowedAccounts = []; // nothing allowed any more
     w.answer(0);
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "failed");
+    assert.equal(confOf(w, r.confirmationId).status, "failed");
   });
 
   it("outgoing mail (type 64) with a forward: refused, no dialog", () => {
@@ -1383,7 +1388,7 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
     assert.equal(f.enabled, false);
     w.answer(0);
     assert.equal(f.enabled, true);
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "accepted");
+    assert.equal(confOf(w, r.confirmationId).status, "accepted");
   });
 
   it("updateFilter marking the forward rule for outgoing mail: refused", () => {
@@ -1405,15 +1410,15 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
     assert.equal(w.applied.length, 1);
     assert.deepEqual(Array.from(w.applied[0].folders), ["mailbox://labo@127.0.0.1/Inbox"]);
     assert.deepEqual(w.applied[0].list.filters.map((f) => f.filterName), ["manual-transfer-rule"]);
-    assert.equal(w.h.getFilterConfirmation(r2.confirmationId).status, "accepted");
+    assert.equal(confOf(w, r2.confirmationId).status, "accepted");
   });
 
   it("a failure while opening the dialog settles the request (failed), so the next one is not blocked", () => {
     w.breakDialog = true;
     const r = w.h.createFilter("account1", "cp-fwd", true, 17, COND, FWD);
     assert.match(r.error, /could not be opened \(E_OPEN\); nothing was written/);
-    assert.equal(w.h.getFilterConfirmation().pending, null);
-    assert.equal(w.h.getFilterConfirmation().recent[0].status, "failed");
+    assert.equal(w.h.listFilters(undefined, true).pending, null);
+    assert.equal(w.h.listFilters(undefined, true).recent[0].status, "failed");
     w.breakDialog = false;
     assert.equal(w.h.createFilter("account1", "cp-fwd", true, 17, COND, FWD).status, "pending_user_confirmation");
     assert.equal(w.lists.account1.filterCount, 0);
@@ -1422,18 +1427,29 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
   it("main window closed: refused, nothing pending", () => {
     w.mainWindowOpen = false;
     assert.match(w.h.createFilter("account1", "cp-fwd", true, 17, COND, FWD).error, /main window is not open/);
-    assert.equal(w.h.getFilterConfirmation().pending, null);
+    assert.equal(w.h.listFilters(undefined, true).pending, null);
   });
 
-  it("getFilterConfirmation only reads: pending, recent, limits; unknown id is an error", () => {
+  it("listFilters without confirmation keeps its shape: a list of accounts with their filters", () => {
+    const before = JSON.stringify(w.h.listFilters("account1"));
+    assert.equal(JSON.stringify(w.h.listFilters("account1", false)), before);
+    assert.equal(JSON.stringify(w.h.listFilters("account1", "true")), before);
+    const r = w.h.listFilters("account1");
+    assert.ok(!("pending" in r) && !("recent" in r) && !("limits" in r), before);
+  });
+
+  it("listFilters({ confirmation: true }) only reads: pending, recent, limits, by id; ignores accountId", () => {
     const r = w.h.createFilter("account1", "cp-fwd", true, 17, COND, FWD);
-    const all = w.h.getFilterConfirmation();
+    const all = w.h.listFilters(undefined, true);
     assert.equal(all.policy, "confirm");
     assert.equal(all.pending.confirmationId, r.confirmationId);
     assert.equal(all.limits.maxPending, 1);
     assert.equal(all.limits.maxPerHour, 5);
-    assert.match(w.h.getFilterConfirmation("fc-nope").error, /Unknown confirmationId/);
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "pending");
+    assert.deepEqual(w.h.listFilters("account1", true), all);
+    assert.match(confOf(w, "fc-nope").error, /Unknown confirmationId/);
+    assert.equal(confOf(w, 5).error, "confirmationId must be a string");
+    assert.deepEqual(w.h.listFilters("account1", undefined, r.confirmationId), w.h.listFilters("account1"));
+    assert.equal(confOf(w, r.confirmationId).status, "pending");
     assert.equal(w.lists.account1.filterCount, 0);
   });
 });
@@ -1474,7 +1490,7 @@ describe("only an explicit click on the confirmation button writes (the user's a
       delete dlg.bag.props.ok;
       for (const [k, v] of Object.entries(props)) dlg.bag.setProperty(k, v);
       dlg.close();
-      assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "refused");
+      assert.equal(confOf(w, r.confirmationId).status, "refused");
       assert.equal(w.lists.account1.filterCount, 0);
       assert.equal(w.lists.account1.saves, 0);
     });
@@ -1483,7 +1499,7 @@ describe("only an explicit click on the confirmation button writes (the user's a
     const w = makeWorld();
     const r = w.h.createFilter("account1", "cp-fwd", true, 17, COND, FWD);
     w.answer(0);
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "accepted");
+    assert.equal(confOf(w, r.confirmationId).status, "accepted");
     const dlg = w.lastDialog();
     for (const fn of dlg.listeners.unload || []) fn();
     assert.equal(w.lists.account1.saves, 1);
@@ -1496,9 +1512,9 @@ describe("only an explicit click on the confirmation button writes (the user's a
       addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); } };
     for (const { o, topic } of [...w.observers]) if (topic === "common-dialog-loaded") o.observe(other, topic);
     assert.equal((other.listeners.unload || []).length, 0, "no listener on another window");
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "pending");
+    assert.equal(confOf(w, r.confirmationId).status, "pending");
     w.answer(1);
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "refused");
+    assert.equal(confOf(w, r.confirmationId).status, "refused");
     assert.equal(w.lists.account1.filterCount, 0);
   });
   it("a click on the confirmation button exactly at the deadline writes nothing (expired)", () => {
@@ -1506,17 +1522,17 @@ describe("only an explicit click on the confirmation button writes (the user's a
     const r = w.h.createFilter("account1", "cp-fwd", true, 17, COND, FWD);
     w.clock.advance(600000);
     w.answer(0);
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "expired");
+    assert.equal(confOf(w, r.confirmationId).status, "expired");
     assert.equal(w.lists.account1.filterCount, 0);
   });
   it("a window closed before it loaded: no answer, stays pending, the deadline settles it; nothing written", () => {
     const w = makeWorld();
     const r = w.h.createFilter("account1", "cp-fwd", true, 17, COND, FWD);
     w.lastDialog().close();
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "pending");
+    assert.equal(confOf(w, r.confirmationId).status, "pending");
     w.clock.advance(600050);
     w.fireTimers();
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "expired");
+    assert.equal(confOf(w, r.confirmationId).status, "expired");
     assert.equal(w.lists.account1.filterCount, 0);
   });
   it("the five operations: Refuse default, delayed accept, their own accept label, no check box, no third button, non-modal", () => {
@@ -1554,7 +1570,7 @@ describe("what is written is what was requested and shown (checked again at the 
     actions[0].value = "other@example.org";
     conditions[0].value = "x";
     w.answer(0);
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "accepted");
+    assert.equal(confOf(w, r.confirmationId).status, "accepted");
     const f = w.lists.account1.getFilterAt(0);
     assert.equal(f.getActionAt(0).strValue, "target@example.net");
     assert.equal(f.searchTerms[0].value.str, "facture");
@@ -1565,7 +1581,7 @@ describe("what is written is what was requested and shown (checked again at the 
     const r = w.h.createFilter("account2", "ok", true, 17, COND, [{ type: "markRead" }]);
     fwd.getActionAt(0).strValue = "elsewhere@example.org";
     w.answer(0);
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "failed");
+    assert.equal(confOf(w, r.confirmationId).status, "failed");
     assert.equal(w.lists.account2.filterCount, 1);
     assert.equal(w.lists.account2.saves, 0);
   });
@@ -1577,7 +1593,7 @@ describe("what is written is what was requested and shown (checked again at the 
     assert.equal(r.status, "pending_user_confirmation");
     assert.equal(w.h.deleteFilter("account2", 1).success, true);
     w.answer(0);
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "failed");
+    assert.equal(confOf(w, r.confirmationId).status, "failed");
     assert.equal(w.applied.length, 0);
   });
   it("the reply template removed, or its folder no longer a Templates folder -> failed", () => {
@@ -1589,7 +1605,7 @@ describe("what is written is what was requested and shown (checked again at the 
       assert.equal(r.status, "pending_user_confirmation");
       change(w);
       w.answer(0);
-      assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "failed");
+      assert.equal(confOf(w, r.confirmationId).status, "failed");
       assert.equal(w.lists.account1.filterCount, 0);
     }
   });
@@ -1598,7 +1614,7 @@ describe("what is written is what was requested and shown (checked again at the 
     const r = w.h.createFilter("account1", "cp-fwd", true, 17, COND, FWD);
     w.prefs[P_BLOCK] = "allow";
     w.answer(0);
-    assert.equal(w.h.getFilterConfirmation(r.confirmationId).status, "failed");
+    assert.equal(confOf(w, r.confirmationId).status, "failed");
     assert.equal(w.lists.account1.filterCount, 0);
   });
 });
@@ -1613,7 +1629,7 @@ describe("destinations in the dialog: whole, and only from the resolved actions"
     const lines = w.lastDialog().bag.props.text.split("\n");
     assert.ok(lines.includes(`    >> Forward to ${LONG}`));
     assert.ok(lines.includes(`Mail is sent automatically to: ${LONG}`));
-    assert.deepEqual(Array.from(w.h.getFilterConfirmation(r.confirmationId).summary.sends), [`forward to ${LONG}`]);
+    assert.deepEqual(Array.from(confOf(w, r.confirmationId).summary.sends), [`forward to ${LONG}`]);
     assert.deepEqual(Array.from(w.log.find((e) => e.event === "requested").summary.sends), [`forward to ${LONG}`]);
   });
   it("a hand-made sending rule with a long address list: shown whole in the list context and the summary line", () => {
@@ -1696,8 +1712,9 @@ describe("wiring", () => {
       assert.ok(commit.indexOf(check) >= 0 && commit.indexOf(check) < commit.indexOf("plan.commit()"), check);
     }
   });
-  it("getFilterConfirmation cannot settle anything", () => {
+  it("the confirmation view of listFilters cannot settle anything", () => {
     assert.doesNotMatch(fn("getFilterConfirmation"), /settle|commit|close\(/);
+    assert.doesNotMatch(fn("listFilters").split("try {")[0], /settle|commit|close\(/);
   });
   it("the dialog: non-modal, Refuse default, delayed accept, no check box", () => {
     const open = fn("openFilterConfirmationDialog");
@@ -1730,11 +1747,14 @@ describe("wiring", () => {
     assert.match(js, /browser\.commonpostMcp\.setBlockFilterForwardReply\(chosen\.value === "block"\)/);
     assert.match(apiSource, /__commonpostMcpFilterConfirmations\.shutdown\(/);
   });
-  it("getFilterConfirmation is a read-only tool of the filters group", () => {
-    const i = apiSource.indexOf('name: "getFilterConfirmation"');
+  it("listFilters carries the confirmation view and stays a read-only tool; getFilterConfirmation is gone", () => {
+    const i = apiSource.indexOf('name: "listFilters"');
     assert.ok(i > 0);
-    assert.match(apiSource.slice(i, i + 200), /group: "filters", crud: "read"/);
-    assert.match(apiSource, /case "getFilterConfirmation":\s*\n\s*return getFilterConfirmation\(args\.confirmationId\);/);
+    const def = apiSource.slice(i, apiSource.indexOf('name: "createFilter"', i));
+    assert.match(def, /group: "filters", crud: "read"/);
+    assert.match(def, /confirmation: \{ type: "boolean"/);
+    assert.match(apiSource, /case "listFilters":\s*\n\s*return listFilters\(args\.accountId, args\.confirmation, args\.confirmationId\);/);
+    assert.doesNotMatch(apiSource, /name: "getFilterConfirmation"|case "getFilterConfirmation"/);
   });
   it("tool descriptions state the real default (Always block), not the opposite", () => {
     for (const name of ["createFilter", "updateFilter", "deleteFilter", "reorderFilters", "applyFilters"]) {

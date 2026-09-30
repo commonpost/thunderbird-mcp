@@ -33,9 +33,9 @@ const toolsList = JSON.parse(sandbox.toolsList);
 const tools = toolsList.tools;
 const byName = Object.fromEntries(tools.map(t => [t.name, t]));
 
-// Cursor loads at most 40 tools; 0.10.0 added getFilterConfirmation as the 41st, so a
-// Cursor user disables one in the add-on settings. Do not raise this further lightly.
-const MAX_TOOLS = 41;
+// Cursor loads at most 40 tools per MCP server. Do not raise this lightly: a new tool
+// must replace one or be folded into an existing one.
+const MAX_TOOLS = 40;
 const MAX_TOOL_CHARS = 4000;
 const MAX_TOTAL_CHARS = 52000;
 const MIN_DESCRIPTION_CHARS = 30;

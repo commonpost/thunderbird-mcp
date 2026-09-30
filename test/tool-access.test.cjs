@@ -111,7 +111,6 @@ const ALL_TOOLS = [
   { name: "reorderFilters", group: "filters", crud: "update" },
   { name: "applyFilters", group: "filters", crud: "update" },
   { name: "deleteFilter", group: "filters", crud: "delete" },
-  { name: "getFilterConfirmation", group: "filters", crud: "read" },
 ];
 
 // ── Tests ─────────────────────────────────────────────────────────────

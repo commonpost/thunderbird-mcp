@@ -3219,7 +3219,7 @@ function describeConfirmationRefusal(admitted) {
     const p = admitted.pending || {};
     return `Another filter confirmation is already waiting for the user (${p.confirmationId}, ${p.operation}, `
       + `expires ${p.expiresAt}); only one at a time. Nothing was written and no dialog was shown -- `
-      + "check it with getFilterConfirmation and ask again once it is settled";
+      + "check it with listFilters (confirmation: true) and ask again once it is settled";
   }
   if (admitted.code === "rate") {
     return `Too many filter confirmations: ${admitted.used} dialogs in the last hour (limit ${FILTER_CONFIRM_MAX_PER_HOUR}). `
@@ -3650,7 +3650,7 @@ function parseReplyTemplateValue(value) {
   return { folderUri: m[1], messageId: m[2] };
 }
 
-// Short, public description of a confirmation (getFilterConfirmation, journal):
+// Short, public description of a confirmation (listFilters with confirmation: true, journal):
 // what the rule is called and where it sends; no message content.
 function summarizeFilterConfirmation({ operation, rule = null, context = [], folder = null } = {}) {
   const sends = [];
@@ -4532,11 +4532,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "listFilters",
         group: "filters", crud: "read",
         title: "List Filters",
-        description: "List all mail filters/rules for an account with their conditions and actions",
+        description: "List all mail filters/rules for an account with their conditions and actions. With confirmation: true it instead reads, without changing anything, the state of a filter change waiting for, or settled by, the user's confirmation in Thunderbird: pending, accepted (written), refused (by the user, or the dialog was closed), expired (no answer within the time limit, 10 minutes) or failed (accepted, but the filter list, account or setting changed meanwhile: nothing written). Without confirmationId the result is the pending request (at most one) and the recent ones, with the limits (one pending, five dialogs per hour); with the confirmationId returned with status pending_user_confirmation, the state of that request. accountId is ignored, and confirmationId is ignored unless confirmation is true. MCP clients cannot accept, refuse or cancel a confirmation.",
         inputSchema: {
           type: "object",
           properties: {
-            accountId: { type: "string", description: "Account ID from listAccounts (omit for all accounts)" },
+            accountId: { type: "string", description: "Account ID from listAccounts (omit for all accounts). Ignored when confirmation is true." },
+            confirmation: { type: "boolean", description: "When true, return the state of the pending and recent filter confirmations instead of the filters (optional, default false)" },
+            confirmationId: { type: "string", description: "With confirmation: true, the confirmationId returned with status pending_user_confirmation, to read that one request (optional; ignored unless confirmation is true)" },
           },
           required: [],
         },
@@ -4545,7 +4547,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "createFilter",
         group: "filters", crud: "create",
         title: "Create Filter",
-        description: "Create a new mail filter rule on an account. A rule that forwards or replies (sends mail), or a new rule in a filter list that already holds a rule sending mail, is refused by default (\"Filter rules that send mail: Always block\"); only if the user has switched the setting to \"Ask me each time\" does the call instead return {status: \"pending_user_confirmation\", confirmationId} and let Thunderbird ask the user in a dialog (only the user can accept; follow it with getFilterConfirmation). Forward takes exactly one plain e-mail address; reply takes a template of a Templates folder (<folder URI>?messageId=<id>&subject=<subject>). Sending rules for outgoing mail (type 64) are always refused.",
+        description: "Create a new mail filter rule on an account. A rule that forwards or replies (sends mail), or a new rule in a filter list that already holds a rule sending mail, is refused by default (\"Filter rules that send mail: Always block\"); only if the user has switched the setting to \"Ask me each time\" does the call instead return {status: \"pending_user_confirmation\", confirmationId} and let Thunderbird ask the user in a dialog (only the user can accept; follow it with listFilters, confirmation: true and the confirmationId). Forward takes exactly one plain e-mail address; reply takes a template of a Templates folder (<folder URI>?messageId=<id>&subject=<subject>). Sending rules for outgoing mail (type 64) are always refused.",
         inputSchema: {
           type: "object",
           properties: {
@@ -4587,7 +4589,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "updateFilter",
         group: "filters", crud: "update",
         title: "Update Filter",
-        description: "Modify an existing filter's properties, conditions, or actions. Adding forward/reply actions, or changing a filter list that holds a rule sending mail (including enabling or editing that rule), is refused by default (\"Always block\"); it instead needs the user's confirmation in Thunderbird (the call returns {status: \"pending_user_confirmation\", confirmationId}; follow it with getFilterConfirmation) only if the user has switched the setting to \"Ask me each time\". Sending rules for outgoing mail (type 64) are always refused.",
+        description: "Modify an existing filter's properties, conditions, or actions. Adding forward/reply actions, or changing a filter list that holds a rule sending mail (including enabling or editing that rule), is refused by default (\"Always block\"); it instead needs the user's confirmation in Thunderbird (the call returns {status: \"pending_user_confirmation\", confirmationId}; follow it with listFilters, confirmation: true and the confirmationId) only if the user has switched the setting to \"Ask me each time\". Sending rules for outgoing mail (type 64) are always refused.",
         inputSchema: {
           type: "object",
           properties: {
@@ -4658,7 +4660,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "applyFilters",
         group: "filters", crud: "update",
         title: "Apply Filters",
-        description: "Manually run filters on a folder to organize existing messages. Only rules that are enabled and marked \"Manually Run\" are run; the others, and rules that move or copy to a folder of an account that is not authorized or to the Outbox, are skipped and listed under `skipped` with the reason. If the account's filter list holds a rule that forwards, replies or runs an add-on action, running it is refused by default (\"Always block\"); it needs the user's confirmation in Thunderbird (returns status pending_user_confirmation; follow it with getFilterConfirmation) only if the user has switched the setting to \"Ask me each time\".",
+        description: "Manually run filters on a folder to organize existing messages. Only rules that are enabled and marked \"Manually Run\" are run; the others, and rules that move or copy to a folder of an account that is not authorized or to the Outbox, are skipped and listed under `skipped` with the reason. If the account's filter list holds a rule that forwards, replies or runs an add-on action, running it is refused by default (\"Always block\"); it needs the user's confirmation in Thunderbird (returns status pending_user_confirmation; follow it with listFilters, confirmation: true and the confirmationId) only if the user has switched the setting to \"Ask me each time\".",
         inputSchema: {
           type: "object",
           properties: {
@@ -4666,19 +4668,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             folderPath: { type: "string", description: "Folder URI to apply filters to (from listFolders)" },
           },
           required: ["accountId", "folderPath"],
-        },
-      },
-      {
-        name: "getFilterConfirmation",
-        group: "filters", crud: "read",
-        title: "Get Filter Confirmation",
-        description: "Read-only. State of a filter change waiting for, or settled by, the user's confirmation in Thunderbird: pending, accepted (written), refused (by the user, or the dialog was closed), expired (no answer within the time limit, 10 minutes) or failed (accepted, but the filter list, account or setting changed meanwhile: nothing written). Without confirmationId: the pending request (at most one) and the recent ones, with the limits (one pending, five dialogs per hour). MCP clients cannot accept, refuse or cancel a confirmation.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            confirmationId: { type: "string", description: "confirmationId returned with status pending_user_confirmation (optional)" },
-          },
-          required: [],
         },
       },
       {
@@ -11080,7 +11069,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
             // ── Filter tool handlers ──
 
-            function listFilters(accountId) {
+            function listFilters(accountId, confirmation, confirmationId) {
+              if (confirmation === true) return getFilterConfirmation(confirmationId);
               try {
                 const results = [];
                 let accounts;
@@ -11563,8 +11553,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 accountId: args.accountId,
                 expiresAt: new Date(entry.expiresAt).toISOString(),
                 message: "Nothing has been written. Thunderbird is showing the user a dialog to confirm or refuse this "
-                  + "change; only the user can answer, MCP clients cannot. Use getFilterConfirmation with this "
-                  + "confirmationId to follow it (pending, accepted, refused, expired, failed). Do not ask again while it is "
+                  + "change; only the user can answer, MCP clients cannot. Call listFilters with "
+                  + "confirmation: true and this confirmationId to follow it (pending, accepted, refused, expired, failed). Do not ask again while it is "
                   + "pending: a new request is refused until this one is settled.",
                 shownToUser: { title: dialog.title, text: dialog.text },
               };
@@ -11701,6 +11691,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
+            // Public state of the filter confirmations (listFilters with confirmation: true).
             function getFilterConfirmation(confirmationId) {
               try {
                 const store = getFilterConfirmationStore();
@@ -12118,7 +12109,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "moveFolder":
                   return moveFolder(args.folderPath, args.newParentPath);
                 case "listFilters":
-                  return listFilters(args.accountId);
+                  return listFilters(args.accountId, args.confirmation, args.confirmationId);
                 case "createFilter":
                   return createFilter(args.accountId, args.name, args.enabled, args.type, args.conditions, args.actions, args.insertAtIndex);
                 case "updateFilter":
@@ -12129,8 +12120,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   return reorderFilters(args.accountId, args.fromIndex, args.toIndex);
                 case "applyFilters":
                   return applyFilters(args.accountId, args.folderPath);
-                case "getFilterConfirmation":
-                  return getFilterConfirmation(args.confirmationId);
                 case "getAccountAccess":
                   return getAccountAccess();
                 default:
