@@ -4,6 +4,23 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Changed
+- Attachments: the bridge refuses a file that has other hard links ("attach a copy instead"). The extension alone
+  cannot see the link count, so that check is made by the bridge only.
+- The bridge checks that the process named in the connection file is still running and, on Linux when it can be
+  read, is Thunderbird or Betterbird; a stale file is skipped. It also checks that the folder holding a discovered
+  connection file is closed to other users.
+- Filter conditions "is / isn't in address book" follow the account restriction for address books, when a rule is
+  created or updated (and for a condition an update keeps).
+- On Windows, attachment paths naming a reserved device (such as `CON`, `NUL`, `COM1`) are refused.
+- `updateFilter` can switch a rule off even if it keeps a move/copy target that is no longer accessible; any other
+  change is still refused.
+
+### Thanks
+- The `SNAP_NAME` check in the Snap Thunderbird detection (0.10.0) was first proposed by @mazixs in #14.
+
 ## [0.10.0] - 2026-09-30
 
 Security hardening in filters, attachments, the bridge's connection file, encrypted messages, account restrictions
