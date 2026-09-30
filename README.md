@@ -109,7 +109,7 @@ OpenPGP and S/MIME messages are not decrypted for the assistant by default: `get
 
 | Tool | Description |
 |------|-------------|
-| `listCalendars` | List all calendars with read-only, event, and task support flags |
+| `listCalendars` | List all calendars with read-only, disabled, event, and task support flags |
 | `createEvent` | Create a calendar event -- opens a review dialog; direct creation via `skipReview` requires explicitly disabling the default safety block. Accepts `status: tentative \| confirmed \| cancelled` (VEVENT STATUS per iCal RFC 5545). |
 | `listEvents` | Query events by date range with recurring event expansion. Returns `status` on each event. |
 | `updateEvent` | Modify an event's title, dates, location, description, or `status` |
