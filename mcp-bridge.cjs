@@ -656,6 +656,61 @@ function readConnectionFileVerified(candidatePath, context) {
   }
 }
 
+// The extension writes its own process id next to the port and token. A
+// connection file left behind by a Thunderbird that is gone (or that belongs
+// to another program since) must not be trusted: its port may now be served
+// by something else, which would then receive the bearer token.
+//   - the process must exist (kill with signal 0 sends nothing): ESRCH refuses;
+//     EPERM means a process of another user, refused on POSIX;
+//   - on Linux, when /proc/<pid>/exe can be read, it must be Thunderbird or
+//     Betterbird; an unreadable link (confinement, other user) is not a
+//     reason to refuse by itself.
+// A file without a usable pid (older extension) is accepted.
+// The process id of a sandbox with its own PID namespace (Flatpak) means
+// nothing on this side, so those candidates are not checked.
+// Returns null when the file is acceptable, else the refusal reason.
+const THUNDERBIRD_EXE_PATTERN = /^(thunderbird|betterbird)(-bin)?$/;
+
+function checkConnectionOwnerProcess(data, candidate, context) {
+  const pid = data && data.pid;
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    debugLog(`connection file ${candidate.path} has no usable pid; accepted without a process check`);
+    return null;
+  }
+  if (/^Flatpak/.test(candidate.label || '')) {
+    debugLog(`connection file ${candidate.path} comes from a Flatpak sandbox; pid ${pid} not checked`);
+    return null;
+  }
+  const { processImpl, fsImpl, pathImpl } = context;
+  if (!processImpl || typeof processImpl.kill !== 'function') return null;
+  try {
+    processImpl.kill(pid, 0);
+  } catch (err) {
+    if (err && err.code === 'ESRCH') {
+      return `refused: stale connection file: process ${pid} is not running`;
+    }
+    if (err && err.code === 'EPERM' && context.platform !== 'win32') {
+      return `refused: connection file process ${pid} belongs to another user`;
+    }
+    // Any other answer: the check cannot tell, do not refuse on it.
+  }
+  if (context.platform === 'linux') {
+    let exe = null;
+    try {
+      exe = fsImpl.readlinkSync(pathImpl.join(context.procRoot, String(pid), 'exe'));
+    } catch {
+      // Unreadable: rely on the existence and owner check above.
+    }
+    if (typeof exe === 'string' && exe) {
+      const name = pathImpl.basename(exe.replace(/ \(deleted\)$/, ''));
+      if (!THUNDERBIRD_EXE_PATTERN.test(name)) {
+        return `refused: connection file process ${pid} is not Thunderbird or Betterbird (${name})`;
+      }
+    }
+  }
+  return null;
+}
+
 function tryReadConnectionCandidate(candidate, context) {
   const unsafe = checkConnectionFileSafety(candidate.path, context);
   if (unsafe) {
@@ -689,6 +744,14 @@ function tryReadConnectionCandidate(candidate, context) {
       return {
         ok: false,
         attempt: makeAttempt(candidate.label, candidate.path, 'missing port or token')
+      };
+    }
+
+    const stale = checkConnectionOwnerProcess(data, candidate, context);
+    if (stale) {
+      return {
+        ok: false,
+        attempt: makeAttempt(candidate.label, candidate.path, stale)
       };
     }
 
@@ -1782,6 +1845,7 @@ module.exports = {
   formatDiscoveryAttempts,
   compactToolResultJsonText,
   checkConnectionFileSafety,
+  checkConnectionOwnerProcess,
   checkWindowsTempContainment,
   readConnectionFileVerified,
   MAX_CONNECTION_FILE_BYTES,
