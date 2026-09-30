@@ -144,6 +144,7 @@ sender can write), and applied the review of #17.
 - Filters under an account restriction: an "is in address book" condition naming a mailing list of an accessible
   address book (the book's URI followed by `/<id>`), or a URI with a query string, is no longer refused. The match
   needs a `/` separator, so a look-alike such as `abook.sqlite2` is still refused.
+- A local folder whose summary (`.msf`) Thunderbird finds out of date or missing (mbox changed outside Thunderbird, `.msf` deleted) is rebuilt and read again, within 20 s per call, instead of failing with `0x80550005`/`0x80550006` or being skipped silently by `searchMessages` / `getRecentMessages`: the folder a message tool names, each folder a search walks, each message of `getMessages`, the Templates folders of reply rules.
 - README: troubleshooting entry for a bridge in a container or under WSL that is refused after it used to find the
   connection file through a mounted temp folder.
 - README: the automatic-updates section now says that the bridge does not update itself and must be replaced with the one from the same release.
