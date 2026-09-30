@@ -54,9 +54,7 @@ describe('direct-send timeout selection', () => {
       call('sendMail', { skipReview: false }),
       call('sendMail', undefined),
       call('replyToMessage', { skipReview: 0 }),
-      call('replyToMessage', { mode: 'draft' }),
       call('forwardMessage', { mode: 'window' }),
-      call('forwardMessage', { mode: 'SEND' }),
       call('searchMessages', { mode: 'send' }),
       call('searchMessages', { skipReview: true }),
       call('createEvent', { skipReview: true }),
@@ -67,6 +65,43 @@ describe('direct-send timeout selection', () => {
       assert.equal(isDirectSendCall(message), false, JSON.stringify(message));
       assert.deepEqual(requestOptionsFor(message), plain, JSON.stringify(message));
     }
+  });
+});
+
+describe('draft timeout selection', () => {
+  it('waits 150 s for replyToMessage and forwardMessage with mode draft, as for a direct send, but not as a send', () => {
+    for (const name of ['replyToMessage', 'forwardMessage']) {
+      for (const mode of ['draft']) {
+        const message = call(name, { mode });
+        assert.equal(isDirectSendCall(message), false, `${name} ${mode}`);
+        assert.deepEqual(requestOptionsFor(message), { timeoutMs: 150000, directSend: false, draft: true }, `${name} ${mode}`);
+      }
+    }
+  });
+
+  it('counts a call that may also send as a send, not as a draft', () => {
+    const message = call('replyToMessage', { mode: 'draft', skipReview: true });
+    assert.deepEqual(requestOptionsFor(message), { timeoutMs: 150000, directSend: true });
+  });
+
+  it('keeps 30 s for the other tools and modes', () => {
+    const plain = { timeoutMs: 30000, directSend: false };
+    for (const message of [
+      call('replyToMessage', { mode: 'window' }),
+      call('replyToMessage', {}),
+      call('sendMail', { mode: 'draft' }),
+      call('saveDraft', { mode: 'draft' }),
+      call('searchMessages', { mode: 'draft' }),
+    ]) {
+      assert.deepEqual(requestOptionsFor(message), plain, JSON.stringify(message));
+    }
+  });
+
+  it('says in the failure response that the draft may still appear, once', () => {
+    const error = new Error('Request to Thunderbird timed out after 150 s while saving a draft. The draft may still appear in the Drafts folder later: check it before retrying, otherwise a second draft may be created.');
+    const text = JSON.parse(forwardFailureResponse(call('replyToMessage', { mode: 'draft' }), error).result.content[0].text).error;
+    assert.equal(text, error.message);
+    assert.ok(!/may still complete/.test(text));
   });
 });
 
@@ -88,6 +123,22 @@ describe('timeout error', () => {
           && /Sent/.test(err.message)
           && /Outbox/.test(err.message)
           && /before retrying/.test(err.message)
+      );
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  it('says the draft may still appear, and not that a message may have been sent, for a draft', async () => {
+    const server = await silentServer();
+    try {
+      await assert.rejects(
+        tryRequest('127.0.0.1', '{}', server.address().port, 'a'.repeat(64), { timeoutMs: 50, directSend: false, draft: true }),
+        (err) => /timed out after 0\.05 s while saving a draft/.test(err.message)
+          && /may still appear in the Drafts folder later/.test(err.message)
+          && /before retrying/.test(err.message)
+          && !/UNKNOWN|Outbox/.test(err.message)
       );
     } finally {
       server.closeAllConnections();
