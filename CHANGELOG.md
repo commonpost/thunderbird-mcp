@@ -11,6 +11,12 @@ invisible characters was replaced by 0.10.0's handling of untrusted content, whi
 escaping of what is left, the table and `dupLocations` handling and the disabled-tool wording were added on top.
 
 ### Breaking
+- `getFilterConfirmation` is removed, which brings the server back to 40 tools, the limit Cursor accepts per MCP
+  server. Call `listFilters` with `confirmation: true` instead: it returns the same read-only view (the pending
+  request and the recent ones, with the limits) and ignores `accountId`; adding `confirmationId` reads one
+  request, as before (an unknown id is the same error). `confirmationId` is ignored without `confirmation: true`.
+  Without `confirmation`, `listFilters` is unchanged. A disabled-tools preference that still names `getFilterConfirmation` is harmless. Disabling
+  `listFilters` now also disables the confirmation view.
 - Tool failures are tool results with `isError: true` and `{ "error": "..." }` instead of JSON-RPC errors, as the
   MCP spec asks for errors the model can act on: invalid arguments, a disabled tool, a handler that throws or
   returns `{ error }` (including a message-tool result too large to check for untrusted content, which is still
