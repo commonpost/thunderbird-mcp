@@ -39,6 +39,7 @@ function loadProductionAttachmentValidation(overrides = {}) {
   };
   vm.createContext(sandbox);
   vm.runInContext([
+    getMarkedApiSnippet('// BEGIN STRIP HELPERS', '// END STRIP HELPERS'),
     getMarkedApiSnippet('// BEGIN INLINE ATTACHMENT BASE64 HELPERS', '// END INLINE ATTACHMENT BASE64 HELPERS'),
     getMarkedApiSnippet('// BEGIN OUTBOUND ATTACHMENT LIMITS', '// END OUTBOUND ATTACHMENT LIMITS'),
     getMarkedApiSnippet('// BEGIN CONTACT FIELD CONSTANTS', '// END CONTACT FIELD CONSTANTS'),

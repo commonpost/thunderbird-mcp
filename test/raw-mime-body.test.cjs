@@ -23,7 +23,8 @@ function loadRawMimeBodyHelpers() {
   };
   vm.createContext(sandbox);
   vm.runInContext(
-    `${source.slice(start, end)}
+    `${source.slice(source.indexOf("// BEGIN STRIP HELPERS"), source.indexOf("// END STRIP HELPERS"))}
+${source.slice(start, end)}
 this.extractBodyPartFromRawMime = extractBodyPartFromRawMime;`,
     sandbox
   );

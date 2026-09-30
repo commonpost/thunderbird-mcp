@@ -863,7 +863,7 @@ function normalizeInlineImageContentId(contentId) {
   } catch {
     // Keep malformed-but-usable identifiers in their original form.
   }
-  return normalized.replace(/^<+|>+$/g, "").trim().toLowerCase();
+  return stripTrailing(stripLeading(normalized, "<"), ">").trim().toLowerCase();
 }
 
 function findInlineImageRecordIndex(records, target) {
@@ -1243,14 +1243,26 @@ function isSensitiveFilePath(attachmentPath, windows = isWindowsHost()) {
 
 // Catches a home directory that is not under /Users/ at all (the static
 // pattern above only covers the conventional location).
-// Drops trailing "/" and "\\" without a regular expression: /\/+$/
-// backtracks quadratically on a long run of separators that does not end the
-// string.
-function stripTrailingSeparators(s) {
+// BEGIN STRIP HELPERS
+// Drop leading / trailing characters without a regular expression: a pattern
+// such as /[\\/]+$/ or /_+$/ backtracks quadratically on a long run of the
+// character that does not end the string (CodeQL js/polynomial-redos).
+// `chars` is a string of the characters to drop. Not the same as trim(),
+// which drops whitespace only.
+function stripTrailing(s, chars) {
   let end = s.length;
-  while (end > 0 && (s[end - 1] === "/" || s[end - 1] === "\\")) end--;
+  while (end > 0 && chars.includes(s[end - 1])) end--;
   return s.slice(0, end);
 }
+
+function stripLeading(s, chars) {
+  let start = 0;
+  while (start < s.length && chars.includes(s[start])) start++;
+  return s.slice(start);
+}
+// Every character from U+0000 to U+0020 (C0 controls and the space).
+const C0_AND_SPACE = Array.from({ length: 0x21 }, (_, code) => String.fromCharCode(code)).join("");
+// END STRIP HELPERS
 
 function isHomeLibraryPath(normalized) {
   let home;
@@ -1260,7 +1272,7 @@ function isHomeLibraryPath(normalized) {
     return false;
   }
   if (!home) return false;
-  const normalizedHome = stripTrailingSeparators(home.replace(/\\/g, "/").toLowerCase());
+  const normalizedHome = stripTrailing(home.replace(/\\/g, "/").toLowerCase(), "/\\");
   if (!normalizedHome) return false;
   return normalized === `${normalizedHome}/library` || normalized.startsWith(`${normalizedHome}/library/`);
 }
@@ -1284,14 +1296,6 @@ function isWindowsHost() {
 // Reserved Windows device names: a component named so (with or without an
 // extension, trailing dots and spaces ignored) opens the device, not a file.
 const WINDOWS_DEVICE_NAME = /^(con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3]|conin\$|conout\$)$/i;
-
-// Drops trailing spaces without a regular expression (/ +$/ backtracks
-// quadratically on a long run of spaces that does not end the string).
-function stripTrailingSpaces(s) {
-  let end = s.length;
-  while (end > 0 && s[end - 1] === " ") end--;
-  return s.slice(0, end);
-}
 
 // Windows path forms that Windows resolves to ANOTHER name than the one the
 // lexical deny-list sees:
@@ -1325,7 +1329,7 @@ function windowsPathAmbiguity(attachmentPath, knownTempDir) {
   }
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
-    if (WINDOWS_DEVICE_NAME.test(stripTrailingSpaces(part.split(".")[0]))) {
+    if (WINDOWS_DEVICE_NAME.test(stripTrailing(part.split(".")[0], " "))) {
       return `has a component naming a Windows device (${JSON.stringify(part)})`;
     }
     if (/[. ]$/.test(part)) {
@@ -5736,7 +5740,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                         for (let i = 0; i < chars.length; i++) lookup[chars.charCodeAt(i)] = i;
                         // Shape was validated above; remove only legal trailing
                         // padding rather than stripping arbitrary invalid bytes.
-                        const clean = b64Data.replace(/=+$/, "");
+                        const clean = stripTrailing(b64Data, "=");
                         const len = clean.length;
                         const outLen = (len * 3) >> 2;
                         bytes = new Uint8Array(outLen);
@@ -6525,7 +6529,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              */
             function safeEmailUrl(url) {
               if (typeof url !== "string") return "";
-              const cleaned = url.replace(/[\t\n\r]/g, "").replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "");
+              const cleaned = stripTrailing(stripLeading(url.replace(/[\t\n\r]/g, ""), C0_AND_SPACE), C0_AND_SPACE);
               if (!/^(?:https?|mailto):/i.test(cleaned)) return "";
               // Keep the URL from closing the Markdown link/image early.
               return cleaned.replace(/[ ()<>]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
@@ -8437,9 +8441,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
 
             function normalizeRawMimeContentIdForMatch(value) {
-              return String(value || "")
-                .trim()
-                .replace(/^<+|>+$/g, "")
+              return stripTrailing(stripLeading(String(value || "").trim(), "<"), ">")
                 .trim()
                 .toLowerCase();
             }
@@ -9060,7 +9062,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     function getGlodaInlineContentId(part) {
                       const rawContentId = part?.contentId || part?.contentID || part?.cid ||
                         part?.headers?.["content-id"]?.[0] || "";
-                      return String(rawContentId).trim().replace(/^<+|>+$/g, "").trim();
+                      return stripTrailing(stripLeading(String(rawContentId).trim(), "<"), ">").trim();
                     }
 
                     if (aMimeMsg && aMimeMsg.allUserAttachments) {
@@ -9119,7 +9121,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                           : "";
                         const rawContentId = includeInlineImages ? getGlodaInlineContentId(part) : "";
                         const contentId = includeInlineImages
-                          ? String(rawContentId).trim().replace(/^<+|>+$/g, "").trim()
+                          ? stripTrailing(stripLeading(String(rawContentId).trim(), "<"), ">").trim()
                           : "";
                         const isInline = includeInlineImages
                           ? disposition !== "attachment" &&
@@ -9424,7 +9426,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       let name = String(s || "").trim();
                       if (!name) name = "attachment";
                       name = name.replace(/[^a-zA-Z0-9._-]/g, "_");
-                      name = name.replace(/^_+/, "").replace(/_+$/, "");
+                      name = stripTrailing(stripLeading(name, "_"), "_");
                       return name || "attachment";
                     }
 
