@@ -72,7 +72,7 @@ function loadHelpers({ actions = ACTIONS } = {}) {
   vm.runInContext(`${blocks.join("\n")}
 this.api = { ACTION_MAP, buildTerms, buildRuleActions, copySearchValue, copySearchTerm,
   copyRuleAction, serializeFilterRule, planFilterUpdate, FILTER_ACTION_CUSTOM, SEARCH_ATTRIB_CUSTOM,
-  assertFilterListGuard, listSendingRules, FILTER_TYPE_POST_OUTGOING };`, sandbox);
+  assertFilterListGuard, listSendingRules, FILTER_TYPE_POST_OUTGOING, selectManualRunFilters, FILTER_TYPE_MANUAL };`, sandbox);
   return sandbox.api;
 }
 
@@ -585,3 +585,164 @@ describe("forward/reply guard wiring (policy \"block\")", () => {
   });
 });
 
+
+describe("applyFilters runs only enabled, Manually Run rules with accessible targets", () => {
+  const ARCHIVE = "mailbox://nobody@Local%20Folders/Archive";
+  const OTHER = "imap://other@example.org/Archive";
+  const MANUAL = api.FILTER_TYPE_MANUAL;
+  const allowArchive = (uri) => uri === ARCHIVE;
+
+  function rule(name, { enabled = true, temporary = false, filterType = MANUAL, actions = [{ type: "markRead" }] } = {}) {
+    const f = makeFilter(name);
+    api.buildRuleActions(f, actions, (uri) => ({ folder: { URI: uri } }));
+    f.enabled = enabled;
+    f.temporary = temporary;
+    f.filterType = filterType;
+    return f;
+  }
+  function listOf(...rules) {
+    const list = makeFilterList();
+    list.filters.push(...rules);
+    return list;
+  }
+  const plain = (selection) => ({
+    run: [...selection.run].map((r) => [r.index, r.filter.filterName]),
+    skipped: [...selection.skipped].map((r) => ({ ...r })),
+  });
+
+  it("FILTER_TYPE_MANUAL is nsMsgFilterType.Manual", () => {
+    assert.equal(MANUAL, 0x10);
+  });
+
+  it("skips a disabled rule", () => {
+    const sel = plain(api.selectManualRunFilters(listOf(rule("off", { enabled: false })), MANUAL, allowArchive));
+    assert.deepEqual(sel, { run: [], skipped: [{ index: 0, name: "off", reason: "disabled" }] });
+  });
+
+  it("skips a temporary rule", () => {
+    const sel = plain(api.selectManualRunFilters(listOf(rule("tmp", { temporary: true })), MANUAL, allowArchive));
+    assert.deepEqual(sel, { run: [], skipped: [{ index: 0, name: "tmp", reason: "temporary" }] });
+  });
+
+  it("skips a rule that is not marked Manually Run", () => {
+    const sel = plain(api.selectManualRunFilters(listOf(rule("inc", { filterType: 0x1 })), MANUAL, allowArchive));
+    assert.deepEqual(sel, { run: [], skipped: [{ index: 0, name: "inc", reason: "not marked for manual run" }] });
+  });
+
+  it("runs an enabled Manually Run rule, also when it has other types", () => {
+    const sel = plain(api.selectManualRunFilters(listOf(rule("a", { filterType: 0x11 })), MANUAL, allowArchive));
+    assert.deepEqual(sel, { run: [[0, "a"]], skipped: [] });
+  });
+
+  it("skips a rule whose move or copy target is not accessible, runs one whose targets are", () => {
+    const list = listOf(
+      rule("ok", { actions: [{ type: "moveToFolder", value: ARCHIVE }] }),
+      rule("move-out", { actions: [{ type: "moveToFolder", value: OTHER }] }),
+      rule("copy-out", { actions: [{ type: "markRead" }, { type: "copyToFolder", value: OTHER }] }),
+    );
+    const sel = plain(api.selectManualRunFilters(list, MANUAL, allowArchive));
+    assert.deepEqual(sel.run, [[0, "ok"]]);
+    assert.deepEqual(sel.skipped, [
+      { index: 1, name: "move-out", reason: "move/copy target not accessible" },
+      { index: 2, name: "copy-out", reason: "move/copy target not accessible" },
+    ]);
+  });
+
+  it("an isTargetAllowed that throws skips the rule", () => {
+    const list = listOf(rule("t", { actions: [{ type: "moveToFolder", value: ARCHIVE }] }));
+    const sel = plain(api.selectManualRunFilters(list, MANUAL, () => { throw new Error("boom"); }));
+    assert.equal(sel.run.length, 0);
+    assert.match(sel.skipped[0].reason, /^unreadable \(boom\)$/);
+  });
+
+  it("a rule that cannot be read is skipped with the reason, the others still run", () => {
+    const broken = rule("broken");
+    Object.defineProperty(broken, "enabled", { get() { throw new Error("NS_ERROR_FAILURE"); } });
+    const unreadableAction = rule("noaction", { actions: [{ type: "moveToFolder", value: ARCHIVE }] });
+    unreadableAction.getActionAt = () => { throw new Error("no action"); };
+    const list = listOf(broken, unreadableAction, rule("fine"));
+    const sel = plain(api.selectManualRunFilters(list, MANUAL, allowArchive));
+    assert.deepEqual(sel.run, [[2, "fine"]]);
+    assert.match(sel.skipped[0].reason, /^unreadable \(NS_ERROR_FAILURE\)$/);
+    assert.match(sel.skipped[1].reason, /^unreadable \(no action\)$/);
+  });
+
+  it("keeps the order of the list and the list indices", () => {
+    const list = listOf(rule("one"), rule("off", { enabled: false }), rule("two"), rule("three"));
+    const sel = plain(api.selectManualRunFilters(list, MANUAL, allowArchive));
+    assert.deepEqual(sel.run, [[0, "one"], [2, "two"], [3, "three"]]);
+    assert.deepEqual(sel.skipped.map((r) => r.index), [1]);
+  });
+
+  it("no rule selected: the result has nothing to run", () => {
+    const list = listOf(rule("a", { enabled: false }), rule("b", { filterType: 0x1 }));
+    const sel = api.selectManualRunFilters(list, MANUAL, allowArchive);
+    assert.equal(sel.run.length, 0);
+    assert.equal(sel.skipped.length, 2);
+  });
+
+  it("an empty list selects nothing", () => {
+    const sel = api.selectManualRunFilters(listOf(), MANUAL, allowArchive);
+    assert.equal(sel.run.length + sel.skipped.length, 0);
+  });
+});
+
+describe("updateFilter refuses to keep a move/copy target in an account that is not authorized", () => {
+  const ARCHIVE = "mailbox://nobody@Local%20Folders/Archive";
+  const OTHER = "imap://other@example.org/Archive";
+  const opts = { isKeptTargetAllowed: (uri) => uri === ARCHIVE };
+  function ruleTo(uri, type = "moveToFolder") {
+    const f = makeFilter("r");
+    api.buildTerms(f, [{ attrib: "subject", op: "contains", value: "x" }]);
+    api.buildRuleActions(f, [{ type, value: uri }], (u) => ({ folder: { URI: u } }));
+    return f;
+  }
+
+  it("refuses a rename or enable/disable that keeps an inaccessible move target", () => {
+    const list = makeFilterList();
+    assert.throws(() => api.planFilterUpdate(list, ruleTo(OTHER), { name: "y" }, resolveFolder, opts),
+      /not authorized.*provide new actions, or delete the rule/s);
+    assert.throws(() => api.planFilterUpdate(list, ruleTo(OTHER), { enabled: false }, resolveFolder, opts), /not authorized/);
+  });
+
+  it("refuses when only the conditions change and a copy target is kept", () => {
+    const list = makeFilterList();
+    assert.throws(() => api.planFilterUpdate(list, ruleTo(OTHER, "copyToFolder"),
+      { conditions: [{ attrib: "subject", op: "contains", value: "z" }] }, resolveFolder, opts), /not authorized/);
+  });
+
+  it("allows the update when the kept targets are accessible, or when new actions replace them", () => {
+    const list = makeFilterList();
+    const kept = api.planFilterUpdate(list, ruleTo(ARCHIVE), { name: "y" }, resolveFolder, opts);
+    assert.deepEqual([...kept.changes], ["name"]);
+    const replaced = api.planFilterUpdate(list, ruleTo(OTHER), { actions: [{ type: "markRead" }] }, resolveFolder, opts);
+    assert.deepEqual([...replaced.changes], ["actions"]);
+  });
+
+  it("an isKeptTargetAllowed that throws refuses (fail closed)", () => {
+    const list = makeFilterList();
+    assert.throws(() => api.planFilterUpdate(list, ruleTo(ARCHIVE), { name: "y" }, resolveFolder,
+      { isKeptTargetAllowed: () => { throw new Error("boom"); } }), /not authorized/);
+  });
+});
+
+describe("applyFilters wiring", () => {
+  it("prepareApplyFilters hands Thunderbird a temporary list of the selected rules, and skips the call when none is", () => {
+    const start = apiSource.indexOf("function prepareApplyFilters");
+    const end = apiSource.indexOf("function prepareFilterOperation");
+    const body = apiSource.slice(start, end);
+    assert.match(body, /selectManualRunFilters\(filterList, FILTER_TYPE_MANUAL, isFilterTargetAccessible\)/);
+    assert.match(body, /getTempFilterList\(folder\)/);
+    assert.match(body, /applyFiltersToFolders\(tempList, \[folder\], null\)/);
+    assert.doesNotMatch(body, /applyFiltersToFolders\(filterList/);
+    // selected again inside commit(), before running; no call when empty
+    const commit = body.slice(body.indexOf("commit()"));
+    assert.match(commit, /selectRules\(\)/);
+    assert.ok(commit.indexOf("run.length === 0") < commit.indexOf("applyFiltersToFolders"));
+  });
+
+  it("updateFilter re-checks kept targets against the account restriction only", () => {
+    assert.match(apiSource, /isKeptTargetAllowed: isFilterTargetAccessible/);
+    assert.match(apiSource, /function isFilterTargetAccessible\(uri\) \{\s*return !getAccessibleFolder\(uri\)\.error;/);
+  });
+});

@@ -2478,7 +2478,7 @@ function validateFilterType(type) {
 // is not replaced is COPIED typed, and any copy failure throws before the
 // filter list is touched. Returns { changes, replacement } -- replacement is
 // null when only name/enabled/type change (applied in place by the caller).
-function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSendActions = false, checkSendAction } = {}) {
+function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSendActions = false, checkSendAction, isKeptTargetAllowed } = {}) {
   if (typeof resolveFolder !== "function") {
     throw new Error("planFilterUpdate requires a resolveFolder(uri) function");
   }
@@ -2502,6 +2502,28 @@ function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSend
       const outgoing = (newType & FILTER_TYPE_POST_OUTGOING) !== 0;
       throw new Error(`Filter "${filter.filterName}" sends mail or runs add-on actions (${kinds.join(", ")}); `
         + `it cannot be modified${outgoing ? " or marked for outgoing mail" : ""} through MCP -- ${FILTER_SEND_GUARD_NOTE}`);
+    }
+  }
+  if (!replaceActions && typeof isKeptTargetAllowed === "function") {
+    // The rule keeps its move/copy targets, and runs whenever mail arrives or
+    // applyFilters is used: a target in an account the restriction does not
+    // allow, or the Outbox, is not kept on its behalf. Deleting the rule stays
+    // possible. isKeptTargetAllowed(uri) returns true, or the reason why not.
+    let uris;
+    try {
+      uris = filterFolderTargetUris(filter);
+    } catch (e) {
+      throw new Error(`Filter "${filter.filterName}" has an action Thunderbird cannot read (${describeError(e)}); `
+        + "it cannot be modified through MCP", { cause: e });
+    }
+    for (const uri of uris) {
+      let verdict;
+      try { verdict = isKeptTargetAllowed(uri); } catch { verdict = false; }
+      if (verdict === true) continue;
+      const why = typeof verdict === "string" && verdict ? verdict : FILTER_TARGET_NOT_ACCESSIBLE;
+      throw new Error(`Filter "${filter.filterName}" moves or copies messages to a folder MCP does not allow `
+        + `(${why}: ${JSON.stringify(String(uri).slice(0, 300))}); it cannot be modified while it keeps that action -- `
+        + "provide new actions, or delete the rule");
     }
   }
   if (!replaceConditions && !replaceActions) {
@@ -2644,6 +2666,73 @@ function assertFilterListGuard(filterList, operation, targetIndex) {
   throw new Error(`This account's filter list holds rules that send mail or run add-on actions: ${describeSendingRules(rules)}. `
     + `MCP cannot ${verb} this filter list (${operation}) -- ${FILTER_SEND_GUARD_NOTE}`
     + (operation === "delete" ? "; deleting one of those rules is allowed" : ""));
+}
+// ── Running a filter list on demand (applyFilters) ──
+//
+// nsMsgFilterService::ApplyFiltersToFolders runs EVERY rule of the list it is
+// given, without looking at `enabled` or `filterType`. Thunderbird's own
+// "Run Filters on Folder" therefore hands it a temporary list holding only
+// the enabled, non-temporary rules marked "Manually Run" (mailCommon.js,
+// cmd_applyFilters). applyFilters does the same, and in addition leaves out a
+// rule that moves or copies to a folder the account restriction does not
+// allow, or to the Outbox.
+const FILTER_TARGET_NOT_ACCESSIBLE = "move/copy target not accessible";
+const FILTER_TARGET_IS_OUTBOX = "move/copy target is the Outbox";
+const FILTER_TYPE_MANUAL = resolveXpcomConstant("nsMsgFilterType", "Manual") ?? 0x10;
+const FILTER_FOLDER_TARGET_ACTION_TYPES = ["MoveToFolder", "CopyToFolder"]
+  .map((idl) => resolveXpcomConstant("nsMsgFilterAction", idl))
+  .filter((v) => v !== undefined);
+
+// Target folder URIs of the move/copy actions of `filter`. Throws when an
+// action cannot be read (callers fail closed).
+function filterFolderTargetUris(filter) {
+  const uris = [];
+  const count = filter.actionCount;
+  for (let a = 0; a < count; a++) {
+    const action = filter.getActionAt(a);
+    if (FILTER_FOLDER_TARGET_ACTION_TYPES.includes(action.type)) uris.push(action.targetFolderUri);
+  }
+  return uris;
+}
+
+// Splits the rules of `filterList` into those applyFilters runs and those it
+// skips, each with its index. A rule runs only if it is enabled, not
+// temporary, marked for manual run (`manualType` = nsMsgFilterType.Manual)
+// and every target of its move/copy actions passes `isTargetAllowed(uri)`,
+// which returns true, or the reason why the target is not allowed (any other
+// value means FILTER_TARGET_NOT_ACCESSIBLE). Anything that cannot be read, or
+// an `isTargetAllowed` that throws, skips the rule (fail closed) with the
+// reason.
+function selectManualRunFilters(filterList, manualType, isTargetAllowed) {
+  const run = [];
+  const skipped = [];
+  const count = filterList.filterCount;
+  for (let index = 0; index < count; index++) {
+    let name = "";
+    let filter = null;
+    let reason = null;
+    try {
+      filter = filterList.getFilterAt(index);
+      name = String(filter.filterName);
+      if (!filter.enabled) reason = "disabled";
+      else if (filter.temporary) reason = "temporary";
+      else if (!(filter.filterType & manualType)) reason = "not marked for manual run";
+      else {
+        for (const uri of filterFolderTargetUris(filter)) {
+          const verdict = isTargetAllowed(uri);
+          if (verdict !== true) {
+            reason = typeof verdict === "string" && verdict ? verdict : FILTER_TARGET_NOT_ACCESSIBLE;
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      reason = `unreadable (${describeError(e)})`;
+    }
+    if (reason) skipped.push({ index, name, reason });
+    else run.push({ index, filter });
+  }
+  return { run, skipped };
 }
 // END FILTER RULE HELPERS
 
@@ -3207,6 +3296,9 @@ function describeSendingRuleLine(rule, templates) {
   return `  #${rule.index} ${quoteFilterText(rule.name, 60)}${rule.enabled ? "" : " (disabled)"}: ${acts.join("; ")}${more}`;
 }
 
+// Rules named per list (run / skipped) in the apply dialog.
+const FILTER_CONFIRM_MAX_LISTED_RULES = 20;
+
 const FILTER_CONFIRM_SEND_WARNING =
   "This rule will automatically send matching incoming mail, every time, without review.";
 const FILTER_CONFIRM_SEND_WARNING_DISABLED =
@@ -3271,6 +3363,19 @@ function buildFilterConfirmationDialog(d) {
       L.push(`${intro} apply filters including ${context.length} sending rule(s) to the messages already in folder `
         + `${quoteFilterText(d.folder && d.folder.name, 60)} (${displayFilterText(d.folder && d.folder.uri, 160)}):`, "",
       accountLine);
+      if (Array.isArray(d.run) && Array.isArray(d.skipped)) {
+        const listed = (rules, line) => {
+          const shownRules = rules.slice(0, FILTER_CONFIRM_MAX_LISTED_RULES).map(line);
+          if (rules.length > shownRules.length) shownRules.push(`  … and ${rules.length - shownRules.length} more`);
+          return shownRules;
+        };
+        L.push("", d.run.length ? "Rules that will run (enabled, marked Manually Run):" : "No rule will run (none is enabled and marked Manually Run).");
+        L.push(...listed(d.run, (r) => `  #${r.index} ${quoteFilterText(r.name, 60)}`));
+        if (d.skipped.length) {
+          L.push("", "Rules that will be skipped:");
+          L.push(...listed(d.skipped, (r) => `  #${r.index} ${quoteFilterText(r.name, 60)}: ${displayFilterText(r.reason, 120)}`));
+        }
+      }
       break;
     default:
       throw new Error(`unknown operation ${d.operation}`);
@@ -4328,7 +4433,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "applyFilters",
         group: "filters", crud: "update",
         title: "Apply Filters",
-        description: "Manually run all enabled filters on a folder to organize existing messages. If the account's filter list holds a rule that forwards, replies or runs an add-on action, running it is refused by default (\"Always block\"); it needs the user's confirmation in Thunderbird (returns status pending_user_confirmation; follow it with getFilterConfirmation) only if the user has switched the setting to \"Ask me each time\".",
+        description: "Manually run filters on a folder to organize existing messages. Only rules that are enabled and marked \"Manually Run\" are run; the others, and rules that move or copy to a folder of an account that is not authorized or to the Outbox, are skipped and listed under `skipped` with the reason. If the account's filter list holds a rule that forwards, replies or runs an add-on action, running it is refused by default (\"Always block\"); it needs the user's confirmation in Thunderbird (returns status pending_user_confirmation; follow it with getFilterConfirmation) only if the user has switched the setting to \"Ask me each time\".",
         inputSchema: {
           type: "object",
           properties: {
@@ -10294,6 +10399,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (moveResult.folder.getFlag(Ci.nsMsgFolderFlags.Templates)) {
                     return { error: `Cannot move a message into a Templates folder through MCP: ${moveResult.folder.URI}` };
                   }
+                  // Same for the Outbox ("Unsent Messages", the Queue flag).
+                  if (moveResult.folder.getFlag(Ci.nsMsgFolderFlags.Queue)) {
+                    return { error: `Cannot move a message into the Outbox (Unsent Messages) through MCP: ${moveResult.folder.URI}` };
+                  }
                   targetFolder = moveResult.folder;
                 }
 
@@ -10627,14 +10736,28 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // its target as they arrive, same as updateMessage's moveTo: a
             // Templates folder is refused as a target here too, so it can
             // only ever hold messages the user filed there themselves (see
-            // resolveReplyTemplate below).
+            // resolveReplyTemplate below); so is the Outbox.
             function resolveFilterTargetFolder(uri) {
               const result = getAccessibleFolder(uri);
               if (result.error) return result;
               if (result.folder.getFlag(Ci.nsMsgFolderFlags.Templates)) {
                 return { error: `Cannot target a Templates folder from a filter rule: ${result.folder.URI}` };
               }
+              if (result.folder.getFlag(Ci.nsMsgFolderFlags.Queue)) {
+                return { error: `Cannot target the Outbox (Unsent Messages) from a filter rule: ${result.folder.URI}` };
+              }
               return result;
+            }
+
+            // A target a rule already has (kept by updateFilter, run by
+            // applyFilters): the account restriction and the Outbox apply, not
+            // the Templates guard that concerns rules written through MCP.
+            // Returns true, or the reason why the target is not allowed.
+            function checkExistingFilterTarget(uri) {
+              const result = getAccessibleFolder(uri);
+              if (result.error) return FILTER_TARGET_NOT_ACCESSIBLE;
+              if (result.folder.getFlag(Ci.nsMsgFolderFlags.Queue)) return FILTER_TARGET_IS_OUTBOX;
+              return true;
             }
 
             // Reply template of a sending rule: a message of a Templates folder
@@ -10833,7 +10956,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const { changes, replacement } = planFilterUpdate(
                 filterList, filter,
                 { name: a.name, enabled: a.enabled, type: a.type, conditions: a.conditions, actions: a.actions },
-                resolveFilterTargetFolder, sendActionOptions(policy));
+                resolveFilterTargetFolder,
+                { ...sendActionOptions(policy), isKeptTargetAllowed: checkExistingFilterTarget });
 
               const resulting = replacement || filter;
               let rule = serializeFilter(resulting, a.filterIndex);
@@ -10940,8 +11064,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const fl = getFilterListForAccount(a.accountId);
               if (fl.error) return fl;
               const { filterList } = fl;
-              // "block": never run a list holding a sending rule (the whole
-              // list is handed to applyFiltersToFolders). Checked before
+              // "block": never run a list holding a sending rule, even a
+              // disabled or skipped one (conservative). Checked before
               // anything else, so the refusal does not depend on the folder.
               if (policy === "block") guardFilterList(filterList, "apply");
 
@@ -10971,25 +11095,50 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     + (serviceErrors.length ? ` (${serviceErrors.join("; ")})` : ""),
                 };
               }
+              const selectRules = () => selectManualRunFilters(filterList, FILTER_TYPE_MANUAL, checkExistingFilterTarget);
+              const preview = selectRules();
               return {
                 operation: "apply",
                 account: fl.account,
                 filterList,
-                display: { folder: { name: folderDisplayName(folder) || folder.name || folder.URI, uri: folder.URI } },
-                shown: JSON.stringify({ folder: folder.URI }),
+                display: {
+                  folder: { name: folderDisplayName(folder) || folder.name || folder.URI, uri: folder.URI },
+                  run: preview.run.map((r) => ({ index: r.index, name: String(r.filter.filterName) })),
+                  skipped: preview.skipped,
+                },
+                shown: JSON.stringify({
+                  folder: folder.URI,
+                  run: preview.run.map((r) => r.index),
+                  skipped: preview.skipped,
+                }),
                 commit() {
-                  filterService.applyFiltersToFolders(filterList, [folder], null);
+                  // The list may have changed since the preparation (or since
+                  // the user was asked): select again, right before running.
+                  const { run, skipped } = selectRules();
+                  if (run.length === 0) {
+                    return {
+                      success: true,
+                      message: "No enabled rule marked Manually Run; nothing was run",
+                      folder: a.folderPath,
+                      ran: { count: 0, names: [] },
+                      skipped,
+                    };
+                  }
+                  // Same as Thunderbird's own "Run Filters on Folder": a
+                  // temporary list holding only the selected rules, in order.
+                  const tempList = filterService.getTempFilterList(folder);
+                  tempList.loggingEnabled = filterList.loggingEnabled;
+                  tempList.logStream = filterList.logStream;
+                  run.forEach((r, i) => tempList.insertFilterAt(i, r.filter));
+                  filterService.applyFiltersToFolders(tempList, [folder], null);
 
                   // applyFiltersToFolders is async — returns immediately
-                  let enabledFilters = 0;
-                  for (let i = 0; i < filterList.filterCount; i++) {
-                    if (filterList.getFilterAt(i).enabled) enabledFilters++;
-                  }
                   return {
                     success: true,
                     message: "Filters applied (processing may take a moment)",
                     folder: a.folderPath,
-                    enabledFilters,
+                    ran: { count: run.length, names: run.map((r) => String(r.filter.filterName)) },
+                    skipped,
                   };
                 },
               };
