@@ -1,0 +1,37 @@
+{
+  "manifest_version": "0.3",
+  "name": "commonpost-mcp",
+  "display_name": "Commonpost MCP for Thunderbird",
+  "version": "0.11.0",
+  "description": "Thunderbird email, contacts, calendars and filters for Claude, through the Commonpost MCP add-on.",
+  "long_description": "Contains only the stdio bridge. Requires the Commonpost MCP add-on of the SAME version, enabled in Thunderbird 140+; the bridge talks to it on 127.0.0.1 only.",
+  "author": {
+    "name": "Commonpost contributors",
+    "url": "https://github.com/commonpost"
+  },
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/commonpost/thunderbird-mcp"
+  },
+  "homepage": "https://github.com/commonpost/thunderbird-mcp",
+  "documentation": "https://github.com/commonpost/thunderbird-mcp#readme",
+  "support": "https://github.com/commonpost/thunderbird-mcp/issues",
+  "keywords": ["thunderbird", "email", "calendar", "contacts", "mcp"],
+  "tools_generated": true,
+  "server": {
+    "type": "node",
+    "entry_point": "mcp-bridge.cjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/mcp-bridge.cjs"]
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32"],
+    "runtimes": {
+      "node": ">=22.0.0"
+    }
+  }
+}
