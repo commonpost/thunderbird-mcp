@@ -1067,6 +1067,12 @@ function validateAttachmentStat(filePath, stat) {
   if (!stat.isFile()) {
     throw new Error(`Attachment is not a regular file: ${filePath}`);
   }
+  // A second name for the same file can sit outside every path rule above:
+  // the name checked is then not the only way to reach the content. Node
+  // fills nlink on Windows too.
+  if (Number.isFinite(stat.nlink) && stat.nlink > 1) {
+    throw new Error(`Attachment has other hard links; attach a copy instead: ${filePath}`);
+  }
   if (!Number.isSafeInteger(stat.size) || stat.size < 0) {
     throw new Error(`Attachment has an invalid file size: ${filePath}`);
   }
@@ -1780,6 +1786,9 @@ module.exports = {
   readConnectionFileVerified,
   MAX_CONNECTION_FILE_BYTES,
   inlineAttachmentPaths,
+  inspectAttachmentPath,
+  readAttachmentFromPath,
+  validateAttachmentStat,
   isDirectSendCall,
   isSensitiveFilePath,
   isUncOrDevicePath,

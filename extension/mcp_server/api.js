@@ -5497,6 +5497,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     // window remain between these checks and Thunderbird's later
                     // MIME read. Fully closing those residual risks would require
                     // copying each file to a private temp directory before sending.
+                    // Also not detectable here: a file with other hard links
+                    // (nsIFile does not expose the link count); the bridge
+                    // refuses such a file.
                     const desc = { url: Services.io.newFileURI(file).spec, name: file.leafName, size: fileSize };
                     descs.push(desc);
                     totalAttachmentBytes += fileSize;

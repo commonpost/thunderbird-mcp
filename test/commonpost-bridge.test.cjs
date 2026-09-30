@@ -18,6 +18,9 @@ const {
   clearConnectionCache,
   discoverConnectionInfo,
   inlineAttachmentPaths,
+  inspectAttachmentPath,
+  readAttachmentFromPath,
+  validateAttachmentStat,
   isSensitiveFilePath,
   isUncOrDevicePath,
   readConnectionFileVerified,
@@ -668,5 +671,45 @@ describe('the real path of an attachment is checked through a directory link (in
     assert.equal(isSensitiveFilePath(lexical), false, lexical);
     await assert.rejects(inlineAttachmentPaths({ attachments: [lexical] }),
       /Sensitive attachment path blocked: .*notes\.txt \(resolves to .*\.secret.*notes\.txt\)/);
+  });
+});
+
+describe('a file with other hard links is not attached', () => {
+  it('refuses it at inspection, and accepts a copy', async () => {
+    const dir = makeAttachmentTestRoot();
+    try {
+      const file = path.join(dir, 'note.txt');
+      fs.writeFileSync(file, 'bonjour');
+      fs.linkSync(file, path.join(dir, 'other-name.txt'));
+      await assert.rejects(inlineAttachmentPaths({ attachments: [file] }), /has other hard links; attach a copy instead/);
+      const copy = path.join(dir, 'copy.txt');
+      fs.copyFileSync(file, copy);
+      const args = { attachments: [copy] };
+      await inlineAttachmentPaths(args);
+      assert.equal(args.attachments[0].name, 'copy.txt');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a link made after the inspection, when the file is read again', async () => {
+    const dir = makeAttachmentTestRoot();
+    try {
+      const file = path.join(dir, 'note.txt');
+      fs.writeFileSync(file, 'bonjour');
+      const info = await inspectAttachmentPath(file);
+      fs.linkSync(file, path.join(dir, 'late-link.txt'));
+      await assert.rejects(readAttachmentFromPath(info), /has other hard links/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('validateAttachmentStat and hard links', () => {
+  const regular = (nlink) => ({ isSymbolicLink: () => false, isFile: () => true, size: 10, nlink });
+  it('applies to the stat of the opened descriptor too', () => {
+    assert.doesNotThrow(() => validateAttachmentStat('/x/a.txt', regular(1)));
+    assert.throws(() => validateAttachmentStat('/x/a.txt', regular(2)), /has other hard links; attach a copy instead/);
   });
 });
