@@ -36,7 +36,7 @@ describe("MCP protocol", { skip: SKIP }, () => {
     assert.equal(unknown.error.code, -32602);
   });
 
-  it("removes hidden characters from contact text, counts them, and leaves the id usable", async () => {
+  it("removes hidden characters from contact text, counts them, and escapes them in the id", async () => {
     const uid = "bench-\u200Bhidden-contact";
     await tbLib(`
       const book = MailServices.ab.getDirectory("jsaddrbook://abook.sqlite");
@@ -50,6 +50,9 @@ describe("MCP protocol", { skip: SKIP }, () => {
     try {
       const raw = await mcp().request("tools/call", { name: "searchContacts", arguments: { query: "hidden@bench.test" } });
       const [block, notice] = raw.result.content;
+      // left in the id, but escaped in the text: visible, and the same id once parsed
+      assert.doesNotMatch(block.text, /[\u200B\u202E]/);
+      assert.ok(block.text.includes('"id":"bench-\\u200bhidden-contact"'), block.text);
       const [row] = JSON.parse(block.text);
       assert.equal(row.id, uid);
       assert.equal(row.firstName, "Hidden");

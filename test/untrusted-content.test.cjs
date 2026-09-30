@@ -17,7 +17,7 @@ assert.ok(start >= 0 && end > start, "untrusted content helpers block missing");
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${apiSource.slice(start, end)}
-this.api = { stripHiddenCharacters, protectUntrustedResult, protectMessageToolResult, untrustedContentNotice,
+this.api = { stripHiddenCharacters, escapeHiddenCharacters, protectUntrustedResult, protectMessageToolResult, untrustedContentNotice,
   stripEmailContentMarkers, untrustedContentOpen, untrustedContentClose,
   UNTRUSTED_CONTENT_TOOLS, UNTRUSTED_WALK_MAX_NODES, UNTRUSTED_WALK_MAX_DEPTH };`, sandbox);
 const api = sandbox.api;
@@ -142,6 +142,48 @@ describe("stripEmailContentMarkers", () => {
       /card\.setProperty\("Notes", stripEmailContentMarkers\(fields\.note\)\);/,
     ];
     for (const re of sites) assert.match(src, re, re.toString());
+  });
+});
+
+describe("escapeHiddenCharacters", () => {
+  const RAW_HIDDEN = /[\u200B\u202E\u2028\u00AD\uFEFF]|[\u{E0000}-\u{E0FFF}]/u;
+
+  it("writes hidden characters of a JSON text as escapes: visible, and the same value once parsed", () => {
+    const value = {
+      id: "a\u200B@example.test", folderPath: "imap://x/IN\u202EBOX", name: "tag\u{E0041}", sep: "a\u2028b", soft: "a\u00ADb",
+    };
+    const text = api.escapeHiddenCharacters(JSON.stringify(value));
+    assert.doesNotMatch(text, RAW_HIDDEN);
+    assert.match(text, /"id":"a\\u200b@example\.test"/);
+    assert.match(text, /IN\\u202eBOX/);
+    assert.match(text, /tag\\udb40\\udc41/);
+    assert.match(text, /a\\u2028b/, "a line separator is escaped, not turned into a newline");
+    assert.deepEqual({ ...JSON.parse(text) }, value);
+  });
+
+  it("leaves the joiners and presentation selectors that real text needs, like stripHiddenCharacters", () => {
+    const value = { s: "\u{1F468}\u200D\u{1F469}\u200D\u{1F467} \u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645 \u2764\uFE0F" };
+    const json = JSON.stringify(value);
+    assert.equal(api.escapeHiddenCharacters(json), json);
+    const lone = JSON.stringify({ s: "\u200D" });
+    assert.equal(api.escapeHiddenCharacters(lone), '{"s":"\\u200d"}');
+  });
+
+  it("returns anything but a string unchanged", () => {
+    assert.equal(api.escapeHiddenCharacters(undefined), undefined);
+  });
+
+  it("after protection, escapes what was only counted and keeps the result intact once parsed", () => {
+    const result = { id: "m\u200B@x", folderPath: "imap://x/INBOX", dupLocations: ["imap://x/A\u200B"], subject: "Hi\u200B", body: "b\u202E" };
+    const notice = api.protectMessageToolResult("getMessage", result, NONCE);
+    assert.match(notice, /\b4 hidden or bidirectional-control character\(s\) were found/);
+    const text = api.escapeHiddenCharacters(JSON.stringify(result));
+    assert.doesNotMatch(text, RAW_HIDDEN);
+    const parsed = JSON.parse(text);
+    assert.equal(parsed.id, "m\u200B@x");
+    assert.deepEqual(parsed.dupLocations, ["imap://x/A\u200B"]);
+    assert.equal(parsed.subject, "Hi");
+    assert.equal(parsed.body, `<email-content id="${NONCE}" hidden-characters-removed="1">\nb\n</email-content id="${NONCE}">`);
   });
 });
 
