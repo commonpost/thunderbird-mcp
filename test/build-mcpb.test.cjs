@@ -59,7 +59,9 @@ describe("reproducible .mcpb build", () => {
 
   it("builds the release asset name, with a sha256 file", () => {
     assert.ok(fs.existsSync(path.join(dirA, `${name}.sha256`)));
-    assert.match(fs.readFileSync(path.join(dirA, `${name}.sha256`), "utf8"), new RegExp(`^[0-9a-f]{64}  ${name.replace(/\./g, "\\.")}\\n$`));
+    const line = fs.readFileSync(path.join(dirA, `${name}.sha256`), "utf8");
+    assert.match(line.slice(0, 66), /^[0-9a-f]{64} {2}$/);
+    assert.equal(line.slice(66), `${name}\n`);
   });
 
   it("gives identical bytes for two builds", () => {
