@@ -21,6 +21,10 @@ project is kept in this repository.
   default identity: the identity the message was addressed to (To / Cc, then Delivered-To), the identity that sent
   it for a reply to your own message, and for a catch-all identity the address the message was sent to. Identities
   of accounts the MCP may not access are never picked. By @mazixs in #26.
+  An identity shared by an accessible and a restricted account counts as accessible, whatever the order of the
+  accounts, as `findIdentity` already did. Fetching the original message for that choice gives up after 20 s: a
+  compose window or a draft then opens without it, and a direct send returns an error instead of hanging. Encrypted
+  messages stay withheld from a direct reply or forward while the "read encrypted messages" option is off.
 - README: a "Quick install" section at the top, in five steps, with the Claude Code command (Windows example included) and a bold reminder that the bridge is not updated with the extension. It also corrects the old advice to replace the bridge's `package.json` too: the release ships only `mcp-bridge.cjs`, which needs nothing else.
 - README: a new "Other MCP clients" section with the configuration file, location and format of Claude Desktop, VS Code, Cursor, OpenAI Codex CLI and Gemini CLI, checked against each client's documentation, and when and how to set `COMMONPOST_MCP_CONNECTION_FILE` (only if the bridge cannot find the connection file). The bridge is not tied to any client, and `mcpServers` is not the key every client uses.
 - RELEASING: the verification step now says that a rebase merge rewrites the commit date, so the reproducible hash built from the pull request branch cannot match the release; compare with a rebuild from a checkout of the tag.
