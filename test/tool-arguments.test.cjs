@@ -77,6 +77,25 @@ describe('numeric bounds', () => {
     assert.deepEqual(call('listTasks', { maxResults: 12.9 }), { args: { maxResults: 12 }, errors: [] });
   });
 
+  it('clamp the search limits and maxBodyChars too (#17)', () => {
+    const MSG = { messageId: 'm', folderPath: 'f' };
+    assert.equal(call('searchMessages', { query: 'x', maxResults: 500 }).args.maxResults, 200);
+    assert.equal(call('getRecentMessages', { maxResults: 1000 }).args.maxResults, 200);
+    assert.equal(call('searchContacts', { query: 'x', maxResults: 201 }).args.maxResults, 200);
+    assert.deepEqual(call('getMessage', { ...MSG, maxBodyChars: 300000 }), { args: { ...MSG, maxBodyChars: 200000 }, errors: [] });
+    const many = call('getMessages', { messages: [MSG], maxBodyChars: 999999.5 });
+    assert.deepEqual([many.args.maxBodyChars, many.errors], [200000, []]);
+    assert.deepEqual(call('getMessage', { ...MSG, maxBodyChars: 0 }).errors, ["Parameter 'maxBodyChars' must be >= 1, got 0"]);
+  });
+
+  it('reject fractional or out-of-range offsets and daysBack (#17)', () => {
+    assert.match(call('searchMessages', { query: 'x', offset: 1.5 }).errors.join(), /offset.*integer/);
+    assert.deepEqual(call('searchMessages', { query: 'x', offset: -1 }).errors, ["Parameter 'offset' must be >= 0, got -1"]);
+    assert.deepEqual(call('getRecentMessages', { daysBack: 0 }).errors, ["Parameter 'daysBack' must be >= 1, got 0"]);
+    assert.match(call('getRecentMessages', { daysBack: 2.5 }).errors.join(), /daysBack.*integer/);
+    assert.deepEqual(call('getMessage', { messageId: 'm', folderPath: 'f', bodyOffset: -1 }).errors, ["Parameter 'bodyOffset' must be >= 0, got -1"]);
+  });
+
   it('reject a limit below its minimum', () => {
     assert.deepEqual(call('listEvents', { maxResults: 0 }).errors, ["Parameter 'maxResults' must be >= 1, got 0"]);
   });
