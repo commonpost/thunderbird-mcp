@@ -5952,15 +5952,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return findIdentityIn(getAccessibleAccounts(), emailOrId);
             }
 
+            // An identity can be shared by several accounts: the account key is the first accessible one
+            // that holds it (as findIdentity), else the first account that holds it.
             function accountKeyForIdentity(identity) {
+              let firstKey = "";
               try {
                 for (const account of MailServices.accounts.accounts) {
                   for (const candidate of account.identities) {
-                    if (candidate.key === identity.key) return account.key;
+                    if (candidate.key !== identity.key) continue;
+                    if (isAccountAllowed(account.key)) return account.key;
+                    if (!firstKey) firstKey = account.key;
                   }
                 }
               } catch { /* no accounts */ }
-              return "";
+              return firstKey;
             }
 
             function isIdentityAllowed(identity) {
