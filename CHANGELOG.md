@@ -13,6 +13,12 @@ project is kept in this repository.
   goes only to the caller's `to` / `cc` / `bcc` plus the sending identity's own automatic Cc / Bcc, with that
   identity's Reply-To (a direct reply-all no longer adds the original's To / Cc). The result of a direct send lists
   the `from`, `to`, `cc`, `bcc` and `replyTo` it went out with. By @mazixs in #26.
+- The error that `replyToMessage` and `forwardMessage` return when direct sending is blocked has new text, and it now
+  covers `mode: "send"` as well as `skipReview`: it was "User preference blocks skipReview. Retry with skipReview:
+  false (or omitted) to open the review window instead.", it is now "User preference blocks direct sending (mode
+  \"send\" or skipReview). Use mode \"draft\" to save a draft, or \"window\" (the default) to open a review
+  window." A client that matches the old string exactly must be updated (`sendMail`, `createEvent` and `createTask`
+  keep theirs). By @mazixs in #27.
 
 ### Added
 
@@ -56,7 +62,11 @@ project is kept in this repository.
   is no longer set by the tool: Thunderbird derives it from the last References entry. By @mazixs in #27.
 - `mcp-bridge.cjs`: a `replyToMessage` or `forwardMessage` call with `mode: "send"` is a direct send like
   `skipReview: true`, so it waits up to 150 s and gets the same "outcome unknown" error on a timeout. By @mazixs in
-  #27.
+  #27. On top, from the maintainers: the mode is compared trimmed and lower-cased to decide that (so `"SEND"`, which
+  the extension refuses, still counts as a send: no version notice, the long wait), without changing what is sent to
+  the extension; and `mode: "draft"` waits 150 s too, since Thunderbird can take up to 120 s to save a draft and a
+  client that retries after 30 s would create two. After that wait the error says the draft may still appear in the
+  Drafts folder later.
 - README: a "Quick install" section at the top, in five steps, with the Claude Code command (Windows example included) and a bold reminder that the bridge is not updated with the extension. It also corrects the old advice to replace the bridge's `package.json` too: the release ships only `mcp-bridge.cjs`, which needs nothing else.
 - README: a new "Other MCP clients" section with the configuration file, location and format of Claude Desktop, VS Code, Cursor, OpenAI Codex CLI and Gemini CLI, checked against each client's documentation, and when and how to set `COMMONPOST_MCP_CONNECTION_FILE` (only if the bridge cannot find the connection file). The bridge is not tied to any client, and `mcpServers` is not the key every client uses.
 - RELEASING: the verification step now says that a rebase merge rewrites the commit date, so the reproducible hash built from the pull request branch cannot match the release; compare with a rebuild from a checkout of the tag.
