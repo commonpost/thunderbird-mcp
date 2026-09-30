@@ -16,7 +16,7 @@ assert.ok(start >= 0 && end > start, 'COMPOSE HELPERS markers missing');
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${apiSource.slice(start, end)}
-this.api = { resolveComposeMode, computeReplyRecipients, switchIdentityRecipients, buildReplyReferences };`, sandbox);
+this.api = { resolveComposeMode, composeModeRefusal, DIRECT_SEND_BLOCKED_ERROR, computeReplyRecipients, switchIdentityRecipients, buildReplyReferences };`, sandbox);
 const api = sandbox.api;
 
 describe('resolveComposeMode', () => {
@@ -31,6 +31,24 @@ describe('resolveComposeMode', () => {
 
   it('only the send mode needs the skipReview gate', () => {
     for (const mode of ['window', 'draft']) assert.notEqual(api.resolveComposeMode(mode, true), 'send');
+  });
+});
+
+describe('composeModeRefusal (the skipReview block)', () => {
+  it('refuses a direct send while the block is on, whichever way it was asked for', () => {
+    // mode send, and the legacy skipReview alone, both resolve to send
+    for (const [mode, skipReview] of [['send', false], ['send', true], [undefined, true]]) {
+      const composeMode = api.resolveComposeMode(mode, skipReview);
+      assert.equal(api.composeModeRefusal(composeMode, { skipReviewBlocked: true }), api.DIRECT_SEND_BLOCKED_ERROR, `${mode} ${skipReview}`);
+      assert.equal(api.composeModeRefusal(composeMode, { skipReviewBlocked: false }), null, `${mode} ${skipReview}`);
+    }
+  });
+
+  it('never refuses a draft or a window on account of the block, even next to skipReview: true', () => {
+    for (const [mode, skipReview] of [['draft', true], ['draft', false], ['window', true], [undefined, false]]) {
+      const composeMode = api.resolveComposeMode(mode, skipReview);
+      assert.equal(api.composeModeRefusal(composeMode, { skipReviewBlocked: true }), null, `${mode} ${skipReview}`);
+    }
   });
 });
 
