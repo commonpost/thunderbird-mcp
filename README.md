@@ -111,7 +111,7 @@ The Thunderbird extension embeds a local HTTP server with session-scoped auth to
 | `forwardMessage` | Forward with all original attachments preserved, from the identity Thunderbird would pick. `mode` as for `replyToMessage`; `to` is optional except with `send`, which needs explicit `to` and `from` |
 | `saveDraft` | Save a new message as a draft, as Thunderbird's compose window saves it -- returns its `messageId` and `folderPath` |
 
-All compose tools open a window for you to review and edit before sending by default. The **Block `skipReview`** preference is on by default, so `skipReview: true` (and `mode: "send"`) is rejected until you explicitly disable the preference; only then can it send directly. `mode: "draft"` only saves a draft, so the preference does not block it. Attachments can be file paths or inline base64 objects.
+All compose tools open a window for you to review and edit before sending by default. The **Block `skipReview`** preference is on by default, so `skipReview: true` (and `mode: "send"`) is rejected until you explicitly disable the preference; only then can it send directly. `mode: "draft"` only saves a draft, so the preference does not block it (even next to `skipReview: true`); it needs the `saveDraft` tool to be enabled in the settings, as a tool you disabled is not reachable through another one. Attachments can be file paths or inline base64 objects.
 
 A direct send can take a while: the bridge waits up to 150 s for Thunderbird (30 s for every other call). Your MCP client may also have its own time limit for a tool call; if it is shorter than 150 s, the client can give up while Thunderbird goes on sending, so check the Sent folder and the Outbox before retrying to avoid sending the message twice.
 

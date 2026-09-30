@@ -4247,10 +4247,14 @@ function resolveComposeMode(mode, skipReview) {
 
 const DIRECT_SEND_BLOCKED_ERROR = "User preference blocks direct sending (mode \"send\" or skipReview). Use mode \"draft\" to save a draft, or \"window\" (the default) to open a review window.";
 
+const DRAFT_TOOL_DISABLED_ERROR = "mode \"draft\" saves through the saveDraft tool, which is disabled in the add-on settings. Use mode \"window\" (the default) to open a review window, or ask the user to enable saveDraft.";
+
 // Why a reply or forward in this mode must not go on, or null. Only a direct send is a send: the draft and window
 // modes send nothing, so the block of skipReview does not apply to them (whatever skipReview says next to them).
-function composeModeRefusal(composeMode, { skipReviewBlocked }) {
+// A draft is what saveDraft does: a tool the user disabled must not be reachable through another tool.
+function composeModeRefusal(composeMode, { skipReviewBlocked, saveDraftEnabled }) {
   if (composeMode === "send" && skipReviewBlocked) return DIRECT_SEND_BLOCKED_ERROR;
+  if (composeMode === "draft" && !saveDraftEnabled) return DRAFT_TOOL_DISABLED_ERROR;
   return null;
 }
 
@@ -4924,7 +4928,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "replyToMessage",
         group: "messages", crud: "create",
         title: "Reply to Message",
-        description: "Reply with quoted original text. mode: window (compose window for review, default), draft (save to Drafts with the recipients Thunderbird computes: Reply-To, Mail-Followup-To, mailing lists, identity auto Cc/Bcc; returns messageId + folderPath), send (direct, needs to and from; blocked unless the user disables the skipReview safety block).",
+        description: "Reply with quoted original text. mode: window (compose window for review, default), draft (save to Drafts with the recipients Thunderbird computes: Reply-To, Mail-Followup-To, mailing lists, identity auto Cc/Bcc; returns messageId + folderPath; needs the saveDraft tool enabled), send (direct, needs to and from; blocked unless the user disables the skipReview safety block).",
         inputSchema: {
           type: "object",
           properties: {
@@ -4972,7 +4976,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "forwardMessage",
         group: "messages", crud: "create",
         title: "Forward Message",
-        description: "Forward with the original content and attachments. mode: window (compose window for review, default), draft (save to Drafts, to optional; returns messageId + folderPath), send (direct, needs to and from; blocked unless the user disables the skipReview safety block).",
+        description: "Forward with the original content and attachments. mode: window (compose window for review, default), draft (save to Drafts, to optional; returns messageId + folderPath; needs the saveDraft tool enabled), send (direct, needs to and from; blocked unless the user disables the skipReview safety block).",
         inputSchema: {
           type: "object",
           properties: {
@@ -11342,7 +11346,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             async function replyToMessage(messageId, folderPath, body, replyAll, isHtml, to, cc, bcc, from, attachments, skipReview, mode) {
               try {
                 const composeMode = resolveComposeMode(mode, skipReview);
-                const refusal = composeModeRefusal(composeMode, { skipReviewBlocked: isSkipReviewBlocked() });
+                const refusal = composeModeRefusal(composeMode, { skipReviewBlocked: isSkipReviewBlocked(), saveDraftEnabled: isToolEnabled("saveDraft") });
                 if (refusal) {
                   return { error: refusal };
                 }
@@ -11512,7 +11516,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             async function forwardMessage(messageId, folderPath, to, body, isHtml, cc, bcc, from, attachments, skipReview, mode) {
               try {
                 const composeMode = resolveComposeMode(mode, skipReview);
-                const refusal = composeModeRefusal(composeMode, { skipReviewBlocked: isSkipReviewBlocked() });
+                const refusal = composeModeRefusal(composeMode, { skipReviewBlocked: isSkipReviewBlocked(), saveDraftEnabled: isToolEnabled("saveDraft") });
                 if (refusal) {
                   return { error: refusal };
                 }
