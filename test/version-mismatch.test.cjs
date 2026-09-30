@@ -275,13 +275,15 @@ describe('version notice', () => {
     assert.equal(bridge.noticeLines().length, 2);
   });
 
-  // Whatever makes a call a direct send (skipReview or mode send): the
+  // Whatever makes a call a direct send (skipReview, mode send, or a spelling of it the extension would refuse): the
   // result stays exactly what Thunderbird said, and the add-on is not even probed
   const DIRECT_SENDS = [
     ['sendMail with skipReview', 'sendMail', { to: 'a@example.com', subject: 's', body: 'b', skipReview: true }],
     ['replyToMessage with mode send', 'replyToMessage', { mode: 'send' }],
     ['forwardMessage with mode send', 'forwardMessage', { mode: 'send' }],
     ['replyToMessage with skipReview', 'replyToMessage', { skipReview: true }],
+    ['replyToMessage with mode SEND', 'replyToMessage', { mode: 'SEND' }],
+    ['forwardMessage with mode " send "', 'forwardMessage', { mode: ' send ' }],
     ['replyToMessage with mode draft and skipReview', 'replyToMessage', { mode: 'draft', skipReview: true }],
   ];
   for (const [label, name, args] of DIRECT_SENDS) {
