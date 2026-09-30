@@ -105,4 +105,20 @@ describe("drafts", { skip: SKIP }, () => {
     });
     assert.match(send.error || "", /blocks direct sending/);
   });
+
+  it("mode draft needs the saveDraft tool: disabled by the user, it is not reachable through another tool", async () => {
+    const disable = names => tbLib(`Services.prefs.setStringPref("extensions.commonpost-mcp.disabledTools", JSON.stringify(args.names));`, { names });
+    try {
+      await disable(["saveDraft"]);
+      const reply = await mcp().call("replyToMessage", { messageId: ORIGINAL, folderPath: FOLDER.inbox, mode: "draft", body: "drafts body" });
+      assert.match(reply.error || "", /saveDraft tool, which is disabled/, JSON.stringify(reply));
+      const forward = await mcp().call("forwardMessage", { messageId: ORIGINAL, folderPath: FOLDER.inbox, mode: "draft", to: "zed@example.test", body: "drafts body" });
+      assert.match(forward.error || "", /saveDraft tool, which is disabled/, JSON.stringify(forward));
+      assert.deepEqual(await listDrafts(), []);
+    } finally {
+      await tbLib('Services.prefs.clearUserPref("extensions.commonpost-mcp.disabledTools");');
+    }
+    const reply = await mcp().call("replyToMessage", { messageId: ORIGINAL, folderPath: FOLDER.inbox, mode: "draft", body: "drafts body" });
+    assert.equal(reply.success, true, JSON.stringify(reply));
+  });
 });

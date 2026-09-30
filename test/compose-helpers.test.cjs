@@ -16,7 +16,7 @@ assert.ok(start >= 0 && end > start, 'COMPOSE HELPERS markers missing');
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${apiSource.slice(start, end)}
-this.api = { resolveComposeMode, composeModeRefusal, DIRECT_SEND_BLOCKED_ERROR, computeReplyRecipients, switchIdentityRecipients, buildReplyReferences };`, sandbox);
+this.api = { resolveComposeMode, composeModeRefusal, DIRECT_SEND_BLOCKED_ERROR, DRAFT_TOOL_DISABLED_ERROR, computeReplyRecipients, switchIdentityRecipients, buildReplyReferences };`, sandbox);
 const api = sandbox.api;
 
 describe('resolveComposeMode', () => {
@@ -39,16 +39,33 @@ describe('composeModeRefusal (the skipReview block)', () => {
     // mode send, and the legacy skipReview alone, both resolve to send
     for (const [mode, skipReview] of [['send', false], ['send', true], [undefined, true]]) {
       const composeMode = api.resolveComposeMode(mode, skipReview);
-      assert.equal(api.composeModeRefusal(composeMode, { skipReviewBlocked: true }), api.DIRECT_SEND_BLOCKED_ERROR, `${mode} ${skipReview}`);
-      assert.equal(api.composeModeRefusal(composeMode, { skipReviewBlocked: false }), null, `${mode} ${skipReview}`);
+      assert.equal(api.composeModeRefusal(composeMode, { skipReviewBlocked: true, saveDraftEnabled: true }), api.DIRECT_SEND_BLOCKED_ERROR, `${mode} ${skipReview}`);
+      assert.equal(api.composeModeRefusal(composeMode, { skipReviewBlocked: false, saveDraftEnabled: true }), null, `${mode} ${skipReview}`);
     }
   });
 
   it('never refuses a draft or a window on account of the block, even next to skipReview: true', () => {
     for (const [mode, skipReview] of [['draft', true], ['draft', false], ['window', true], [undefined, false]]) {
       const composeMode = api.resolveComposeMode(mode, skipReview);
-      assert.equal(api.composeModeRefusal(composeMode, { skipReviewBlocked: true }), null, `${mode} ${skipReview}`);
+      assert.equal(api.composeModeRefusal(composeMode, { skipReviewBlocked: true, saveDraftEnabled: true }), null, `${mode} ${skipReview}`);
     }
+  });
+});
+
+describe('composeModeRefusal (the saveDraft tool)', () => {
+  it('mode draft needs saveDraft enabled, whatever the block of skipReview says', () => {
+    for (const skipReviewBlocked of [true, false]) {
+      assert.equal(api.composeModeRefusal('draft', { skipReviewBlocked, saveDraftEnabled: false }), api.DRAFT_TOOL_DISABLED_ERROR);
+      assert.equal(api.composeModeRefusal('draft', { skipReviewBlocked, saveDraftEnabled: true }), null);
+    }
+    assert.match(api.DRAFT_TOOL_DISABLED_ERROR, /saveDraft tool, which is disabled/);
+  });
+
+  it('a disabled saveDraft does not touch the other modes', () => {
+    assert.equal(api.composeModeRefusal('window', { skipReviewBlocked: true, saveDraftEnabled: false }), null);
+    assert.equal(api.composeModeRefusal('send', { skipReviewBlocked: false, saveDraftEnabled: false }), null);
+    // and a blocked send is still refused for its own reason
+    assert.equal(api.composeModeRefusal('send', { skipReviewBlocked: true, saveDraftEnabled: false }), api.DIRECT_SEND_BLOCKED_ERROR);
   });
 });
 

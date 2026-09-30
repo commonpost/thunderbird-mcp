@@ -21,6 +21,8 @@ project is kept in this repository.
   `from`, subject to **Block `skipReview`**, and the bridge waits up to 150 s for it. `mode: "draft"` saves the
   reply or forward to the identity's Drafts folder without opening a window and returns its `messageId` and
   `folderPath`. It sends nothing, so **Block `skipReview`** does not block it. By @mazixs in #27.
+  `mode: "draft"` needs the `saveDraft` tool to be enabled: a tool the user disabled is not reachable through
+  another tool, and the call returns an error saying so.
   - A reply draft gets the recipients Thunderbird's Reply / Reply All computes (`nsMsgCompose.cpp`, ported to a
     pure function): Reply-To and Mail-Reply-To, Mail-Followup-To for Reply All, the author instead of a mailing list
     that rewrites Reply-To, the recipients of your own message from the identity that sent it, your own addresses
