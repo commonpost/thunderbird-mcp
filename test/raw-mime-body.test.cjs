@@ -375,6 +375,11 @@ describe("decodeRawSource (R1)", () => {
   it("falls back to lossy UTF-8 when only UTF-8 is declared, then to the detector", () => {
     const broken = raw("utf-8", `${utf8("ок")}\xff`);
     assert.equal(decodeRawSource(broken, () => "windows-1252").charset, "utf-8");
+    // Lossy: the strict decoder failed, so the invalid byte became U+FFFD (getMessage then adds a warning).
+    assert.equal(decodeRawSource(broken).lossy, true);
+    assert.ok(decodeRawSource(broken).text.includes("ок\uFFFD"));
+    assert.equal(decodeRawSource(raw("utf-8", utf8("ок"))).lossy, undefined);
+    assert.equal(decodeRawSource(raw("windows-1251", cp1251(TEXT))).lossy, undefined);
     const unlabeled = `Subject: t\n\n${cp1251(TEXT)}\n`;
     const seen = [];
     const out = decodeRawSource(unlabeled, s => { seen.push(s); return "windows-1251"; });

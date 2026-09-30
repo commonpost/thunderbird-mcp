@@ -188,30 +188,27 @@ describe("escapeHiddenCharacters", () => {
 });
 
 describe("protectUntrustedResult", () => {
-  it("wraps body, rawSource and preview with the identifier and cleans every string except rawSource", () => {
+  it("wraps body, rawSource and preview with the identifier and cleans every string", () => {
     const result = { messages: [{ id: "x", subject: "Hi\u202E there", body: "line\u200B one", preview: "pre\u2060view", rawSource: "Raw\u0000" }] };
     const removed = api.protectUntrustedResult(result, NONCE);
-    // rawSource's NUL is left in place (see below), so only 3 removals: subject, body, preview.
-    assert.equal(removed, 3);
+    assert.equal(removed, 4);
     const m = result.messages[0];
     assert.equal(m.subject, "Hi there");
     assert.equal(m.body, `<email-content id="${NONCE}" hidden-characters-removed="1">\nline one\n</email-content id="${NONCE}">`);
     assert.equal(m.preview, `<email-content id="${NONCE}" hidden-characters-removed="1">\npreview\n</email-content id="${NONCE}">`);
-    // Delimited, but byte-for-byte unchanged: no hidden-characters-removed attribute.
-    assert.equal(m.rawSource, `<email-content id="${NONCE}">\nRaw\u0000\n</email-content id="${NONCE}">`);
+    assert.equal(m.rawSource, `<email-content id="${NONCE}" hidden-characters-removed="1">\nRaw\n</email-content id="${NONCE}">`);
   });
 
-  it("never rewrites rawSource: it is a byte string (Latin-1, one code unit per octet), not decoded text", () => {
-    // Bytes in the ranges stripHiddenCharacters would otherwise strip: C1
-    // controls 0x80-0x9F (UTF-8 continuation bytes), DEL (0x7F), soft hyphen
-    // (0xAD), and ESC (0x1B, an ISO-2022-JP shift sequence byte). Stripping
-    // any of these from raw message bytes corrupts the encoding rather than
-    // removing anything invisible.
-    const rawBytes = "a\x1Bb\x7Fc\x80d\x9Ee\xADf";
-    const result = { rawSource: rawBytes };
-    const removed = api.protectUntrustedResult(result, NONCE);
-    assert.equal(removed, 0);
-    assert.equal(result.rawSource, `<email-content id="${NONCE}">\n${rawBytes}\n</email-content id="${NONCE}">`);
+  it("cleans rawSource like a body: it is decoded text since #17; rawEncoding base64 has nothing to remove", () => {
+    // Decoded text can hold real hidden characters (tag characters, bidi controls), which a Latin-1 byte string could not.
+    const text = "Subject: t\n\nPay \u202Eeulb\u202C now\u{E0041}\u{E0042}\n";
+    const decoded = { rawSource: text, rawCharset: "utf-8" };
+    assert.equal(api.protectUntrustedResult(decoded, NONCE), 4);
+    assert.equal(decoded.rawSource, `<email-content id="${NONCE}" hidden-characters-removed="4">\nSubject: t\n\nPay eulb now\n\n</email-content id="${NONCE}">`);
+    const base64 = Buffer.from(text).toString("base64");
+    const exact = { rawSource: base64, rawEncoding: "base64" };
+    assert.equal(api.protectUntrustedResult(exact, NONCE), 0);
+    assert.equal(exact.rawSource, `<email-content id="${NONCE}">\n${base64}\n</email-content id="${NONCE}">`);
   });
 
   it("does not mention removals when there were none, and leaves empty fields alone", () => {
