@@ -1547,10 +1547,23 @@ async function handleMessage(line) {
   }
 
   if (message.method !== 'tools/call') {
-    return forwardToThunderbird(message);
+    const response = await forwardToThunderbird(message);
+    if (message.method === 'tools/list' && response?.result) {
+      // Warm the version probe so the first tools/call does not wait for it.
+      startVersionProbe();
+    }
+    return response;
   }
   try {
-    return await forwardToThunderbird(message);
+    const response = await forwardToThunderbird(message);
+    // Never on a direct send: its result must stay exactly what Thunderbird said.
+    if (!isDirectSendCall(message) && Array.isArray(response?.result?.content)) {
+      const notice = await versionNotice();
+      if (notice) {
+        response.result.content.push({ type: 'text', text: notice });
+      }
+    }
+    return response;
   } catch (e) {
     return forwardFailureResponse(message, e);
   }
@@ -1642,7 +1655,18 @@ function tryRequest(hostname, postData, port, token, options = requestOptionsFor
       headers
     }, (res) => {
       const chunks = [];
-      res.on('data', (chunk) => chunks.push(chunk));
+      let received = 0;
+      res.on('data', (chunk) => {
+        received += chunk.length;
+        if (options.maxBytes && received > options.maxBytes) {
+          // Only the version probe sets a limit; it treats any failure as silence.
+          settled = true;
+          req.destroy();
+          reject(new Error('response too large'));
+          return;
+        }
+        chunks.push(chunk);
+      });
       if (options.directSend) {
         // Connection dropped in the middle of the response.
         res.on('error', (err) => fail(err));
@@ -1750,6 +1774,108 @@ function compactToolResultJsonText(response) {
   return { ...response, result: { ...response.result, content: compactedContent } };
 }
 
+// Bridge and add-on come from the same release but are installed separately, and
+// only the add-on updates itself. The version only ever feeds the notice below:
+// nothing else in the bridge depends on it.
+const VERSION_PROBE_TIMEOUT_MS = 1500;
+const VERSION_PROBE_MAX_BYTES = 64 * 1024;
+const VERSION_CORE_PATTERN = /^(\d{1,6})\.(\d{1,6})\.(\d{1,6})(?:$|[-+.])/;
+
+// 'X.Y.Z' from a version string, or null. Never throws.
+function versionCore(version) {
+  if (typeof version !== 'string' || version.length > 64) {
+    return null;
+  }
+  const match = VERSION_CORE_PATTERN.exec(version);
+  return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
+}
+
+// The connection (port, token, pid) that last answered a request.
+let lastServed = null;
+// One probe state per connection: a new Thunderbird process (an add-on update
+// restarts it) has a new pid and so is probed again.
+let versionState = null;
+
+// Ask the add-on for its version on the connection that just answered, with the
+// MCP initialize it already supports. Any failure is silence: null.
+async function probeExtVersion(conn) {
+  let timer;
+  try {
+    const postData = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: LATEST_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: 'commonpost-mcp-bridge', version: BRIDGE_VERSION },
+      },
+    });
+    const options = { timeoutMs: VERSION_PROBE_TIMEOUT_MS, directSend: false, maxBytes: VERSION_PROBE_MAX_BYTES };
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(null), VERSION_PROBE_TIMEOUT_MS);
+    });
+    const response = await Promise.race([
+      tryAllHosts(THUNDERBIRD_HOSTS, postData, conn.port, conn.token, options),
+      timeout,
+    ]);
+    const info = response?.result?.serverInfo;
+    return info?.name === SERVER_INFO.name ? versionCore(info.version) : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// The state of the probe for the connection that last answered, started once.
+function startVersionProbe() {
+  const conn = lastServed;
+  if (!conn) {
+    return null;
+  }
+  const key = `${conn.port}:${conn.pid}:${conn.token}`;
+  if (!versionState || versionState.key !== key) {
+    versionState = { key, probe: probeExtVersion(conn), notified: false };
+  }
+  return versionState;
+}
+
+function compareCores(a, b) {
+  const left = a.split('.').map(Number);
+  const right = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (left[i] !== right[i]) {
+      return left[i] < right[i] ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+// The one-line notice when bridge and add-on versions differ, once per
+// connection; null otherwise. Only digits from the add-on reach the text.
+async function versionNotice() {
+  const state = startVersionProbe();
+  if (!state) {
+    return null;
+  }
+  const extCore = await state.probe;
+  const bridgeCore = versionCore(BRIDGE_VERSION);
+  if (state.notified || !extCore || !bridgeCore || extCore === '0.0.0' || bridgeCore === '0.0.0'
+      || extCore === bridgeCore) {
+    return null;
+  }
+  state.notified = true;
+  const advice = compareCores(bridgeCore, extCore) < 0
+    ? 'replace mcp-bridge.cjs with the one of the add-on release'
+    : 'check for add-on updates in Thunderbird, then restart it';
+  const text = `Commonpost notice: this MCP bridge is version ${bridgeCore} but the Thunderbird add-on is version ${extCore}. ` +
+    `Use both from the same release (${advice}); the bridge is not updated automatically and some protections live in it. ` +
+    'Please tell the user.';
+  process.stderr.write('[commonpost-mcp] ' + text + '\n');
+  return text;
+}
+
 async function forwardToThunderbird(message) {
   const postData = JSON.stringify(message);
   const requestOptions = requestOptionsFor(message);
@@ -1789,7 +1915,9 @@ async function forwardToThunderbird(message) {
     }
 
     try {
-      return await tryAllHosts(THUNDERBIRD_HOSTS, postData, connInfo.port, connInfo.token, requestOptions);
+      const response = await tryAllHosts(THUNDERBIRD_HOSTS, postData, connInfo.port, connInfo.token, requestOptions);
+      lastServed = { port: connInfo.port, token: connInfo.token, pid: connInfo.pid };
+      return response;
     } catch (err) {
       if (!isRetryableConnectionError(err)) {
         throw err;
@@ -1820,7 +1948,7 @@ function startBridge() {
   let pendingRequests = 0;
   let stdinClosed = false;
 
-  debugLog(`startup version=${BRIDGE_VERSION} pid=${process.pid} platform=${process.platform}`);
+  debugLog(`startup version=${BRIDGE_VERSION} node=${process.version} pid=${process.pid} platform=${process.platform}`);
 
   function checkExit() {
     if (stdinClosed && pendingRequests === 0) {
@@ -1941,6 +2069,7 @@ module.exports = {
   inspectAttachmentPath,
   readAttachmentFromPath,
   validateAttachmentStat,
+  versionCore,
   isDirectSendCall,
   isSensitiveFilePath,
   isUncOrDevicePath,

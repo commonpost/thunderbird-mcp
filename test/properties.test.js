@@ -10,6 +10,8 @@ const path = require("node:path");
 const vm = require("node:vm");
 const fc = require("fast-check");
 
+const { versionCore } = require("../mcp-bridge.cjs");
+
 const apiSource = fs.readFileSync(path.resolve(__dirname, "../extension/mcp_server/api.js"), "utf8");
 
 function snippet(startMarker, endMarker) {
@@ -103,5 +105,18 @@ describe("validateAgainstSchema (properties)", () => {
         }
       }
     }
+  });
+});
+
+describe("versionCore (properties)", () => {
+  it("never throws and returns null or X.Y.Z, whatever it is given", () => {
+    fc.assert(fc.property(fc.anything(), (v) => {
+      const core = versionCore(v);
+      assert.ok(core === null || /^\d+\.\d+\.\d+$/.test(core));
+    }));
+    fc.assert(fc.property(fc.string({ maxLength: 80 }), (v) => {
+      const core = versionCore(v);
+      assert.ok(core === null || /^\d+\.\d+\.\d+$/.test(core));
+    }), { numRuns: 500 });
   });
 });
