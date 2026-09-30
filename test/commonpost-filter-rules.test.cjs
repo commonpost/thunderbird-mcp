@@ -772,3 +772,70 @@ describe("applyFilters wiring", () => {
     assert.doesNotMatch(body, /Templates/);
   });
 });
+
+describe("a condition 'is / isn't in address book' under an address book restriction", () => {
+  const OK_BOOK = "jsaddrbook://abook.sqlite";
+  const BAD_BOOK = "jsaddrbook://other.sqlite";
+  const allow = (uri) => (uri === OK_BOOK ? true : "address book not accessible");
+  const cond = (op, value) => [{ attrib: "from", op, value }];
+  function ruleWith(op, value) {
+    const f = makeFilter("r");
+    api.buildTerms(f, cond(op, value));
+    api.buildRuleActions(f, [{ type: "markRead" }], resolveFolder);
+    return f;
+  }
+
+  it("buildTerms refuses an address book that is not accessible, for both operators", () => {
+    for (const op of ["isInAB", "isntInAB"]) {
+      assert.throws(() => api.buildTerms(makeFilter(), cond(op, BAD_BOOK), { isAddressBookAllowed: allow }),
+        /address book not accessible/);
+      const ok = makeFilter();
+      api.buildTerms(ok, cond(op, OK_BOOK), { isAddressBookAllowed: allow });
+      assert.equal(ok.searchTerms.length, 1);
+    }
+  });
+
+  it("does not touch other operators, and does nothing without a restriction hook", () => {
+    api.buildTerms(makeFilter(), cond("is", BAD_BOOK), { isAddressBookAllowed: allow });
+    api.buildTerms(makeFilter(), cond("isInAB", BAD_BOOK));
+    api.buildTerms(makeFilter(), cond("isInAB", BAD_BOOK), { isAddressBookAllowed: () => true });
+  });
+
+  it("a hook that throws refuses (fail closed)", () => {
+    assert.throws(() => api.buildTerms(makeFilter(), cond("isInAB", OK_BOOK),
+      { isAddressBookAllowed: () => { throw new Error("boom"); } }), /address book not accessible/);
+  });
+
+  it("planFilterUpdate refuses a replacement condition on an inaccessible address book", () => {
+    const list = makeFilterList();
+    assert.throws(() => api.planFilterUpdate(list, ruleWith("contains", "x"), { conditions: cond("isInAB", BAD_BOOK) },
+      resolveFolder, { isAddressBookAllowed: allow }), /address book not accessible/);
+  });
+
+  it("planFilterUpdate refuses to keep such a condition, and allows replacing it", () => {
+    const list = makeFilterList();
+    const opts = { isAddressBookAllowed: allow };
+    assert.throws(() => api.planFilterUpdate(list, ruleWith("isInAB", BAD_BOOK), { name: "y" }, resolveFolder, opts),
+      /does not allow \(address book not accessible.*provide new conditions, or delete the rule/s);
+    const replaced = api.planFilterUpdate(list, ruleWith("isntInAB", BAD_BOOK),
+      { conditions: cond("contains", "x") }, resolveFolder, opts);
+    assert.deepEqual([...replaced.changes], ["conditions"]);
+  });
+
+  it("planFilterUpdate keeps an accessible address book condition, and a rule without one", () => {
+    const list = makeFilterList();
+    const opts = { isAddressBookAllowed: allow };
+    const kept = api.planFilterUpdate(list, ruleWith("isInAB", OK_BOOK), { name: "y" }, resolveFolder, opts);
+    assert.deepEqual([...kept.changes], ["name"]);
+    api.planFilterUpdate(list, ruleWith("contains", "x"), { name: "y" }, resolveFolder, opts);
+  });
+
+  it("both creation and update are wired to the address book restriction", () => {
+    assert.match(apiSource, /buildTerms\(filter, a\.conditions, \{ isAddressBookAllowed: checkFilterAddressBook \}\)/);
+    assert.match(apiSource, /isAddressBookAllowed: checkFilterAddressBook \}\);/);
+    const start = apiSource.indexOf("function checkFilterAddressBook(uri)");
+    const body = apiSource.slice(start, apiSource.indexOf("\n            }\n", start));
+    assert.match(body, /accountRestrictionState\(\) === "all"/);
+    assert.match(body, /getAccessibleAddressBooks\(\)/);
+  });
+});

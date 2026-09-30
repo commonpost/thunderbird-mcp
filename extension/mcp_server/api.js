@@ -2130,7 +2130,27 @@ const FILTER_ACTION_VALUE_DESCRIPTION = (() => {
   return `Action parameter. ${groups.join("; ")}`;
 })();
 
-function buildTerms(filter, conditions) {
+// A condition "is / isn't in address book" carries the URI of an address book.
+const FILTER_ADDRESS_BOOK_NOT_ACCESSIBLE = "address book not accessible";
+
+function isAddressBookOp(op) {
+  return (OP_MAP.isInAB !== undefined && op === OP_MAP.isInAB)
+    || (OP_MAP.isntInAB !== undefined && op === OP_MAP.isntInAB);
+}
+
+// `isAddressBookAllowed(uri)` (optional) returns true, or the reason why the
+// address book is not allowed (any other value means
+// FILTER_ADDRESS_BOOK_NOT_ACCESSIBLE); one that throws refuses (fail closed).
+function assertAddressBookAllowed(uri, isAddressBookAllowed) {
+  if (typeof isAddressBookAllowed !== "function") return;
+  let verdict;
+  try { verdict = isAddressBookAllowed(uri); } catch { verdict = false; }
+  if (verdict === true) return;
+  const why = typeof verdict === "string" && verdict ? verdict : FILTER_ADDRESS_BOOK_NOT_ACCESSIBLE;
+  throw new Error(`${why}: ${JSON.stringify(String(uri).slice(0, 300))}`);
+}
+
+function buildTerms(filter, conditions, { isAddressBookAllowed } = {}) {
   if (!FILTER_VOCABULARY_AVAILABLE) {
     throw new Error(`Cannot build filter conditions -- ${FILTER_VOCABULARY_UNAVAILABLE_NOTE}`);
   }
@@ -2149,6 +2169,7 @@ function buildTerms(filter, conditions) {
       throw new Error(`Unknown operator: ${cond.op}`);
     }
     term.op = OP_MAP[cond.op];
+    if (isAddressBookOp(term.op)) assertAddressBookAllowed(cond.value, isAddressBookAllowed);
 
     if (spec.needsHeader) {
       if (!cond.header) {
@@ -2487,7 +2508,7 @@ function validateFilterType(type) {
 // is not replaced is COPIED typed, and any copy failure throws before the
 // filter list is touched. Returns { changes, replacement } -- replacement is
 // null when only name/enabled/type change (applied in place by the caller).
-function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSendActions = false, checkSendAction, isKeptTargetAllowed } = {}) {
+function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSendActions = false, checkSendAction, isKeptTargetAllowed, isAddressBookAllowed } = {}) {
   if (typeof resolveFolder !== "function") {
     throw new Error("planFilterUpdate requires a resolveFolder(uri) function");
   }
@@ -2535,6 +2556,29 @@ function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSend
         + "provide new actions, or delete the rule");
     }
   }
+  if (!replaceConditions && typeof isAddressBookAllowed === "function") {
+    // Same for the conditions the rule keeps: an address book of an account
+    // the restriction does not allow is not kept on its behalf either.
+    let uris;
+    try {
+      uris = [];
+      for (const term of filter.searchTerms) {
+        if (isAddressBookOp(term.op)) uris.push(term.value.str);
+      }
+    } catch (e) {
+      throw new Error(`Filter "${filter.filterName}" has a condition Thunderbird cannot read (${describeError(e)}); `
+        + "it cannot be modified through MCP", { cause: e });
+    }
+    for (const uri of uris) {
+      try {
+        assertAddressBookAllowed(uri, isAddressBookAllowed);
+      } catch (e) {
+        throw new Error(`Filter "${filter.filterName}" has a condition on an address book MCP does not allow `
+          + `(${describeError(e)}); it cannot be modified while it keeps that condition -- `
+          + "provide new conditions, or delete the rule", { cause: e });
+      }
+    }
+  }
   if (!replaceConditions && !replaceActions) {
     return { changes, replacement: null };
   }
@@ -2547,7 +2591,7 @@ function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSend
   if (filter.filterDesc) replacement.filterDesc = filter.filterDesc;
 
   if (replaceConditions) {
-    buildTerms(replacement, update.conditions);
+    buildTerms(replacement, update.conditions, { isAddressBookAllowed });
     changes.push("conditions");
   } else {
     let copied = 0;
@@ -10772,6 +10816,19 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return true;
             }
 
+            // An address book named by a filter condition ("is in address
+            // book"): under an account restriction only the books
+            // getAccessibleAddressBooks lists may be named. Returns true, or
+            // the reason why not.
+            function checkFilterAddressBook(uri) {
+              if (accountRestrictionState() === "all") return true;
+              const wanted = String(uri);
+              const found = getAccessibleAddressBooks().some((book) => {
+                try { return book.URI === wanted; } catch { return false; }
+              });
+              return found ? true : FILTER_ADDRESS_BOOK_NOT_ACCESSIBLE;
+            }
+
             // Reply template of a sending rule: a message of a Templates folder
             // of an accessible account, found by its Message-ID, as the filter
             // editor writes it, and only that. See also: updateMessage refuses
@@ -10919,7 +10976,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               filter.enabled = a.enabled !== false;
               filter.filterType = (Number.isFinite(a.type) && a.type > 0) ? a.type : 17; // inbox + manual
 
-              buildTerms(filter, a.conditions);
+              buildTerms(filter, a.conditions, { isAddressBookAllowed: checkFilterAddressBook });
               buildActions(filter, a.actions, policy);
 
               const idx = (a.insertAtIndex != null && a.insertAtIndex >= 0)
@@ -10969,7 +11026,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 filterList, filter,
                 { name: a.name, enabled: a.enabled, type: a.type, conditions: a.conditions, actions: a.actions },
                 resolveFilterTargetFolder,
-                { ...sendActionOptions(policy), isKeptTargetAllowed: checkExistingFilterTarget });
+                { ...sendActionOptions(policy), isKeptTargetAllowed: checkExistingFilterTarget, isAddressBookAllowed: checkFilterAddressBook });
 
               const resulting = replacement || filter;
               let rule = serializeFilter(resulting, a.filterIndex);

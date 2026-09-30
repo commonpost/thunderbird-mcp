@@ -986,6 +986,7 @@ function makeWorld({ prefs = { [P_BLOCK]: false } } = {}) {
     dialogs: [],
     applied: [],
     lists: { account1: makeFilterList(), account2: makeFilterList() },
+    addressBooks: [{ URI: "jsaddrbook://abook.sqlite" }],
     // Messages of the Templates folder, by Message-ID (tests may change them).
     templateHdrs: { "tpl-1@example.test": { mime2DecodedSubject: "Out of office" } },
   };
@@ -1068,6 +1069,9 @@ function makeWorld({ prefs = { [P_BLOCK]: false } } = {}) {
       if (!f) return { error: `Folder not found: ${uri}` };
       return { folder: f };
     },
+    // Address books: "all" = no restriction; otherwise only w.addressBooks are accessible.
+    accountRestrictionState: () => (w.allowedAccounts === null ? "all" : "some"),
+    getAccessibleAddressBooks: () => w.addressBooks,
     isToolEnabled: (name) => !w.disabledTools.has(name),
     appendFilterConfirmationLog: (event) => w.log.push(event),
     console: { log: (...a) => w.console.push(a.join(" ")), warn: (...a) => w.console.push(a.join(" ")),
@@ -1743,5 +1747,30 @@ describe("wiring", () => {
       assert.doesNotMatch(description, /with the default setting/, name);
       assert.doesNotMatch(description, /default setting \(.Filter rules that send mail: Ask me each time/, name);
     }
+  });
+});
+
+describe("handlers: an address book condition under a restriction", () => {
+  const AB = (value) => [{ attrib: "from", op: "isInAB", value }];
+  const READ = [{ type: "markRead" }];
+  function run(fn) {
+    try { return fn(); } catch (e) { return { thrown: String(e && e.message) }; }
+  }
+
+  it("createFilter refuses an address book that is not accessible, and accepts the accessible one", () => {
+    const w = makeWorld({ prefs: { [P_BLOCK]: true } });
+    w.allowedAccounts = ["account1"];
+    const refused = run(() => w.h.createFilter("account1", "ab", true, 17, AB("jsaddrbook://other.sqlite"), READ));
+    assert.match(JSON.stringify(refused), /address book not accessible/);
+    assert.equal(w.lists.account1.filterCount, 0);
+    const ok = run(() => w.h.createFilter("account1", "ab", true, 17, AB("jsaddrbook://abook.sqlite"), READ));
+    assert.doesNotMatch(JSON.stringify(ok), /address book not accessible/);
+    assert.equal(w.lists.account1.filterCount, 1);
+  });
+
+  it("without a restriction every address book is accepted", () => {
+    const w = makeWorld({ prefs: { [P_BLOCK]: true } });
+    const r = run(() => w.h.createFilter("account1", "ab", true, 17, AB("jsaddrbook://other.sqlite"), READ));
+    assert.doesNotMatch(JSON.stringify(r), /address book not accessible/);
   });
 });
