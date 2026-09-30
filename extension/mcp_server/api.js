@@ -9542,7 +9542,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                         subject: outerWireSubject(msgHdr, msgHdr.mime2DecodedSubject || msgHdr.subject),
                         author: msgHdr.mime2DecodedAuthor || msgHdr.author,
                         recipients: msgHdr.mime2DecodedRecipients || msgHdr.recipients,
-                        ccList: msgHdr.ccList,
+                        ccList: decodeHeaderValue(msgHdr.ccList),
                         date: msgHdr.date ? new Date(msgHdr.date / 1000).toISOString() : null,
                         tags: getUserTags(msgHdr),
                         body: ENCRYPTED_CONTENT_NOTICE,
