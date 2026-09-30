@@ -199,6 +199,14 @@ Add to your MCP client config (e.g. `~/.claude.json` for Claude Code):
 }
 ```
 
+### Claude Desktop (one-click bundle)
+
+On macOS and Windows, Claude Desktop can install the bridge from a `.mcpb` bundle instead of a hand-edited config file. Download `commonpost-mcp-v<version>.mcpb` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest) and open it with Claude Desktop, then confirm the installation.
+
+- The bundle contains **only the bridge** (`mcp-bridge.cjs`). Install the Thunderbird extension separately (step 1 above), and use the extension and the bundle of the **same version**: the bundle is not updated with the extension, so install the new `.mcpb` after each extension update.
+- The bundle asks for Node.js 22 or later, like the bridge. It has no settings: if the bridge cannot find the connection file, use the manual configuration in [Other MCP clients](#other-mcp-clients) with `COMMONPOST_MCP_CONNECTION_FILE`.
+- The bundle is not signed. Each release carries a provenance attestation for it (`*.mcpb.sigstore.json`): check it with `gh attestation verify <file>.mcpb --repo commonpost/thunderbird-mcp`. It can be rebuilt byte for byte from the tagged source with `node scripts/build-mcpb-reproducible.cjs`.
+
 ### Other MCP clients
 
 The bridge is a standard MCP stdio server and is not tied to any client: it works with any client that can launch a local server. The `mcpServers` layout above is common but not universal, so each client below has its own file and format. In every case use the absolute path of `mcp-bridge.cjs` and the server name `commonpost-mail`, then restart the client.

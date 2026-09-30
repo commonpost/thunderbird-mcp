@@ -8,12 +8,12 @@ environment can publish.
 - Every change reaches `main` through a pull request. The `protect-main` ruleset requires the checks to pass:
   tests (Node 22 and 24), Lint, Version sync, zizmor and CodeQL.
 - Open a release pull request that:
-  - sets the new version in `package.json`, `package-lock.json` (two places), `extension/manifest.json` and
+  - sets the new version in `package.json`, `package-lock.json` (two places), `extension/manifest.json`, `mcpb/manifest.json` and
     `BRIDGE_VERSION` in `mcp-bridge.cjs` (the Version sync check refuses any disagreement);
   - turns the `Unreleased` section of `CHANGELOG.md` into `## [x.y.z] - YYYY-MM-DD`, crediting contributors and
     the upstream pull requests that were adapted.
-- Before merging, build twice from a clean checkout with `node scripts/build-xpi-reproducible.cjs`: both XPI files
-  must have the same SHA-256.
+- Before merging, build twice from a clean checkout with `node scripts/build-xpi-reproducible.cjs` and
+  `node scripts/build-mcpb-reproducible.cjs`: both XPI files, and both `.mcpb` files, must have the same SHA-256.
 
 ## 2. Tag
 
@@ -24,19 +24,21 @@ environment can publish.
 
 ## 3. What the Build and Release workflow does
 
-1. Checks that the tag is on `main` and that the tag, `package.json`, the manifest and `BRIDGE_VERSION` agree.
-2. Builds the XPI reproducibly and runs the tests.
+1. Checks that the tag is on `main` and that the tag, `package.json`, both manifests and `BRIDGE_VERSION` agree.
+2. Builds the XPI and the `.mcpb` (Claude Desktop bundle) reproducibly and runs the tests.
 3. Waits for a maintainer to approve the `release` environment.
-4. Rebuilds from the tag and refuses any difference with the first build.
-5. Attests the build provenance of the XPI and of `mcp-bridge.cjs` (Sigstore bundles).
-6. Creates the release with the XPI, the bridge and both `.sigstore.json` bundles.
+4. Rebuilds both from the tag and refuses any difference with the first build.
+5. Attests the build provenance of the XPI, the `.mcpb` and `mcp-bridge.cjs` (Sigstore bundles).
+6. Creates the release with the XPI, the `.mcpb`, the bridge and the three `.sigstore.json` bundles.
 7. Publishes `updates.json` on `gh-pages` with the new version and its `update_hash`, so installed copies update.
 
 ## 4. Verify
 
-- `gh attestation verify <xpi> -R commonpost/thunderbird-mcp --format json` (and the same for `mcp-bridge.cjs`).
+- `gh attestation verify <xpi> -R commonpost/thunderbird-mcp --format json` (and the same for the `.mcpb` and for
+  `mcp-bridge.cjs`).
   Use `--format json`: some `gh` versions print nothing in text mode, even on success.
-- The SHA-256 of the released XPI equals your local reproducible build of the tagged commit.
+- The SHA-256 of the released XPI equals your local reproducible build of the tagged commit. The `.mcpb` has no date or
+  commit inside, so it equals a rebuild of the same sources whatever the merge method.
   A rebase merge rewrites the commit date, which is part of the reproducible build (`SOURCE_DATE_EPOCH` is the committer date of `HEAD`, and the commit hash is recorded too), so the hash built from the pull request branch before merging cannot match the release; compare with a rebuild from a checkout of the tag.
 - <https://commonpost.github.io/thunderbird-mcp/updates.json> lists the new version with the same hash.
 
