@@ -155,7 +155,7 @@
               "table",
               "legacy"
             ],
-            "description": "'table' returns messages as { columns, rows } (fewer tokens for long lists). 'legacy' (deprecated, removed after 0.9): the 0.8 output, a plain array of full rows (threadId, folder, whole preview) unless offset is passed, 50 rows by default; not with groupBy"
+            "description": "'table' returns messages as { columns, rows } (fewer tokens for long lists). 'legacy' (deprecated, to be removed in a later release): the 0.10 output, a plain array of full rows (threadId, folder, whole preview) unless offset is passed, 50 rows by default; not with groupBy"
           },
           "searchBody": {
             "type": "boolean",
@@ -1578,7 +1578,7 @@
               "table",
               "legacy"
             ],
-            "description": "'table' returns messages as { columns, rows }. 'legacy' (deprecated, removed after 0.9): the 0.8 output, as in searchMessages"
+            "description": "'table' returns messages as { columns, rows }. 'legacy' (deprecated): the 0.10 output, as in searchMessages"
           }
         },
         "required": []

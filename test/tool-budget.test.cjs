@@ -40,7 +40,8 @@ const MAX_TOOL_CHARS = 4000;
 const MAX_TOTAL_CHARS = 52000;
 const MIN_DESCRIPTION_CHARS = 30;
 const BOUNDED_RESULT_TOOLS = {
-  listEvents: 'maxResults', listTasks: 'maxResults',
+  searchMessages: 'maxResults', getRecentMessages: 'maxResults', searchContacts: 'maxResults',
+  listEvents: 'maxResults', listTasks: 'maxResults', getMessage: 'maxBodyChars', getMessages: 'maxBodyChars',
 };
 
 describe('tools/list budget', () => {
