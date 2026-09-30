@@ -438,7 +438,7 @@
     {
       "name": "saveDraft",
       "title": "Save Draft",
-      "description": "Save a composed message to the identity's Drafts folder without sending or opening a compose window. Useful when a human will review and send the message later from Thunderbird.",
+      "description": "Save a composed message to the identity's Drafts folder without sending or opening a compose window, as Thunderbird's compose window saves it; returns messageId + folderPath. Useful when a human will review and send the message later from Thunderbird.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1294,7 +1294,7 @@
     {
       "name": "replyToMessage",
       "title": "Reply to Message",
-      "description": "Reply in a compose window with quoted original text for review. The skipReview safety block is on by default; direct sending is honored only when the user explicitly disables that preference.",
+      "description": "Reply with quoted original text. mode: window (compose window for review, default), draft (save to Drafts with the recipients Thunderbird computes: Reply-To, Mail-Followup-To, mailing lists, identity auto Cc/Bcc; returns messageId + folderPath; needs the saveDraft tool enabled), send (direct, needs to and from; blocked unless the user disables the skipReview safety block).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1318,9 +1318,18 @@
             "type": "boolean",
             "description": "Set to true if body contains HTML markup (default: false)"
           },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "window",
+              "draft",
+              "send"
+            ],
+            "description": "window (default), draft or send"
+          },
           "to": {
             "type": "string",
-            "description": "Override the recipients Thunderbird computes (required with skipReview)"
+            "description": "Override the recipients Thunderbird computes (required with mode send)"
           },
           "cc": {
             "type": "string",
@@ -1332,11 +1341,11 @@
           },
           "from": {
             "type": "string",
-            "description": "Sender identity (email address or identity ID from listAccounts); default: the identity the message was addressed to, as in Thunderbird. Required with skipReview."
+            "description": "Sender identity (email address or identity ID from listAccounts); default: the identity the message was addressed to, as in Thunderbird. Required with mode send."
           },
           "skipReview": {
             "type": "boolean",
-            "description": "Request direct sending without a compose window; needs to and from, nothing is taken from the original message. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)."
+            "description": "Legacy: true means mode send (default: false)"
           },
           "attachments": {
             "type": "array",
@@ -1412,7 +1421,7 @@
     {
       "name": "forwardMessage",
       "title": "Forward Message",
-      "description": "Forward in a compose window with original content for review. The skipReview safety block is on by default; direct sending is honored only when the user explicitly disables that preference.",
+      "description": "Forward with the original content and attachments. mode: window (compose window for review, default), draft (save to Drafts, to optional; returns messageId + folderPath; needs the saveDraft tool enabled), send (direct, needs to and from; blocked unless the user disables the skipReview safety block).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1426,11 +1435,20 @@
           },
           "to": {
             "type": "string",
-            "description": "Recipient email address"
+            "description": "Recipient email address (required with mode send)"
           },
           "body": {
             "type": "string",
             "description": "Additional text to prepend (optional)"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "window",
+              "draft",
+              "send"
+            ],
+            "description": "window (default), draft or send"
           },
           "isHtml": {
             "type": "boolean",
@@ -1446,11 +1464,11 @@
           },
           "from": {
             "type": "string",
-            "description": "Sender identity (email address or identity ID from listAccounts); default: the identity the message was addressed to, as in Thunderbird. Required with skipReview."
+            "description": "Sender identity (email address or identity ID from listAccounts); default: the identity the message was addressed to, as in Thunderbird. Required with mode send."
           },
           "skipReview": {
             "type": "boolean",
-            "description": "Request direct sending without a compose window; needs from. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)."
+            "description": "Legacy: true means mode send (default: false)"
           },
           "attachments": {
             "type": "array",
@@ -1512,8 +1530,7 @@
         },
         "required": [
           "messageId",
-          "folderPath",
-          "to"
+          "folderPath"
         ]
       },
       "annotations": {
