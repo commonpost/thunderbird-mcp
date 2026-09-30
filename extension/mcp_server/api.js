@@ -2543,7 +2543,7 @@ function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSend
     }
   }
   // An update that does nothing but switch the rule off stops it from running:
-  // it needs no check of the targets it keeps.
+  // it needs no check of the targets or address books it keeps.
   const onlyDisables = update.enabled === false && update.name === undefined && update.type === undefined
     && !replaceConditions && !replaceActions;
   if (!replaceActions && !onlyDisables && typeof isKeptTargetAllowed === "function") {
@@ -2569,7 +2569,7 @@ function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSend
         + "provide new actions, or delete the rule");
     }
   }
-  if (!replaceConditions && typeof isAddressBookAllowed === "function") {
+  if (!replaceConditions && !onlyDisables && typeof isAddressBookAllowed === "function") {
     // Same for the conditions the rule keeps: an address book of an account
     // the restriction does not allow is not kept on its behalf either.
     let uris;

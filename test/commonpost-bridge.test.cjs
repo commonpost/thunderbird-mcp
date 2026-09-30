@@ -804,6 +804,12 @@ describe('a stale or foreign connection file is refused (process id)', { skip: t
     fs.rmSync(path.join(root, 'proc'), { recursive: true });
     exeLink(4242, '/opt/betterbird/betterbird');
     assert.equal(discover().candidates.length, 1);
+    fs.rmSync(path.join(root, 'proc'), { recursive: true });
+    exeLink(4242, '/nix/store/abc-thunderbird-140/lib/thunderbird/.thunderbird-wrapped');
+    assert.equal(discover().candidates.length, 1);
+    fs.rmSync(path.join(root, 'proc'), { recursive: true });
+    exeLink(4242, '/usr/bin/node');
+    assert.equal(discover().candidates.length, 0);
   });
 
   it('an unreadable /proc entry does not refuse by itself', () => {

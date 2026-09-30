@@ -669,7 +669,9 @@ function readConnectionFileVerified(candidatePath, context) {
 // The process id of a sandbox with its own PID namespace (Flatpak) means
 // nothing on this side, so those candidates are not checked.
 // Returns null when the file is acceptable, else the refusal reason.
-const THUNDERBIRD_EXE_PATTERN = /^(thunderbird|betterbird)(-bin)?$/;
+// The leading dot and "-wrapped" cover launchers that wrap the binary
+// (Nix installs it as .thunderbird-wrapped).
+const THUNDERBIRD_EXE_PATTERN = /^\.?(thunderbird|betterbird)(-bin|-wrapped)?$/;
 
 function checkConnectionOwnerProcess(data, candidate, context) {
   const pid = data && data.pid;
