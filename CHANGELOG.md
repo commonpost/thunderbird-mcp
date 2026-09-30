@@ -10,6 +10,12 @@ The MCP protocol changes below come from #16 by Konstantin (mazixs), rebased on 
 invisible characters was replaced by 0.10.0's handling of untrusted content, which covers the same ground; the
 escaping of what is left, the table and `dupLocations` handling and the disabled-tool wording were added on top.
 
+The search and reading changes come from #17 by Konstantin (mazixs), rebased on top of #16. On top of it, the
+maintainers keep encrypted messages withheld in its new outputs, apply the account restriction to its new paths,
+treat its new identifiers and the decoded `rawSource` like the rest of 0.10.0's untrusted-content handling, find
+addresses in headers in linear time (two of its regular expressions backtracked quadratically on a long header a
+sender can write), and applied the review of #17.
+
 ### Breaking
 - `getFilterConfirmation` is removed, which brings the server back to 40 tools, the limit Cursor accepts per MCP
   server. Call `listFilters` with `confirmation: true` instead: it returns the same read-only view (the pending
@@ -33,28 +39,98 @@ escaping of what is left, the table and `dupLocations` handling and the disabled
   meant the default, is rejected, so omit the parameter instead. `updateEvent.status` stays a free string on
   purpose: an empty string there removes the event's status, and any other value is still checked against the
   same three values, in any case.
+- `searchMessages` and `getRecentMessages` return a new envelope and compact rows, for every client (#17).
+  `format: "legacy"` returns the old envelope and rows: it is deprecated and will be removed in a later release,
+  keeps the new folder default (pass `includeTrash: true` for the old one) and the decoded `ccList`, and cannot be
+  combined with `groupBy`.
+
+  | | 0.10.x | now |
+  |---|---|---|
+  | Result | a plain array; `{ messages, totalMatches, offset, limit, hasMore }` only when `offset` is passed | always `{ messages, totalMatches, offset, limit, hasMore }`, plus `incomplete: true` when the scan stopped at 10,000 matches |
+  | Default rows | 50 (max 200) | 20 (max 200); `format: "legacy"` keeps 50 |
+  | Folders | every folder, Trash and Junk included | Trash and Junk skipped unless `includeTrash: true` or an explicit `folderPath` |
+  | `threadId`, `folder` | present | omitted (`threadId` is folder-local; `folderPath` identifies the folder) |
+  | Empty fields, `flagged: false` | present (`""`, `[]`, `false`) | omitted |
+  | `preview` | the whole stored preview | the first 120 characters, then `...` |
+  | `subject` of a reply | without `Re:`, as stored in the database | with `Re:`, as Thunderbird displays it |
+  | `ccList` | as stored (may hold MIME encoded-words) | decoded |
+
+- `getMessage` / `getMessages` cut long bodies by default: 20,000 characters for `getMessage` and 4,000 per message
+  for `getMessages` (`maxBodyChars`, up to 200,000). A longer body sets `bodyTruncated`, `nextBodyOffset` and
+  `bodyTotalChars`; `getMessage` reads the rest with `bodyOffset`. The same cap applies to `rawSource` (#17).
+- `rawSource` is decoded text instead of a Latin-1 byte string (see Added), and hidden characters are removed from
+  it and counted, as in a body. `rawEncoding: "base64"` returns the exact bytes (#17).
+- `getMessage`: the `subject` of a reply keeps `Re:` as Thunderbird displays it (the database stores it without),
+  and `ccList` is decoded, also in the result of an encrypted message. The subject of an encrypted message and of
+  `rawSource` stays the wire-level one, as in 0.10.0; `displayMessage` is unchanged (#17).
+- Search parameters are checked like the others (#17): `offset` must be a whole number from 0, `daysBack` a whole
+  number from 1 (0 meant the default of 7, and fractions were floored), `bodyOffset` a whole number from 0, and
+  `sortOrder` `asc` or `desc`; other values are errors. `maxResults` of `searchMessages`, `getRecentMessages` and
+  `searchContacts` is an integer from 1 to 200 and `maxBodyChars` one from 1 to 200,000: a larger value becomes the
+  maximum and a fraction is floored, while 0 is an error (for `maxResults` it meant the default before).
+- `searchContacts` leaves empty fields out of each contact and also matches the organization (#17).
 
 ### Added
-- `initialize` returns short server `instructions` (IDs, untrusted mail content, review windows, stale IMAP
-  folders), identical in the bridge and the extension.
+- `initialize` returns short server `instructions` (IDs, untrusted mail content, search, review windows, stale
+  IMAP folders), identical in the bridge and the extension. The three lines on search (counts, tables, body
+  paging, company mail, conversations) come with #17.
 - `tools/list` entries carry `title` and all four annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`,
   `openWorldHint`) set explicitly, since the spec defaults assume a destructive open-world tool. They err on the
   cautious side: `sendMail`, `replyToMessage`, `forwardMessage`, `createFilter`, `updateFilter` and `applyFilters`
   are destructive and open-world (a sent message can't be taken back, and filter rules can forward or reply), and
   `getMessage` / `getMessages` (`saveAttachments` writes files) and `displayMessage` (a displayed message is marked
   read) are not read-only.
+- `searchMessages`: `participant:` matches From, To, Cc or Bcc; `participant:@example.com` matches the domain of each
+  address exactly, as Gloda's `LIKE '%@domain'` does (`@example.com` no longer matches `example.community`), and
+  commas list alternatives for companies with several domains. Operators and quoted phrases combine:
+  `participant:@example.com subject:"invoice 42"` (#17).
+- `searchMessages` `threadOf: { messageId, folderPath }`: the whole conversation across folders (Sent included),
+  oldest first. Headers are read first and then joined by References (union-find), so the result does not depend
+  on folder order. A `Re:` message without threading headers joins by subject only the earlier message whose
+  author (or, for own mail, a recipient) it involves (`linkedBy: "subject"`), so the same mail sent separately to
+  several companies and repeated notifications stay apart. It reads at most 10,000 headers (the search limit) and
+  sets `incomplete: true` when it stops there. See `docs/thunderbird-internals.md` (#17).
+- `searchMessages` `groupBy: "sender" | "thread"`: one row per sender or conversation, with `count`, `unread`, the
+  first and last date, and `latestId` / `latestFolderPath`, the newest message that is not a draft (#17).
+- `format: "table"` (`{ columns, rows }`) for `searchMessages`, `getRecentMessages`, `searchContacts`, `listEvents`
+  and `listTasks`: fewer tokens on long lists (#17).
+- `searchMessages` `tag` accepts a tag's label (`Important`) as well as its key (`$label1`) (#17).
+- `searchBody` reports the terms Gloda leaves out (under 3 characters) in `warning`, and errors instead of running
+  an empty full-text query; its description says that only English words are stemmed (#17).
+- `getMessage` / `getMessages`: `maxBodyChars` and `bodyOffset` page long bodies and raw sources (#17).
+- `rawSource` names its charset in `rawCharset`: strict UTF-8, else the charset of the top-level `Content-Type`,
+  then those of the parts, else Thunderbird's charset detector. Encodings that cannot decode a whole message are
+  refused, declared or detected: the "replacement" labels (`iso-2022-kr`, `hz-gb-2312`, ...), UTF-16 and
+  `x-user-defined`. `warning` says when parts declare different charsets (listed in `rawMixedCharsets`) or when
+  invalid UTF-8 was replaced with U+FFFD. `rawEncoding: "base64"` returns the exact bytes instead, for 8bit/binary
+  parts; its pages are multiples of 4 characters, so each one decodes on its own. Before, 8-bit sources came back
+  as Latin-1 mojibake (#17).
 
 ### Changed
-- Tool results are compact JSON (no indentation). Hidden characters left in them are written as `\uXXXX` escapes:
-  in what the untrusted-content handling only counts (`id`, `folderPath`, `filePath`, `dupLocations`), in
-  `rawSource`, and in the results of the tools it does not clean (folder, account or filter names, ...). The value
-  is the same once parsed, so an id passed back unchanged still finds the same message or folder, but the
-  character is visible in the text. The bridge passes compact results through unchanged. **An older bridge
+- Tool results are compact JSON (no indentation). Hidden characters left in them are written as `\uXXXX` escapes: in
+  what the untrusted-content handling only counts (`id`, `folderPath`, `filePath`, `dupLocations`, and `latestId` /
+  `latestFolderPath`, see below) and in the results of the tools it does not clean (folder, account or filter names,
+  ...). The value is the same once parsed, so an id passed back unchanged still finds the same message or folder,
+  but the character is visible in the text. The bridge passes compact results through unchanged. **An older bridge
   (0.10.1 or earlier) paired with this extension undoes the escaping**: it parses and re-serializes every result
-  (`JSON.parse` / `JSON.stringify`), which writes those characters back raw, as in 0.10.x. Update
-  `mcp-bridge.cjs` along with the add-on.
+  (`JSON.parse` / `JSON.stringify`), which writes those characters back raw, as in 0.10.x. Update `mcp-bridge.cjs`
+  along with the add-on.
 - The untrusted-content handling judges a cell of a `{ columns, rows }` table (`format: "table"`) by its column,
-  exactly like the same property of the object form, for the message tools that will return tables.
+  exactly like the same property of the object form: the tables of #17 get the same treatment as their rows.
+- `getRecentMessages` runs the search code with a date filter (#17): every folder of the accessible accounts except
+  Trash and Junk (its description said Inboxes; the code already read every folder), newest first, and it asks each
+  IMAP folder to update (`updateFolder`) before reading it, as `searchMessages` does. An encrypted message is still
+  listed with its content withheld (wire-level subject, no preview, `encrypted: true`), now also in tables and in
+  `format: "legacy"`.
+- Encrypted messages in the other new outputs of #17, while the option is off: `searchMessages` still leaves out a
+  message its query matched (also with `groupBy`), `threadOf` leaves them out of its rows and never links a
+  conversation through their stored subject (it can be the decrypted one), and `rawEncoding: "base64"` returns the
+  wire-level subject.
+- The account restriction covers the new paths of #17: participant search, `groupBy` and `threadOf` (its scope and
+  its message) read the accessible accounts only, and the own addresses that tell conversations apart come from
+  their identities only.
+- The untrusted-content handling counts `latestId` and `latestFolderPath` (the newest message of a `groupBy` row)
+  without rewriting them, like `id` and `folderPath`: the assistant passes them back to `getMessage`.
 - Argument coercion: enum values match case-insensitively, object parameters passed as JSON strings are parsed.
   Calendar and contact tool descriptions say which ids they take and what they return.
 - README lists `saveDraft` and `listCategories`, which were missing from the tool tables, and counts 41 tools
@@ -72,53 +148,6 @@ escaping of what is left, the table and `dupLocations` handling and the disabled
 - README: troubleshooting entry for a bridge in a container or under WSL that is refused after it used to find the
   connection file through a mounted temp folder.
 - README: the automatic-updates section now says that the bridge does not update itself and must be replaced with the one from the same release.
-
-### Added (search and reading)
-- `searchMessages`: `participant:` (From/To/Cc/Bcc); `participant:@example.com` matches the domain of each address
-  exactly, as Gloda's `LIKE '%@domain'` does (`@example.com` no longer matches `example.community`), commas list
-  alternatives for companies with several domains. Operators and quoted phrases combine:
-  `participant:@example.com subject:"invoice 42"`.
-- `searchMessages` `threadOf: { messageId, folderPath }`: the whole conversation across folders (Sent included),
-  oldest first. Headers are read first and then joined by References (union-find), so the result does not depend
-  on folder order. A `Re:` message without threading headers joins by subject only the earlier message whose
-  author (or, for own mail, a recipient) it involves (`linkedBy: "subject"`), so the same mail sent separately to
-  several companies and repeated notifications stay apart. It reads at most 10,000 headers (the search limit) and
-  sets `incomplete: true` when it stops there. See `docs/thunderbird-internals.md`.
-- `searchMessages` `groupBy: "sender" | "thread"`: one row per sender or conversation, with `count` and `latestId`
-  (the newest message that is not a draft).
-- `format: "table"` (`{ columns, rows }`) for `searchMessages`, `getRecentMessages`, `searchContacts`,
-  `listEvents` and `listTasks`.
-- `searchBody` reports the terms Gloda leaves out (under 3 characters) in `warning`, and errors instead of running
-  an empty full-text query. The description says that only English words are stemmed.
-- `getMessage` / `getMessages`: `maxBodyChars` (default 20000 / 4000) and `bodyOffset` page long bodies and raw
-  sources (`bodyTruncated`, `nextBodyOffset`, `bodyTotalChars`).
-- `rawSource` is decoded as text and names the charset in `rawCharset`: strict UTF-8, else the charset of the
-  top-level `Content-Type`, then those of the parts, else Thunderbird's charset detector. Encodings that cannot
-  decode a whole message are refused, declared or detected: the "replacement" labels (`iso-2022-kr`, `hz-gb-2312`,
-  ...), UTF-16 and `x-user-defined`. When parts declare different charsets, `rawMixedCharsets` lists them and a
-  `warning` says that some parts may be garbled. `rawEncoding: "base64"` returns the exact bytes instead, for
-  8bit/binary parts; its pages are multiples of 4 characters, so each one decodes on its own. Before, 8-bit sources
-  came back as Latin-1 mojibake.
-- `searchContacts` also matches the organization; empty fields are omitted.
-
-### Breaking: `searchMessages` and `getRecentMessages` output
-The envelope and the rows change for every client. `format: "legacy"` returns the 0.8 envelope and rows for the
-0.9 releases and will then be removed; it keeps the new folder default (pass `includeTrash: true` for the old one)
-and the decoded `ccList`, and cannot be combined with `groupBy`.
-
-| | 0.8 | 0.9 |
-|---|---|---|
-| Result | a plain array; `{ messages, totalMatches, offset, limit, hasMore }` only when `offset` is passed | always `{ messages, totalMatches, offset, limit, hasMore }`, plus `incomplete: true` when the scan stopped at 10,000 matches |
-| Default rows | 50 (max 200) | 20 (max 200) |
-| Folders | all folders, Trash and Junk included | Trash and Junk skipped unless `includeTrash: true` or an explicit `folderPath` |
-| `threadId`, `folder` | present | omitted (`threadId` is folder-local; `folderPath` identifies the folder) |
-| Empty fields, `flagged: false` | present (`""`, `[]`, `false`) | omitted |
-| `preview` | the whole stored preview | the first 120 characters, then `...` |
-| `subject` of a reply | without `Re:`, as stored in the database | with `Re:`, as Thunderbird displays it |
-| `ccList` | as stored (may hold MIME encoded-words) | decoded |
-
-`getRecentMessages` now runs the search code with a date filter, so it also asks each IMAP folder to update
-(`updateFolder`) before reading it, as `searchMessages` already did.
 
 ## [0.10.1] - 2026-09-30
 
