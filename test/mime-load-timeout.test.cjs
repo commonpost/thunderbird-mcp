@@ -87,7 +87,10 @@ describe("loadMimeMessage timeout", () => {
     assert.doesNotThrow(() => answer());
   });
 
-  it("both reply tools pass the direct-send flag", () => {
-    assert.equal(API.match(/await loadMimeMessage\(msgHdr, !!skipReview\)/g).length, 2);
+  it("both reply tools pass the direct-send flag, for mode send as well as skipReview", () => {
+    // composeMode is "send" for both (resolveComposeMode), so mode: "send" without skipReview also fails on a timeout
+    // instead of sending without the original to quote
+    assert.equal(API.match(/await loadMimeMessage\(msgHdr, composeMode === "send"\)/g).length, 2);
+    assert.ok(!API.includes("loadMimeMessage(msgHdr, !!skipReview)"));
   });
 });
