@@ -8,7 +8,7 @@ project is kept in this repository.
 
 ### Changed
 
-- README: a "Quick install" section at the top, in five steps, with the Claude Code command (Windows example included) and a bold reminder that the bridge is not updated with the extension. It also notes that `package.json` next to the bridge is optional (it only supplies the version the bridge reports).
+- README: a "Quick install" section at the top, in five steps, with the Claude Code command (Windows example included) and a bold reminder that the bridge is not updated with the extension. It also corrects the old advice to replace the bridge's `package.json` too: the release ships only `mcp-bridge.cjs`, which needs nothing else.
 
 ## [0.11.0] - 2026-09-30
 
