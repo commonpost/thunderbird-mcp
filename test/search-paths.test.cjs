@@ -202,3 +202,16 @@ describe("account restriction in the #17 search paths", () => {
     assert.deepEqual(ids(w.sandbox.searchMessages({ query: "", threadOf: { messageId: "a1@acme.test", folderPath: w.inbox.URI } })), ["a1@acme.test", "b1@acme.test"]);
   });
 });
+
+describe("own addresses for conversation linking", () => {
+  it("come from the identities of the accessible accounts only", () => {
+    const accounts = [
+      { key: "account1", identities: [{ email: "Me@Lab.test" }, { email: "" }] },
+      { key: "account2", identities: [{ email: "hidden@other.test" }] },
+    ];
+    const sandbox = { getAccessibleAccounts: () => accounts.filter(a => a.key === "account1") };
+    vm.createContext(sandbox);
+    vm.runInContext(`${region("OWN ADDRESSES")}\nthis.getOwnEmails = getOwnEmails;`, sandbox);
+    assert.deepEqual([...sandbox.getOwnEmails()], ["me@lab.test"]);
+  });
+});

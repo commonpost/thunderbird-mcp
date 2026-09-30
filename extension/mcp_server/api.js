@@ -10454,15 +10454,19 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
+            // BEGIN OWN ADDRESSES
+            // The user's own addresses, for conversation linking (threadOf, groupBy "thread"): the identities of
+            // the accounts the assistant may read only, like every other search path.
             function getOwnEmails() {
               const emails = new Set();
-              for (const account of MailServices.accounts.accounts) {
+              for (const account of getAccessibleAccounts()) {
                 for (const identity of account.identities) {
                   if (identity.email) emails.add(identity.email.toLowerCase());
                 }
               }
               return emails;
             }
+            // END OWN ADDRESSES
 
             /**
              * Saves a composed message to the identity's Drafts folder without
