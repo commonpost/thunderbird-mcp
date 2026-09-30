@@ -6,22 +6,29 @@ project is kept in this repository.
 
 ## [Unreleased]
 
-### Breaking (MCP clients)
+The MCP protocol changes below come from #16 by Konstantin (mazixs), rebased on 0.10.1. Its own removal of
+invisible characters was replaced by 0.10.0's handling of untrusted content, which covers the same ground; the
+escaping of what is left, the table and `dupLocations` handling and the disabled-tool wording were added on top.
+
+### Breaking
 - Tool failures are tool results with `isError: true` and `{ "error": "..." }` instead of JSON-RPC errors, as the
-  MCP spec asks for errors the model can act on: invalid arguments, a disabled tool (with a hint where to enable
-  it), a handler that throws or returns `{ error }`, an attachment path the bridge refuses, Thunderbird not
-  reachable, a timeout (with a note that the operation may still complete, except for a direct send, whose error
-  already says that the outcome is unknown). JSON-RPC errors remain for protocol problems only, with new codes:
-  unknown tool or missing name `-32602`, internal errors `-32603` (the extension used `-32000`), unparsable input
-  `-32700` (the bridge used `-32700` for every failure).
+  MCP spec asks for errors the model can act on: invalid arguments, a disabled tool, a handler that throws or
+  returns `{ error }` (including a message-tool result too large to check for untrusted content, which is still
+  refused as a whole), an attachment path the bridge refuses, Thunderbird not reachable, a timeout (with a note
+  that the operation may still complete, except for a direct send, whose error already says that the outcome is
+  unknown). JSON-RPC errors remain for protocol problems only, with new codes: unknown tool or missing name
+  `-32602`, internal errors `-32603` (the extension used `-32000`), unparsable input `-32700` (the bridge used
+  `-32700` for every failure).
 - Values outside their bounds are rejected with an error that names the bound: `priority` 0-9 (`createTask`,
   `updateTask`), `percentComplete` 0-100 (`updateTask` clamped 150 to 100 before). Only limits are clamped:
   `maxResults` of `listEvents` / `listTasks` is an integer from 1 to 500, a larger value becomes 500 and a fraction
   is floored, while 0 is an error (it meant the default of 100 before).
 - `createEvent.status` is an enum (`tentative`, `confirmed`, `cancelled`, in any case); an empty string, which
-  meant the default, is rejected, so omit the parameter instead.
+  meant the default, is rejected, so omit the parameter instead. `updateEvent.status` stays a free string on
+  purpose: an empty string there removes the event's status, and any other value is still checked against the
+  same three values, in any case.
 
-### Changed (MCP protocol)
+### Added
 - `initialize` returns short server `instructions` (IDs, untrusted mail content, review windows, stale IMAP
   folders), identical in the bridge and the extension.
 - `tools/list` entries carry `title` and all four annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`,
@@ -30,10 +37,27 @@ project is kept in this repository.
   are destructive and open-world (a sent message can't be taken back, and filter rules can forward or reply), and
   `getMessage` / `getMessages` (`saveAttachments` writes files) and `displayMessage` (a displayed message is marked
   read) are not read-only.
-- Tool results are compact JSON (no indentation). The bridge passes compact results through unchanged.
+
+### Changed
+- Tool results are compact JSON (no indentation). Hidden characters left in them are written as `\uXXXX` escapes:
+  in what the untrusted-content handling only counts (`id`, `folderPath`, `filePath`, `dupLocations`), in
+  `rawSource`, and in the results of the tools it does not clean (folder, account or filter names, ...). The value
+  is the same once parsed, so an id passed back unchanged still finds the same message or folder, but the
+  character is visible in the text. The bridge passes compact results through unchanged. **An older bridge
+  (0.10.1 or earlier) paired with this extension undoes the escaping**: it parses and re-serializes every result
+  (`JSON.parse` / `JSON.stringify`), which writes those characters back raw, as in 0.10.x. Update
+  `mcp-bridge.cjs` along with the add-on.
+- The untrusted-content handling judges a cell of a `{ columns, rows }` table (`format: "table"`) by its column,
+  exactly like the same property of the object form, for the message tools that will return tables.
 - Argument coercion: enum values match case-insensitively, object parameters passed as JSON strings are parsed.
   Calendar and contact tool descriptions say which ids they take and what they return.
-- README lists `saveDraft` and `listCategories`, which were missing from the tool tables.
+- README lists `saveDraft` and `listCategories`, which were missing from the tool tables, and counts 41 tools
+  (`getFilterConfirmation` was added in 0.10.0).
+
+### Fixed
+- `searchMessages`: the folder URIs in `dupLocations` had their hidden characters removed by the untrusted-content
+  handling of 0.10.0, which could desync them from the folder they name. They are now counted only, like
+  `folderPath`.
 
 ## [0.10.1] - 2026-09-30
 
