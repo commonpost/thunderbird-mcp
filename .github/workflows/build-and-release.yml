@@ -2,10 +2,10 @@ name: Build and Release
 
 # Fires when a version tag is pushed. Two jobs, so that no code but our own and GitHub's official
 # actions runs in the job that can write the release and the update channel:
-#   build   (contents: read)   builds the XPI FIRST with only Node's built-in modules and git (no npm install
+#   build   (contents: read)   builds the XPI and the .mcpb FIRST with only Node's built-in modules and git (no npm install
 #                              has run yet), then installs the dev dependencies and runs the tests;
-#   release (contents: write)  rebuilds the XPI from the tag on its own, refuses any difference with the build
-#                              job's artifact, attests build provenance of the XPI and of mcp-bridge.cjs,
+#   release (contents: write)  rebuilds both from the tag on its own, refuses any difference with the build
+#                              job's artifacts, attests build provenance of the XPI, the .mcpb and mcp-bridge.cjs,
 #                              publishes the release and the update manifest on gh-pages.
 # The "release" environment is protected in the repository settings (required reviewer).
 on:
@@ -30,6 +30,8 @@ jobs:
     outputs:
       sha256: ${{ steps.build.outputs.sha256 }}
       xpi: ${{ steps.build.outputs.xpi }}
+      mcpb-sha256: ${{ steps.build-mcpb.outputs.sha256 }}
+      mcpb: ${{ steps.build-mcpb.outputs.mcpb }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,7 +45,7 @@ jobs:
           node-version: '22'
           package-manager-cache: false
 
-      - name: Verify the tag is on main and matches package.json, the manifest and the bridge
+      - name: Verify the tag is on main and matches package.json, the manifests and the bridge
         env:
           REF_NAME: ${{ github.ref_name }}
         run: |
@@ -54,9 +56,10 @@ jobs:
           TAG="${REF_NAME#v}"
           PKG="$(node -p "require('./package.json').version")"
           MAN="$(node -p "require('./extension/manifest.json').version")"
+          MCPB="$(node -p "require('./mcpb/manifest.json').version")"
           BRG="$(sed -n "s/^const BRIDGE_VERSION = '\(.*\)';.*/\1/p" mcp-bridge.cjs)"
-          if [ "$TAG" != "$PKG" ] || [ "$TAG" != "$MAN" ] || [ "$TAG" != "$BRG" ]; then
-            echo "::error::Tag ${REF_NAME}, package.json ${PKG}, manifest ${MAN} and bridge ${BRG} must all agree."
+          if [ "$TAG" != "$PKG" ] || [ "$TAG" != "$MAN" ] || [ "$TAG" != "$MCPB" ] || [ "$TAG" != "$BRG" ]; then
+            echo "::error::Tag ${REF_NAME}, package.json ${PKG}, manifest ${MAN}, mcpb manifest ${MCPB} and bridge ${BRG} must all agree."
             exit 1
           fi
 
@@ -70,17 +73,28 @@ jobs:
           echo "xpi=$(basename "$XPI")" >> "$GITHUB_OUTPUT"
           echo "sha256=$(sha256sum "$XPI" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
+      - name: Build the .mcpb (reproducible)
+        id: build-mcpb
+        run: |
+          set -euo pipefail
+          node scripts/build-mcpb-reproducible.cjs
+          MCPB="$(ls dist/commonpost-mcp-v*.mcpb)"
+          echo "mcpb=$(basename "$MCPB")" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$MCPB" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
       - name: Install dev dependencies
         run: npm ci --ignore-scripts
 
       - name: Run tests
         run: node --test test/*.cjs test/*.js
 
-      - name: Keep the XPI for the release job
+      - name: Keep the XPI and the .mcpb for the release job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: xpi
-          path: dist/*.xpi
+          path: |
+            dist/*.xpi
+            dist/*.mcpb
           if-no-files-found: error
           retention-days: 7
 
@@ -115,12 +129,15 @@ jobs:
           package-manager-cache: false
 
       # Independent rebuild from the tag, with Node's built-in modules and git only (no npm install in this job).
-      - name: Rebuild the XPI from the tag
+      - name: Rebuild the XPI and the .mcpb from the tag
         env:
           COMMONPOST_OUT_DIR: ${{ runner.temp }}/rebuild
-        run: node scripts/build-xpi-reproducible.cjs
+        run: |
+          set -euo pipefail
+          node scripts/build-xpi-reproducible.cjs
+          node scripts/build-mcpb-reproducible.cjs
 
-      - name: Download the XPI of the build job
+      - name: Download the XPI and the .mcpb of the build job
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: xpi
@@ -130,15 +147,27 @@ jobs:
         env:
           XPI: ${{ needs.build.outputs.xpi }}
           EXPECTED: ${{ needs.build.outputs.sha256 }}
+          MCPB: ${{ needs.build.outputs.mcpb }}
+          EXPECTED_MCPB: ${{ needs.build.outputs.mcpb-sha256 }}
           REBUILD_DIR: ${{ runner.temp }}/rebuild
         run: |
           set -euo pipefail
-          [ "$(find dist -maxdepth 1 -type f | wc -l)" = "1" ]
+          # The artifact holds exactly the XPI and the .mcpb, nothing else.
+          [ "$(find dist -maxdepth 1 -type f | wc -l)" = "2" ]
+          [ "$(find dist -maxdepth 1 -type f -name '*.xpi' | wc -l)" = "1" ]
+          [ "$(find dist -maxdepth 1 -type f -name '*.mcpb' | wc -l)" = "1" ]
           [ "$(find "$REBUILD_DIR" -maxdepth 1 -name '*.xpi' | wc -l)" = "1" ]
+          [ "$(find "$REBUILD_DIR" -maxdepth 1 -name '*.mcpb' | wc -l)" = "1" ]
           A="$(sha256sum "dist/${XPI}" | cut -d' ' -f1)"
           B="$(sha256sum "${REBUILD_DIR}/${XPI}" | cut -d' ' -f1)"
           if [ "$A" != "$EXPECTED" ] || [ "$B" != "$EXPECTED" ]; then
             echo "::error::XPI differs: artifact ${A}, rebuild ${B}, recorded ${EXPECTED}."
+            exit 1
+          fi
+          C="$(sha256sum "dist/${MCPB}" | cut -d' ' -f1)"
+          D="$(sha256sum "${REBUILD_DIR}/${MCPB}" | cut -d' ' -f1)"
+          if [ "$C" != "$EXPECTED_MCPB" ] || [ "$D" != "$EXPECTED_MCPB" ]; then
+            echo "::error::.mcpb differs: artifact ${C}, rebuild ${D}, recorded ${EXPECTED_MCPB}."
             exit 1
           fi
           cp mcp-bridge.cjs dist/mcp-bridge.cjs
@@ -148,6 +177,12 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/${{ needs.build.outputs.xpi }}
+
+      - name: Attest build provenance of the .mcpb
+        id: attest-mcpb
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/${{ needs.build.outputs.mcpb }}
 
       - name: Attest build provenance of the bridge
         id: attest-bridge
@@ -160,13 +195,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           XPI: ${{ needs.build.outputs.xpi }}
+          MCPB: ${{ needs.build.outputs.mcpb }}
           BUNDLE_XPI: ${{ steps.attest-xpi.outputs.bundle-path }}
+          BUNDLE_MCPB: ${{ steps.attest-mcpb.outputs.bundle-path }}
           BUNDLE_BRIDGE: ${{ steps.attest-bridge.outputs.bundle-path }}
         run: |
           set -euo pipefail
           cp "$BUNDLE_XPI" "dist/${XPI}.sigstore.json"
+          cp "$BUNDLE_MCPB" "dist/${MCPB}.sigstore.json"
           cp "$BUNDLE_BRIDGE" "dist/mcp-bridge.cjs.sigstore.json"
-          ASSETS=("dist/${XPI}" "dist/${XPI}.sigstore.json" "dist/mcp-bridge.cjs" "dist/mcp-bridge.cjs.sigstore.json")
+          ASSETS=("dist/${XPI}" "dist/${XPI}.sigstore.json" "dist/${MCPB}" "dist/${MCPB}.sigstore.json" "dist/mcp-bridge.cjs" "dist/mcp-bridge.cjs.sigstore.json")
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" "${ASSETS[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
