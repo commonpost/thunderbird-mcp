@@ -16,7 +16,11 @@ function loadInlineImageContentHelpers() {
   assert.ok(start >= 0, "inline image helper start marker missing");
   assert.ok(end > start, "inline image helper end marker missing");
 
-  const snippet = source.slice(start, end);
+  // buildToolResultContent escapes hidden characters with the untrusted-content helpers
+  const untrustedStart = source.indexOf("// BEGIN UNTRUSTED CONTENT HELPERS");
+  const untrustedEnd = source.indexOf("// END UNTRUSTED CONTENT HELPERS");
+  assert.ok(untrustedStart >= 0 && untrustedEnd > untrustedStart, "untrusted content helpers block missing");
+  const snippet = `${source.slice(start, end)}\n${source.slice(untrustedStart, untrustedEnd)}`;
   const sandbox = { btoa: globalThis.btoa };
   vm.createContext(sandbox);
   vm.runInContext(

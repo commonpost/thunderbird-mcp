@@ -1002,8 +1002,9 @@ function setExtraMcpContentBlocks(toolResult, blocks) {
 function buildToolResultContent(toolResult) {
   const content = [{
     type: "text",
-    // Compact JSON: indentation costs tokens and helps no model
-    text: JSON.stringify(toolResult),
+    // Compact JSON: indentation costs tokens and helps no model. Hidden
+    // characters left in it are escaped (see UNTRUSTED CONTENT HELPERS).
+    text: escapeHiddenCharacters(JSON.stringify(toolResult)),
   }];
   const extraBlocks = toolResult && toolResult[MCP_EXTRA_CONTENT_BLOCKS];
   if (Array.isArray(extraBlocks)) content.push(...extraBlocks);
@@ -1559,15 +1560,12 @@ function codePointAfter(str, pos) {
   return str.slice(pos, end);
 }
 
-// Returns { text, removed }.
-function stripHiddenCharacters(value) {
-  if (typeof value !== "string" || value === "") return { text: value, removed: 0 };
-  let removed = 0;
-  const text = value.replace(HIDDEN_CORE_PATTERN, (m, offset, str) => {
+// Replaces each hidden character of `value` with onHidden(character), except
+// the ones kept below. Shared by stripHiddenCharacters (removal) and
+// escapeHiddenCharacters (JSON escapes), so both judge the same characters.
+function replaceHiddenCharacters(value, onHidden) {
+  return value.replace(HIDDEN_CORE_PATTERN, (m, offset, str) => {
     if (m === "\t" || m === "\n" || m === "\r") return m; // never matched by \p{Cc} minus these three
-    // Line/paragraph separators reformat text invisibly rather than draw
-    // nothing: normalized to a real newline instead of deleted outright.
-    if (m === "\u2028" || m === "\u2029") { removed++; return "\n"; }
     if (m === "\u200C" || m === "\u200D") {
       // ZWNJ/ZWJ: kept, uncounted, only where removing it would break real
       // text -- an emoji sequence (joining two pictographs or an
@@ -1598,10 +1596,40 @@ function stripHiddenCharacters(value) {
       const base = codePointBefore(str, offset);
       if (!isRepeat && EMOJI_BASE.test(base)) return m;
     }
+    return onHidden(m);
+  });
+}
+
+// Returns { text, removed }.
+function stripHiddenCharacters(value) {
+  if (typeof value !== "string" || value === "") return { text: value, removed: 0 };
+  let removed = 0;
+  const text = replaceHiddenCharacters(value, (m) => {
     removed++;
-    return "";
+    // Line/paragraph separators reformat text invisibly rather than draw
+    // nothing: normalized to a real newline instead of deleted outright.
+    return m === "\u2028" || m === "\u2029" ? "\n" : "";
   });
   return { text, removed };
+}
+
+// The JSON text of a tool result with each hidden character written as a
+// \uXXXX escape: the same value once parsed, but visible to whoever reads the
+// text. By then protectUntrustedResult has removed them from the free text of
+// the message, calendar and contact tools, so what is escaped is what it only
+// counts (UNTRUSTED_COUNT_ONLY_KEYS: an id or folder path passed back
+// unchanged still finds the same message or folder), rawSource, and the
+// results of the other tools, which are not cleaned (folder, account or
+// filter names...). Judged on the JSON text, so a joiner right after an
+// escape such as \n may stay where stripHiddenCharacters would remove it;
+// a joiner hides no text of its own.
+function escapeHiddenCharacters(json) {
+  if (typeof json !== "string") return json;
+  return replaceHiddenCharacters(json, (m) => {
+    let escaped = "";
+    for (let i = 0; i < m.length; i++) escaped += "\\u" + m.charCodeAt(i).toString(16).padStart(4, "0");
+    return escaped;
+  });
 }
 
 function untrustedContentOpen(nonce, removed) {

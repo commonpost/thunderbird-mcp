@@ -25,6 +25,7 @@ const sandbox = { btoa: globalThis.btoa };
 vm.createContext(sandbox);
 vm.runInContext(`${snippet('SERVER INSTRUCTIONS')}
 ${snippet('INLINE IMAGE CONTENT HELPERS')}
+${snippet('UNTRUSTED CONTENT HELPERS')}
 ${snippet('MCP TOOL PROTOCOL HELPERS')}
 this.api = { MCP_SERVER_INSTRUCTIONS, toolListEntry, isToolErrorResult, toolCallResult, toolCallError, buildToolResultContent };`, sandbox);
 const api = sandbox.api;
@@ -107,6 +108,13 @@ describe('result text', () => {
     assert.equal(block.text.includes('\n'), false);
     const response = { jsonrpc: '2.0', id: 1, result: { content: [block] } };
     assert.strictEqual(bridge.compactToolResultJsonText(response), response);
+  });
+
+  it('escapes hidden characters left in it, and the bridge keeps the escapes', () => {
+    const [block] = api.buildToolResultContent({ id: 'a\u200B@example.test', name: 'IN\u202EBOX' });
+    assert.equal(block.text, '{"id":"a\\u200b@example.test","name":"IN\\u202eBOX"}');
+    const response = { jsonrpc: '2.0', id: 1, result: { content: [block] } };
+    assert.equal(bridge.compactToolResultJsonText(response).result.content[0].text, block.text);
   });
 });
 
