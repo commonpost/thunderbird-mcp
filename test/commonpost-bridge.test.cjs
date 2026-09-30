@@ -13,6 +13,7 @@ const path = require('path');
 
 const {
   ATTACHMENT_TOOLS,
+  checkConnectionDirSafety,
   checkConnectionFileSafety,
   checkWindowsTempContainment,
   clearConnectionCache,
@@ -210,7 +211,8 @@ describe('connection.json safety on POSIX', { skip: typeof process.getuid !== 'f
   it('discovery skips an unsafe connection file and says why', () => {
     const tmpDir = path.join(root, 'tmp');
     const connFile = path.join(tmpDir, 'commonpost-mcp', 'connection.json');
-    fs.mkdirSync(path.dirname(connFile), { recursive: true });
+    fs.mkdirSync(path.dirname(connFile), { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.dirname(connFile), 0o700);
     fs.writeFileSync(connFile, JSON.stringify({ port: 8765, token: 'a'.repeat(64) }));
     fs.chmodSync(connFile, 0o644);
     clearConnectionCache();
@@ -366,7 +368,8 @@ describe('connection.json read through a verified descriptor (POSIX)', { skip: t
   it('discovery reports the refusal and keeps working afterwards', () => {
     const tmpDir = path.join(root, 'tmp');
     const connFile = path.join(tmpDir, 'commonpost-mcp', 'connection.json');
-    fs.mkdirSync(path.dirname(connFile), { recursive: true });
+    fs.mkdirSync(path.dirname(connFile), { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.dirname(connFile), 0o700);
     fs.writeFileSync(connFile, JSON.stringify({ port: 8766, token: 'c'.repeat(64) }), { mode: 0o600 });
     const decoy = path.join(root, 'decoy.json');
     fs.writeFileSync(decoy, '{}', { mode: 0o600 });
@@ -804,5 +807,65 @@ describe('a stale or foreign connection file is refused (process id)', { skip: t
     assert.equal(result.candidates.length, 0);
     assert.equal(result.attempts.length, 1);
     assert.match(JSON.stringify(result.attempts[0]), /stale connection file/);
+  });
+});
+
+describe('the folder of a discovered connection file is checked (POSIX)', { skip: typeof process.getuid !== 'function' }, () => {
+  let root;
+  let dir;
+  let connFile;
+  const options = (env = {}) => ({
+    env, fsImpl: fs, pathImpl: path, platform: 'linux', uid: process.getuid(),
+    osImpl: { tmpdir: () => path.join(root, 'tmp'), homedir: () => root }, homeDir: root,
+    procRoot: path.join(root, 'proc'), runtimeDir: path.join(root, 'run'),
+    processImpl: { env, platform: 'linux' },
+  });
+  const discover = (env) => { clearConnectionCache(); return discoverConnectionInfo(options(env)); };
+  const reasons = (result) => JSON.stringify(result.attempts);
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-dir-'));
+    dir = path.join(root, 'tmp', 'commonpost-mcp');
+    connFile = path.join(dir, 'connection.json');
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dir, 0o700);
+    fs.writeFileSync(connFile, JSON.stringify({ port: 8765, token: 'a'.repeat(64) }), { mode: 0o600 });
+    fs.chmodSync(connFile, 0o600);
+  });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('accepts a 0700 folder of the current user', () => {
+    assert.equal(discover().candidates.length, 1);
+    assert.equal(checkConnectionDirSafety(connFile, { fsImpl: fs, pathImpl: path, platform: 'linux', uid: process.getuid() }), null);
+  });
+
+  it('refuses a folder open to group or others, and says why', () => {
+    for (const mode of [0o750, 0o705, 0o755, 0o777]) {
+      fs.chmodSync(dir, mode);
+      const result = discover();
+      assert.equal(result.candidates.length, 0, mode.toString(8));
+      assert.match(reasons(result), /folder mode \d+ gives group\/other access/);
+    }
+  });
+
+  it('refuses a folder owned by another uid', () => {
+    clearConnectionCache();
+    const result = discoverConnectionInfo({ ...options(), uid: process.getuid() + 1 });
+    assert.equal(result.candidates.length, 0);
+  });
+
+  it('refuses a folder that is a symlink', () => {
+    const real = path.join(root, 'real');
+    fs.renameSync(dir, real);
+    fs.symlinkSync(real, dir);
+    const result = discover();
+    assert.equal(result.candidates.length, 0);
+    assert.match(reasons(result), /folder is a symlink/);
+  });
+
+  it('does not apply to a path the user pinned explicitly', () => {
+    fs.chmodSync(dir, 0o755);
+    const result = discover({ COMMONPOST_MCP_CONNECTION_FILE: connFile });
+    assert.equal(result.candidates.length, 1);
   });
 });

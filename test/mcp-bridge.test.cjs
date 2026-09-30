@@ -41,7 +41,9 @@ function makeAttachmentTestRoot() {
 }
 
 function writeConnectionFile(filePath, { port, token, pid = process.pid }) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  // The bridge also requires the folder to be closed to group and others.
+  if (process.platform !== 'win32') fs.chmodSync(path.dirname(filePath), 0o700);
   fs.writeFileSync(filePath, JSON.stringify({ port, token, pid }), { encoding: 'utf8', mode: 0o600 });
   // The bridge only trusts a 0600 file of the current user, as the
   // extension writes it.
@@ -662,6 +664,9 @@ describe('Bridge discovery', () => {
     // what the host's real fs.statSync returns.
     statOverrides.set(ownedConnFile, { uid: currentUid });
     statOverrides.set(foreignConnFile, { uid: currentUid + 1 });
+    // The folder of the file is checked too (owner = the caller).
+    statOverrides.set(path.dirname(ownedConnFile), { uid: currentUid });
+    statOverrides.set(path.dirname(foreignConnFile), { uid: currentUid });
 
     const connInfo = readConnectionInfo({
       ...options,
