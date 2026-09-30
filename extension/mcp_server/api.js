@@ -1220,13 +1220,18 @@ function isWindowsHost() {
   }
 }
 
+// Reserved Windows device names: a component named so (with or without an
+// extension, trailing dots and spaces ignored) opens the device, not a file.
+const WINDOWS_DEVICE_NAME = /^(con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3]|conin\$|conout\$)$/i;
+
 // Windows path forms that Windows resolves to ANOTHER name than the one the
 // lexical deny-list sees:
 //   - an alternate data stream (logins.json::$DATA, a.kdbx:s) reads a file or
 //     stream whose name does not end the path;
 //   - a trailing dot or space in a component is stripped (Thunderbird. is
 //     Thunderbird, a.pem. is a.pem);
-//   - an 8.3 short name (THUNDE~1, APPDAT~1) hides the long name.
+//   - an 8.3 short name (THUNDE~1, APPDAT~1) hides the long name;
+//   - a reserved device name (CON, NUL, COM1, LPT1...) opens a device.
 // `knownTempDir`: TmpD (Services.dirsvc.get("TmpD").path) is sometimes
 // reported BY WINDOWS ITSELF using an 8.3 component (a short user profile
 // name, e.g. C:\Users\JEANTR~1\AppData\Local\Temp) -- that is not a caller
@@ -1251,6 +1256,9 @@ function windowsPathAmbiguity(attachmentPath, knownTempDir) {
   }
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
+    if (WINDOWS_DEVICE_NAME.test(part.split(".")[0].replace(/[. ]+$/, ""))) {
+      return `has a component naming a Windows device (${JSON.stringify(part)})`;
+    }
     if (/[. ]$/.test(part)) {
       return `has a component ending with a dot or a space (${JSON.stringify(part)})`;
     }

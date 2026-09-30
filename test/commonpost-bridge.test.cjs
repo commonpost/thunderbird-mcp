@@ -488,10 +488,26 @@ const WIN_AMBIGUOUS = [
   ['8.3 parent', 'C:\\Users\\g\\APPDAT~1\\Roaming\\Thunderbird\\profiles.ini', /8\.3 short-name/],
   ['8.3 file', 'C:\\Users\\g\\keys\\SERVER~1.PEM', /8\.3 short-name/],
   ['8.3 forward slashes', 'C:/PROGRA~1/x.pdf', /8\.3 short-name/],
+  ['device name (file)', 'C:\\Users\\g\\Documents\\NUL', /Windows device/],
+  ['device name with extension', 'C:\\Users\\g\\Documents\\con.txt', /Windows device/],
+  ['device name, lower case, directory', 'C:\\Users\\g\\aux\\a.pdf', /Windows device/],
+  ['device name, several extensions', 'C:\\Users\\g\\Documents\\PRN.tar.gz', /Windows device/],
+  ['device name, space before the dot', 'C:\\Users\\g\\Documents\\CON .txt', /Windows device/],
+  ['device name, trailing dot', 'C:\\Users\\g\\Documents\\AUX.', /Windows device/],
+  ['COM1', 'C:\\Users\\g\\Documents\\COM1.pdf', /Windows device/],
+  ['COM9', 'C:/Users/g/Documents/com9', /Windows device/],
+  ['LPT5', 'C:\\Users\\g\\Documents\\Lpt5.log', /Windows device/],
+  ['superscript COM', 'C:\\Users\\g\\Documents\\COM\u00b9.txt', /Windows device/],
+  ['superscript LPT', 'C:\\Users\\g\\Documents\\LPT\u00b3', /Windows device/],
+  ['CONIN$', 'C:\\Users\\g\\Documents\\CONIN$', /Windows device/],
+  ['CONOUT$', 'C:\\Users\\g\\Documents\\conout$.txt', /Windows device/],
 ];
 const WIN_PLAIN = [
   'C:\\Users\\g\\Documents\\rapport.pdf', 'C:/Users/g/Documents/rapport final (2).pdf', 'C:\\Users\\g\\Documents\\Budget~2.xlsx',
   'C:\\Users\\g\\Documents\\..\\Documents\\a.pdf', '.\\a.pdf', 'C:a.pdf', 'D:\\', 'relative\\dir\\a.pdf', 'C:\\Users\\g\\~$temp.docx',
+  'C:\\Users\\g\\Documents\\console.txt', 'C:\\Users\\g\\Documents\\com0.pdf', 'C:\\Users\\g\\Documents\\com10.pdf',
+  'C:\\Users\\g\\Documents\\lpt.txt', 'C:\\Users\\g\\Documents\\nullable.pdf', 'C:\\Users\\g\\Documents\\aux_notes.txt',
+  'C:\\Users\\g\\Documents\\my.con', 'C:\\Users\\g\\Documents\\a.nul.pdf',
 ];
 const COMPAT_JUNCTIONS = [
   'C:\\Users\\g\\Application Data\\Thunderbird\\Profiles\\x.default\\prefs.js',
