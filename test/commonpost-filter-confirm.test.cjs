@@ -1055,7 +1055,11 @@ function makeWorld({ prefs = { [P_BLOCK]: false } } = {}) {
     } },
     MailServices: {
       accounts: { getAccount: (k) => accounts[k] || null },
-      filters: { applyFiltersToFolders: (list, fs) => w.applied.push({ list, folders: fs.map((f) => f.URI) }) },
+      filters: {
+        // A temporary list, as Thunderbird's own "Run Filters on Folder" builds it.
+        getTempFilterList: () => makeFilterList(),
+        applyFiltersToFolders: (list, fs) => w.applied.push({ list, folders: fs.map((f) => f.URI) }),
+      },
     },
     isAccountAllowed: (k) => w.allowedAccounts === null || w.allowedAccounts.includes(k),
     getAccessibleAccounts: () => Object.values(accounts),
@@ -1396,6 +1400,7 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
     w.answer(0);
     assert.equal(w.applied.length, 1);
     assert.deepEqual(Array.from(w.applied[0].folders), ["mailbox://labo@127.0.0.1/Inbox"]);
+    assert.deepEqual(w.applied[0].list.filters.map((f) => f.filterName), ["manual-transfer-rule"]);
     assert.equal(w.h.getFilterConfirmation(r2.confirmationId).status, "accepted");
   });
 
