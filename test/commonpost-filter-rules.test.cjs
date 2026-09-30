@@ -846,6 +846,17 @@ describe("a condition 'is / isn't in address book' under an address book restric
     assert.deepEqual([...replaced.changes], ["conditions"]);
   });
 
+  it("an update that only disables the rule is accepted with an inaccessible address book condition; anything else is refused", () => {
+    const list = makeFilterList();
+    const opts = { isAddressBookAllowed: allow };
+    const plan = api.planFilterUpdate(list, ruleWith("isInAB", BAD_BOOK), { enabled: false }, resolveFolder, opts);
+    assert.deepEqual([...plan.changes], ["enabled"]);
+    for (const update of [{ enabled: true }, { enabled: false, name: "y" }, { enabled: false, type: 1 }, { name: "y" }]) {
+      assert.throws(() => api.planFilterUpdate(list, ruleWith("isInAB", BAD_BOOK), update, resolveFolder, opts),
+        /address book/, JSON.stringify(update));
+    }
+  });
+
   it("planFilterUpdate keeps an accessible address book condition, and a rule without one", () => {
     const list = makeFilterList();
     const opts = { isAddressBookAllowed: allow };
