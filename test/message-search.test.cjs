@@ -227,6 +227,20 @@ describe('subject linking', () => {
     assert.deepEqual([...api.counterpartEmails(fields, own)], ['j.doe@x.test', 'a@y.test', 'b@y.test']);
   });
 
+  it('finds addresses as before, in linear time on long runs a sender can write', () => {
+    const none = new Set();
+    const emails = fields => [...api.counterpartEmails({ author: '', recipients: '', ccList: '', bccList: '', ...fields }, none)];
+    assert.deepEqual(emails({ recipients: '@x.test, x@, a@b@c.test, (u@v.test); <w@z.test>' }), ['a@b@c.test', 'u@v.test', 'w@z.test']);
+    const long = 'a'.repeat(200000);
+    const started = Date.now();
+    assert.deepEqual(emails({ author: long, recipients: `${long}@x.test`, ccList: '<'.repeat(200000) }), [`${long}@x.test`]);
+    const [group] = plain(api.groupSearchRows([{ id: '1', author: '<'.repeat(200000), subject: 's', date: 'd', folderPath: 'f', read: true, _dateTs: 1 }], 'sender', 'desc'));
+    assert.equal(group.count, 1);
+    assert.ok(Date.now() - started < 1000, `took ${Date.now() - started} ms`);
+    const bySender = rows => plain(api.groupSearchRows(rows.map((author, i) => ({ id: String(i), author, subject: 's', date: 'd', folderPath: 'f', read: true, _dateTs: i })), 'sender', 'asc')).map(g => g.count);
+    assert.deepEqual(bySender(['Ann <ANN@x.test>', 'ann@x.test', '<> Ann <ann@x.test>', 'Bob <<bob@x.test>']), [3, 1]);
+  });
+
   it('takes the author as the key person, for own mail the addressees', () => {
     const own = new Set(['me@bench.test']);
     const people = fields => { const p = api.threadPeople(fields, own); return { key: plain(p.key), all: [...p.all] }; };

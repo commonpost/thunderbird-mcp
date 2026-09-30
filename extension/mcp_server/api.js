@@ -1937,9 +1937,17 @@ function listResultAsTable(result, format) {
   return rowsToTable(result.map(r => compactSearchRow(r)));
 }
 
+// The address inside the first "<...>" that holds something, else the whole author. Found with indexOf: the
+// regular expression /<([^>]+)>/ backtracks quadratically on a long run of "<" without ">", and the author is
+// written by the sender (adjacent encoded-words decode into a single run of any length).
 function senderGroupKey(author) {
   const s = String(author || "");
-  return (s.match(/<([^>]+)>/)?.[1] || s).trim().toLowerCase();
+  for (let lt = s.indexOf("<"); lt !== -1; lt = s.indexOf("<", lt + 1)) {
+    const gt = s.indexOf(">", lt + 1);
+    if (gt === -1) break;
+    if (gt > lt + 1) return s.slice(lt + 1, gt).trim().toLowerCase();
+  }
+  return s.trim().toLowerCase();
 }
 
 // Reply / forward / auto-reply prefixes, incl. Russian and German clients.
@@ -1960,8 +1968,20 @@ function threadSubjectKey(subject) {
   return s.length >= MIN_THREAD_SUBJECT_CHARS ? s : "";
 }
 
+const HEADER_ADDRESS_SEPARATORS = /[\s<>",;:()]+/;
+
+// Addresses in header text: each run between separators that holds an "@" with a character on either side (the
+// runs /[^\s<>",;:()]+@[^\s<>",;:()]+/g matched). Split rather than matched: that expression backtracks
+// quadratically on a long run without "@", and headers are written by the sender.
 function headerEmails(...headers) {
-  return headers.flatMap(h => String(h || "").toLowerCase().match(/[^\s<>",;:()]+@[^\s<>",;:()]+/g) || []);
+  const emails = [];
+  for (const header of headers) {
+    for (const run of String(header || "").toLowerCase().split(HEADER_ADDRESS_SEPARATORS)) {
+      const at = run.indexOf("@", 1);
+      if (at !== -1 && at < run.length - 1) emails.push(run);
+    }
+  }
+  return emails;
 }
 
 // Participants other than the user.
