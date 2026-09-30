@@ -29,6 +29,10 @@ project is kept in this repository.
 - README: a new "Other MCP clients" section with the configuration file, location and format of Claude Desktop, VS Code, Cursor, OpenAI Codex CLI and Gemini CLI, checked against each client's documentation, and when and how to set `COMMONPOST_MCP_CONNECTION_FILE` (only if the bridge cannot find the connection file). The bridge is not tied to any client, and `mcpServers` is not the key every client uses.
 - RELEASING: the verification step now says that a rebase merge rewrites the commit date, so the reproducible hash built from the pull request branch cannot match the release; compare with a rebuild from a checkout of the tag.
 
+### Fixed
+
+- The bridge of a release announced version `0.0.0` in `serverInfo`: it read `package.json`, which the release does not ship (only `mcp-bridge.cjs`), and next to another project's `package.json` it announced that project's version. Its version is now written in `mcp-bridge.cjs` (`BRIDGE_VERSION`) and the Version sync check, the release workflow and a test compare it with `package.json` and the manifest.
+
 ## [0.11.0] - 2026-09-30
 
 The MCP protocol changes below come from #16 by Konstantin (mazixs), rebased on 0.10.1. Its own removal of
