@@ -4414,6 +4414,237 @@ function buildReplyReferences(originalReferences, originalMessageId) {
 }
 // END COMPOSE HELPERS
 
+// BEGIN BRIDGE COMPAT
+// What the add-on knows about the MCP bridge that calls it, from the X-Commonpost-Bridge header the bridge sends on
+// every request (0.12.0 and later; older bridges send none). Self-declared: it is not a security boundary, the token
+// is. Each side applies only its own thresholds (here: bridges older than this add-on recommends; in the bridge:
+// add-ons older than it needs); the version check keeps every threshold at or below the bridge version of the same
+// release, so the two sides never warn about the same pair. Only digits parsed here, fixed words and fixed addresses
+// reach a text; the raw header and the profile never do.
+const MIN_BRIDGE_VERSION = "0.12.0";
+const MODE_MIN_BRIDGE_VERSION = "0.12.0";
+const BRIDGE_SECURITY_FLOOR = "0.0.0";
+const BRIDGE_THRESHOLDS = Object.freeze({ minBridge: MIN_BRIDGE_VERSION, modeMin: MODE_MIN_BRIDGE_VERSION, floor: BRIDGE_SECURITY_FLOOR });
+const BRIDGE_NOTICE_COOLDOWN_MS = 10 * 60 * 1000;
+const BRIDGES_SEEN_MAX = 8;
+const BRIDGE_HEADER_MAX = 256;
+const BRIDGE_VERSION_PART = /^(\d{1,6})\.(\d{1,6})\.(\d{1,6})$/;
+const BRIDGE_PARAM_KEY = /^[a-z][a-z0-9-]{0,15}$/;
+const BRIDGE_PROFILE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const RELEASE_TAG_URL = "https://github.com/commonpost/thunderbird-mcp/releases/tag/v";
+const RELEASE_LATEST_URL = "https://github.com/commonpost/thunderbird-mcp/releases/latest";
+const BRIDGE_DIRECT_SEND_TOOLS = new Set(["sendMail", "replyToMessage", "forwardMessage"]);
+const BRIDGE_MODE_TOOLS = new Set(["replyToMessage", "forwardMessage"]);
+const BRIDGE_ADVICE_MCPB = "Install the .mcpb bundle from the release page below in Claude Desktop again (a bundle installed from a file is never updated automatically; its version number can be lower than the add-on's: it is still the current bridge).";
+const BRIDGE_ADVICE_FILE = "Replace mcp-bridge.cjs with the one from the release page below (or install the .mcpb bundle from it in Claude Desktop), then restart the MCP client.";
+
+// "X.Y.Z" from a version string, or null. Never throws. Same rule as versionCore in mcp-bridge.cjs.
+function versionCoreOf(version) {
+  if (typeof version !== "string" || version.length > 64) return null;
+  const match = /^(\d{1,6})\.(\d{1,6})\.(\d{1,6})(?:$|[-+.])/.exec(version);
+  return match ? `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}` : null;
+}
+
+// -1, 0 or 1 for two "X.Y.Z" strings.
+function compareVersionCores(a, b) {
+  const left = a.split(".").map(Number);
+  const right = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (left[i] !== right[i]) return left[i] < right[i] ? -1 : 1;
+  }
+  return 0;
+}
+
+// The header, parsed. `raw` is undefined when the header is missing.
+//   { version: "X.Y.Z" | null, packaging: "mcpb" | "file" | "unknown" | "none", profile: string | null,
+//     profileInvalid: boolean }
+// "none" only for a missing header. The version is parsed on its own: a bad parameter never invalidates it.
+function parseBridgeHeader(raw) {
+  if (raw === undefined || raw === null) {
+    return { version: null, packaging: "none", profile: null, profileInvalid: false };
+  }
+  if (typeof raw !== "string" || raw.length > BRIDGE_HEADER_MAX || raw.includes(",")) {
+    return { version: null, packaging: "unknown", profile: null, profileInvalid: false };
+  }
+  const parts = raw.split(";").map((part) => part.trim());
+  const match = BRIDGE_VERSION_PART.exec(parts[0]);
+  const version = match ? `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}` : null;
+  const params = new Map();
+  for (const part of parts.slice(1)) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    const key = part.slice(0, eq).trim();
+    if (!BRIDGE_PARAM_KEY.test(key) || params.has(key)) continue; // first occurrence wins
+    params.set(key, part.slice(eq + 1).trim());
+  }
+  const packagingValue = params.get("packaging");
+  const packaging = version !== null && (packagingValue === "mcpb" || packagingValue === "file") ? packagingValue : "unknown";
+  let profile = null;
+  let profileInvalid = false;
+  if (params.has("profile")) {
+    if (BRIDGE_PROFILE.test(params.get("profile"))) profile = params.get("profile");
+    else profileInvalid = true;
+  }
+  return { version, packaging, profile, profileInvalid };
+}
+
+function bridgeFloorArmed(thresholds) {
+  return thresholds.floor !== "0.0.0";
+}
+
+// "up-to-date" | "update-recommended" | "refused" | "unversioned" | "development" | "newer-than-add-on"
+function bridgeState(info, extCore, thresholds) {
+  const armed = bridgeFloorArmed(thresholds);
+  if (info.version === null) return armed ? "refused" : "unversioned";
+  if (info.version === "0.0.0") return armed ? "refused" : "development";
+  if (armed && compareVersionCores(info.version, thresholds.floor) < 0) return "refused";
+  if (extCore && extCore !== "0.0.0" && compareVersionCores(info.version, extCore) > 0) return "newer-than-add-on";
+  if (compareVersionCores(info.version, thresholds.minBridge) < 0) return "update-recommended";
+  return "up-to-date";
+}
+
+// "ok" | "warn" | "refuse"
+function bridgeCompatDecision(info, extCore, thresholds) {
+  const state = bridgeState(info, extCore, thresholds);
+  if (state === "refused") return "refuse";
+  if (state === "update-recommended" || state === "unversioned") return "warn";
+  return "ok";
+}
+
+function bridgeReleaseUrl(core) {
+  return typeof core === "string" && BRIDGE_VERSION_PART.test(core) && core !== "0.0.0"
+    ? RELEASE_TAG_URL + core
+    : RELEASE_LATEST_URL;
+}
+
+// Completes "this bridge ..." / "the MCP bridge ...".
+function bridgePhrase(info) {
+  if (info.version === null) {
+    return info.packaging === "none" ? "does not report its version (0.11 or older)" : "reports an unreadable version";
+  }
+  if (info.version === "0.0.0") return "is a development build (version 0.0.0)";
+  return `is version ${info.version}`;
+}
+
+function bridgeAdvice(info) {
+  return info.packaging === "mcpb" ? BRIDGE_ADVICE_MCPB : BRIDGE_ADVICE_FILE;
+}
+
+function bridgeAddOn(extCore) {
+  return extCore && extCore !== "0.0.0" ? `this Thunderbird add-on (version ${extCore})` : "this Thunderbird add-on";
+}
+
+// The one-line notice for a bridge older than recommended, or null (no notice due, or the add-on's own version
+// is unreadable).
+function bridgeNoticeText(info, extCore, thresholds) {
+  if (!extCore || extCore === "0.0.0" || bridgeCompatDecision(info, extCore, thresholds) !== "warn") return null;
+  const tail = `${bridgeAdvice(info)} Release page: ${bridgeReleaseUrl(extCore)}`;
+  if (info.version === null) {
+    return `Commonpost notice (please tell the user): the MCP bridge ${bridgePhrase(info)}; this Thunderbird add-on (version ${extCore}) recommends bridge ${thresholds.minBridge} or newer. ${tail}`;
+  }
+  return `Commonpost notice (please tell the user): the MCP bridge is version ${info.version}, older than ${thresholds.minBridge}, which this Thunderbird add-on (version ${extCore}) recommends. ${tail}`;
+}
+
+// The refusal of a tools/call from a bridge below the security floor (decision "refuse").
+function bridgeRefusalText(info, extCore, thresholds) {
+  return `Commonpost (please tell the user): ${bridgeAddOn(extCore)} refuses MCP bridges older than ${thresholds.floor} for security reasons, and this bridge ${bridgePhrase(info)}. Nothing was done: nothing was sent, saved or changed. ${bridgeAdvice(info)} Release page: ${bridgeReleaseUrl(extCore)}`;
+}
+
+// Option R: mode "send" or "draft" of replyToMessage / forwardMessage needs a bridge that waits for it (0.12.0 and
+// later). A bridge 0.11 waits 150 s only when skipReview is truthy, 30 s otherwise, then reports a failure while
+// Thunderbird may still send or save: refused here before anything acts. When the user's settings refuse the call
+// anyway (composeModeRefusal), the tool says so itself. `args` are the coerced arguments.
+function bridgeModeRefusal(toolName, args, info, extCore, thresholds, prefs) {
+  if (!BRIDGE_MODE_TOOLS.has(toolName) || !args || typeof args !== "object") return null;
+  const mode = resolveComposeMode(args.mode, args.skipReview);
+  if (mode !== "send" && mode !== "draft") return null;
+  if (args.skipReview) return null;
+  if (composeModeRefusal(mode, prefs)) return null;
+  if (info.version !== null && info.version !== "0.0.0" && compareVersionCores(info.version, thresholds.modeMin) >= 0) return null;
+  return `Commonpost (please tell the user): mode "${mode}" needs an MCP bridge of version ${thresholds.modeMin} or newer, and this bridge ${bridgePhrase(info)}: an older bridge stops waiting after 30 s and can report a failure while Thunderbird is still working, which can lead to a second message or draft. Nothing was sent or saved. Use mode "window" for now. ${bridgeAdvice(info)} Release page: ${bridgeReleaseUrl(extCore)}`;
+}
+
+// Same rule as isDirectSendCall in mcp-bridge.cjs, on the arguments as received: a call that may send directly
+// never gets a notice added to its result.
+function isRawDirectSend(toolName, rawArgs) {
+  if (!BRIDGE_DIRECT_SEND_TOOLS.has(toolName)) return false;
+  if (rawArgs === undefined || rawArgs === null) return false;
+  if (typeof rawArgs !== "object") return true; // cannot tell: the safe side
+  return Boolean(rawArgs.skipReview)
+    || (typeof rawArgs.mode === "string" && rawArgs.mode.trim().toLowerCase() === "send");
+}
+
+// The entry of this bridge in `seen` (a Map, most recent last, at most BRIDGES_SEEN_MAX entries). Parsed values only.
+function rememberBridge(seen, info, nowMs) {
+  const profileKey = info.profile ?? (info.profileInvalid ? "(invalid)" : "(none)");
+  const key = `${info.version ?? "(none)"}|${info.packaging}|${profileKey}`;
+  let entry = seen.get(key);
+  if (entry) {
+    seen.delete(key);
+  } else {
+    entry = {
+      version: info.version,
+      packaging: info.packaging,
+      profile: info.profile,
+      profileInvalid: info.profileInvalid,
+      firstSeenMs: nowMs,
+      lastSeenMs: nowMs,
+      armed: true,
+      lastNoticedMs: null,
+    };
+  }
+  entry.lastSeenMs = nowMs;
+  seen.set(key, entry);
+  while (seen.size > BRIDGES_SEEN_MAX) seen.delete(seen.keys().next().value);
+  return entry;
+}
+
+// A tools/list (a client starting a session) arms the notice again, at most once per cooldown.
+function armBridgeNotice(entry, nowMs) {
+  if (entry.lastNoticedMs === null || nowMs - entry.lastNoticedMs >= BRIDGE_NOTICE_COOLDOWN_MS) entry.armed = true;
+}
+
+function takeBridgeNotice(entry, nowMs) {
+  if (!entry.armed) return false;
+  entry.armed = false;
+  entry.lastNoticedMs = nowMs;
+  return true;
+}
+
+// Appends the notice as the last item of a tools/call result when one is due; returns it, or null.
+function appendBridgeNotice(result, toolName, rawArgs, info, entry, extCore, thresholds, nowMs) {
+  if (!result || !Array.isArray(result.content)) return null;
+  if (isRawDirectSend(toolName, rawArgs)) return null;
+  const text = bridgeNoticeText(info, extCore, thresholds);
+  if (!text || !takeBridgeNotice(entry, nowMs)) return null;
+  result.content.push({ type: "text", text });
+  return text;
+}
+
+// What the options page shows (getBridgeStatus). Plain JSON.
+function bridgeStatusView(seen, extCore, thresholds) {
+  const entries = seen ? [...seen.values()] : [];
+  entries.sort((a, b) => b.lastSeenMs - a.lastSeenMs);
+  return {
+    extensionVersion: extCore && extCore !== "0.0.0" ? extCore : null,
+    minBridgeVersion: thresholds.minBridge,
+    securityFloor: thresholds.floor,
+    bridges: entries.map((entry) => {
+      const state = bridgeState(entry, extCore, thresholds);
+      return {
+        version: entry.version,
+        packaging: entry.packaging,
+        profile: entry.profile,
+        profileInvalid: entry.profileInvalid,
+        state,
+        lastSeen: new Date(entry.lastSeenMs).toISOString(),
+        releaseUrl: bridgeReleaseUrl(state === "newer-than-add-on" ? entry.version : extCore),
+      };
+    }),
+  };
+}
+// END BRIDGE COMPAT
+
 // eslint-disable-next-line no-unused-vars -- read by Thunderbird: the Experiment API namespace "commonpostMcp" (schema.json)
 var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
   getAPI(context) {
@@ -13605,6 +13836,19 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
               const { id, method, params } = message;
 
+              // BEGIN BRIDGE HEADER READ
+              // After the token check: only a token holder changes what is remembered about bridges.
+              let rawBridgeHeader;
+              try {
+                rawBridgeHeader = req.getHeader("X-Commonpost-Bridge");
+              } catch {
+                // Missing (a bridge 0.11 or older, or another HTTP client): getHeader throws
+              }
+              const bridgeInfo = parseBridgeHeader(rawBridgeHeader);
+              const bridgeEntry = rememberBridge(globalThis.__cpMcpBridgesSeen ??= new Map(), bridgeInfo, Date.now());
+              const bridgeExtCore = versionCoreOf(getExtVersion());
+              // END BRIDGE HEADER READ
+
               // Streamable HTTP notifications are accepted without a JSON-RPC body.
               // BEGIN MCP NOTIFICATION HTTP RESPONSE
               if (typeof method === "string" && method.startsWith("notifications/")) {
@@ -13617,6 +13861,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               (async () => {
                 try {
                   let result;
+                  // A result refused because of the bridge carries no notice on top
+                  let bridgeNoticeBlocked = false;
                   switch (method) {
                     case "initialize": {
                       // Per MCP lifecycle: respond with the requested version if
@@ -13653,6 +13899,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       result = { prompts: [] };
                       break;
                     case "tools/list":
+                      armBridgeNotice(bridgeEntry, Date.now());
                       result = { tools: buildTools().filter(t => isToolEnabled(t.name)).map(toolListEntry) };
                       break;
                     case "tools/call": {
@@ -13664,6 +13911,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       if (!buildTools().some(t => t.name === params.name)) {
                         throw Object.assign(new Error(`Unknown tool: ${params.name}`), { rpcCode: -32602 });
                       }
+                      if (bridgeCompatDecision(bridgeInfo, bridgeExtCore, BRIDGE_THRESHOLDS) === "refuse") {
+                        // Before anything acts: nothing is sent, saved or changed
+                        result = toolCallError(bridgeRefusalText(bridgeInfo, bridgeExtCore, BRIDGE_THRESHOLDS));
+                        bridgeNoticeBlocked = true;
+                        break;
+                      }
                       if (!isToolEnabled(params.name)) {
                         // Stated, not suggested: text that invites the assistant to ask
                         // the user to turn a tool back on would work against the setting.
@@ -13674,6 +13927,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       const validationErrors = validateToolArgs(params.name, toolArgs);
                       if (validationErrors.length > 0) {
                         result = toolCallError(`Invalid parameters for '${params.name}': ${validationErrors.join("; ")}`);
+                        break;
+                      }
+                      const bridgeModeError = bridgeModeRefusal(params.name, toolArgs, bridgeInfo, bridgeExtCore, BRIDGE_THRESHOLDS,
+                        { skipReviewBlocked: isSkipReviewBlocked(), saveDraftEnabled: isToolEnabled("saveDraft") });
+                      if (bridgeModeError) {
+                        result = toolCallError(bridgeModeError);
+                        bridgeNoticeBlocked = true;
                         break;
                       }
                       try {
@@ -13700,6 +13960,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       }));
                       res.finish();
                       return;
+                  }
+                  if (method === "tools/call" && !bridgeNoticeBlocked) {
+                    const bridgeNotice = appendBridgeNotice(result, params.name, params.arguments, bridgeInfo, bridgeEntry,
+                      bridgeExtCore, BRIDGE_THRESHOLDS, Date.now());
+                    if (bridgeNotice) console.warn("commonpost-mcp: " + bridgeNotice);
                   }
                   res.setStatusLine("1.1", 200, "OK");
                   // charset=utf-8 is critical for proper emoji handling in responses
@@ -13856,6 +14121,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             startErrorAt: runState.startErrorAt,
             originalExtensionActive,
           };
+        },
+
+        getBridgeStatus: async function() {
+          return bridgeStatusView(globalThis.__cpMcpBridgesSeen, versionCoreOf(getExtVersion()), BRIDGE_THRESHOLDS);
         },
 
         getCurrentAuthToken: async function() {
@@ -14196,6 +14465,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
     // Clear the start promise so a fresh start can occur on reload
     globalThis.__cpMcpStartPromise = null;
     globalThis.__cpMcpStartError = null;
+    globalThis.__cpMcpBridgesSeen = null;
 
     // Always clean up the connection info file so stale tokens don't linger
     // (Inlined because getAPI() helpers are not in scope in onShutdown().)
