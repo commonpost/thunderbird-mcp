@@ -365,3 +365,67 @@ describe('compose body layout (ConvertAndLoadComposeWindow)', () => {
     assert.equal(api.wrapHtmlDocument('x'), '<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body>x</body></html>');
   });
 });
+
+// The quote is a message anyone can write. The three functions that read its tags scan forward only; the regular
+// expressions they replace (kept here as the reference) read to the end of the text once per unterminated tag.
+describe('tags of a quote: same result as the regular expressions, in linear time', () => {
+  const reference = {
+    stripDocumentTags: html => html.replace(/<!DOCTYPE[^>]*>|<\/?(?:html|head|body)\b[^>]*>/gi, ''),
+    serializerMetaCharset: html => html.replace(/<meta\b(?=[^>]*\bhttp-equiv\s*=\s*["']?content-type\b)[^>]*>/gi,
+      '<meta http-equiv="content-type" content="text/html; charset=UTF-8">'),
+    tagEmbeddedObjects: (html, isSafe) => html.replace(/<(a|img)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag, name) => {
+      const attr = name.toLowerCase() === 'img' ? 'src' : 'href';
+      const m = tag.match(new RegExp(`\\s${attr}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'));
+      const url = m ? (m[1] ?? m[2] ?? m[3]).replace(/&amp;/g, '&') : '';
+      if (url && isSafe(url)) return tag;
+      const rest = tag.replace(/\smoz-do-not-send\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)|\smoz-do-not-send(?=[\s>/])/gi, '');
+      return rest.replace(/\s*(\/?)>$/, ' moz-do-not-send="true"$1>');
+    }),
+  };
+  const safe = url => url.startsWith('cid:');
+
+  it('gives what the regular expression gives on random tag soup', () => {
+    const atoms = ['<', '>', '"', "'", '/', ' ', '\n', '\t', '=', 'a', 'img', 'IMG', 'A', 'abbr', 'x', 'src', 'href', 'http://x/y', 'cid:1', '&amp;',
+      'moz-do-not-send', 'true', 'meta', 'META', 'http-equiv', 'content-type', 'Content-Type', '!DOCTYPE', '!doctype', 'html', 'head', 'body', 'BODY',
+      ' ', '<a ', '<img ', '<meta ', '<body ', '</body>', '<a href="', '">', "<img src='", "'>", ' />', '/>'];
+    let seed = 20261001;
+    const next = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    for (let round = 0; round < 20000; round++) {
+      let html = '';
+      for (let k = 1 + next(round % 2 ? 14 : 40); k > 0; k--) html += atoms[next(atoms.length)];
+      assert.equal(api.stripDocumentTags(html), reference.stripDocumentTags(html), JSON.stringify(html));
+      assert.equal(api.serializerMetaCharset(html), reference.serializerMetaCharset(html), JSON.stringify(html));
+      assert.equal(api.tagEmbeddedObjects(html, safe), reference.tagEmbeddedObjects(html, safe), JSON.stringify(html));
+    }
+  });
+
+  it('skips a tag without end and still tags the next one', () => {
+    assert.equal(api.tagEmbeddedObjects('<a title="x <img src="https://x.test/i.png">', () => false),
+      '<a title="x <img src="https://x.test/i.png" moz-do-not-send="true">');
+    assert.equal(api.tagEmbeddedObjects('<img alt=\'x <a href=y>', () => false), '<img alt=\'x <a href=y moz-do-not-send="true">');
+    assert.equal(api.tagEmbeddedObjects('<a <a <a "', () => false), '<a <a <a "');
+    assert.equal(api.tagEmbeddedObjects('<img   \n x  />', () => false), '<img   \n x moz-do-not-send="true"/>');
+  });
+
+  it('reads a large quote made of unterminated tags in a moment, where the regular expressions took minutes', () => {
+    const n = 200000;
+    const hostile = [
+      () => api.tagEmbeddedObjects('<a '.repeat(n), safe),
+      () => api.tagEmbeddedObjects(`${'<img '.repeat(n)}"`, safe),
+      () => api.tagEmbeddedObjects('<a "'.repeat(n), safe),
+      () => api.tagEmbeddedObjects('<a \'<img "'.repeat(n), safe),
+      () => api.tagEmbeddedObjects(`<img${' '.repeat(n)}x>`, safe),
+      () => api.stripDocumentTags('<!DOCTYPE '.repeat(n)),
+      () => api.stripDocumentTags('<body '.repeat(n)),
+      () => api.serializerMetaCharset('<meta '.repeat(n)),
+      () => api.serializerMetaCharset('<meta http-equiv=content-type '.repeat(n)),
+      () => api.serializerMetaCharset(`${'<meta http-equiv '.repeat(n)}>`),
+    ];
+    for (const [index, run] of hostile.entries()) {
+      const started = process.hrtime.bigint();
+      run();
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      assert.ok(ms < 3000, `case ${index} took ${Math.round(ms)} ms`);
+    }
+  });
+});

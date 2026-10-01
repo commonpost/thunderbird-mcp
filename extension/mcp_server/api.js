@@ -4463,9 +4463,25 @@ function removePlaintextTag(html) {
   return /<plaintext/i.test(html) ? html.replace(/<(\/?)plaintext/gi, "<$1x-plaintext") : html;
 }
 
+// The three functions below read the quote of a message, which anyone can write. They look for the start of a tag
+// with a regular expression and for its end with a scan that goes forward only: a pattern such as /<body\b[^>]*>/g
+// reads to the end of the text once per tag that has no ">", which takes minutes on a large message made of them.
+
 // Content of an HTML document without its html / head / body tags, as the editor inserts a quoted document.
 function stripDocumentTags(html) {
-  return String(html || "").replace(/<!DOCTYPE[^>]*>|<\/?(?:html|head|body)\b[^>]*>/gi, "");
+  const text = String(html || "");
+  const open = /<!DOCTYPE|<\/?(?:html|head|body)\b/gi;
+  let out = "";
+  let from = 0;
+  let m;
+  while ((m = open.exec(text))) {
+    const end = text.indexOf(">", open.lastIndex);
+    // No ">" after this tag: none after the next ones either
+    if (end < 0) break;
+    out += text.slice(from, m.index);
+    from = open.lastIndex = end + 1;
+  }
+  return out + text.slice(from);
 }
 
 /**
@@ -4541,14 +4557,59 @@ function removeQueryPart(spec) {
  * window does not attach remote content on send.
  */
 function tagEmbeddedObjects(html, isSafe) {
-  return String(html || "").replace(/<(a|img)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag, name) => {
-    const attr = name.toLowerCase() === "img" ? "src" : "href";
-    const m = tag.match(new RegExp(`\\s${attr}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
-    const url = m ? (m[1] ?? m[2] ?? m[3]).replace(/&amp;/g, "&") : "";
-    if (url && isSafe(url)) return tag;
-    const rest = tag.replace(/\smoz-do-not-send\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)|\smoz-do-not-send(?=[\s>/])/gi, "");
-    return rest.replace(/\s*(\/?)>$/, ' moz-do-not-send="true"$1>');
-  });
+  const text = String(html || "");
+  const open = /<(a|img)\b/gi;
+  const dead = new Uint8Array(text.length);
+  let out = "";
+  let from = 0;
+  let m;
+  while ((m = open.exec(text))) {
+    const end = quotedTagEnd(text, open.lastIndex, dead);
+    // Not a tag: the next "<a" or "<img" is tried, as a regular expression would
+    if (end < 0) continue;
+    out += text.slice(from, m.index) + tagEmbeddedObject(text.slice(m.index, end), m[1], isSafe);
+    from = open.lastIndex = end;
+  }
+  return out + text.slice(from);
+}
+
+/**
+ * Index after the ">" that ends the tag whose attributes start at `from`, or -1; a ">" inside a quoted value does
+ * not end it ((?:[^>"']|"[^"]*"|'[^']*')*> as a regular expression). `dead` (one byte per character, shared by the
+ * calls on one text) marks the places outside quotes from which no ">" is reached: a later tag that comes to one of
+ * them stops there, so the text is read a bounded number of times however many unterminated tags it has.
+ */
+function quotedTagEnd(text, from, dead) {
+  const spans = [];
+  let i = from;
+  for (;;) {
+    let j = i;
+    let c = 0;
+    while (j < text.length && !dead[j] && (c = text.charCodeAt(j)) !== 62 && c !== 34 && c !== 39) j++;
+    spans.push(i, j);
+    if (j >= text.length || dead[j]) break;
+    if (c === 62) return j + 1;
+    const close = text.indexOf(text[j], j + 1);
+    if (close < 0) break;
+    i = close + 1;
+  }
+  for (let k = 0; k < spans.length; k += 2) dead.fill(1, spans[k], spans[k + 1] + 1);
+  return -1;
+}
+
+// One <a ...> or <img ...> tag with moz-do-not-send="true", unless its URL is safe.
+function tagEmbeddedObject(tag, name, isSafe) {
+  const attr = name.toLowerCase() === "img" ? "src" : "href";
+  const m = tag.match(new RegExp(`\\s${attr}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+  const url = m ? (m[1] ?? m[2] ?? m[3]).replace(/&amp;/g, "&") : "";
+  if (url && isSafe(url)) return tag;
+  const rest = tag.replace(/\smoz-do-not-send\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)|\smoz-do-not-send(?=[\s>/])/gi, "");
+  // The attribute goes before the closing ">" or "/>", in place of the white space before it. A loop from the end:
+  // /\s*(\/?)>$/ retries on every space of a long run of spaces that is not at the end of the tag
+  const selfClosing = rest.endsWith("/>");
+  let end = rest.length - (selfClosing ? 2 : 1);
+  while (end > 0 && /\s/.test(rest[end - 1])) end--;
+  return `${rest.slice(0, end)} moz-do-not-send="true"${selfClosing ? "/" : ""}>`;
 }
 
 // Text the user adds, as typed at the caret: a paragraph in paragraph mode, HTML as given.
@@ -4562,7 +4623,20 @@ function userBodyHtml(body, isHtml, paragraphMode) {
 
 // The serializer of a saved compose document writes the document charset into every content-type meta.
 function serializerMetaCharset(html) {
-  return String(html || "").replace(/<meta\b(?=[^>]*\bhttp-equiv\s*=\s*["']?content-type\b)[^>]*>/gi, '<meta http-equiv="content-type" content="text/html; charset=UTF-8">');
+  const text = String(html || "");
+  const open = /<meta\b/gi;
+  let out = "";
+  let from = 0;
+  let m;
+  while ((m = open.exec(text))) {
+    const end = text.indexOf(">", open.lastIndex);
+    if (end < 0) break;
+    open.lastIndex = end + 1;
+    if (!/\bhttp-equiv\s*=\s*["']?content-type\b/i.test(text.slice(m.index, end))) continue;
+    out += `${text.slice(from, m.index)}<meta http-equiv="content-type" content="text/html; charset=UTF-8">`;
+    from = end + 1;
+  }
+  return out + text.slice(from);
 }
 
 function wrapHtmlDocument(inner) {
