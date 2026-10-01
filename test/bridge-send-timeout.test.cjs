@@ -107,14 +107,22 @@ describe('draft timeout selection', () => {
     assert.deepEqual(requestOptionsFor(message), { timeoutMs: 150000, directSend: true });
   });
 
+  it('waits 150 s for saveDraft, whatever its arguments: Thunderbird can take 120 s to save it', () => {
+    for (const args of [{}, undefined, { to: 'a@example.com', subject: 's', body: 'b' }, { mode: 'window' }, { skipReview: true }]) {
+      const message = call('saveDraft', args);
+      assert.equal(isDirectSendCall(message), false, JSON.stringify(args));
+      assert.deepEqual(requestOptionsFor(message), { timeoutMs: 150000, directSend: false, draft: true }, JSON.stringify(args));
+    }
+  });
+
   it('keeps 30 s for the other tools and modes', () => {
     const plain = { timeoutMs: 30000, directSend: false };
     for (const message of [
       call('replyToMessage', { mode: 'window' }),
       call('replyToMessage', {}),
       call('sendMail', { mode: 'draft' }),
-      call('saveDraft', { mode: 'draft' }),
       call('searchMessages', { mode: 'draft' }),
+      { jsonrpc: '2.0', id: 2, method: 'tools/list', params: { name: 'saveDraft' } },
     ]) {
       assert.deepEqual(requestOptionsFor(message), plain, JSON.stringify(message));
     }
@@ -122,9 +130,11 @@ describe('draft timeout selection', () => {
 
   it('says in the failure response that the draft may still appear, once', () => {
     const error = new Error('Request to Thunderbird timed out after 150 s while saving a draft. The draft may still appear in the Drafts folder later: check it before retrying, otherwise a second draft may be created.');
-    const text = JSON.parse(forwardFailureResponse(call('replyToMessage', { mode: 'draft' }), error).result.content[0].text).error;
-    assert.equal(text, error.message);
-    assert.ok(!/may still complete/.test(text));
+    for (const message of [call('replyToMessage', { mode: 'draft' }), call('saveDraft', { subject: 's' })]) {
+      const text = JSON.parse(forwardFailureResponse(message, error).result.content[0].text).error;
+      assert.equal(text, error.message);
+      assert.ok(!/may still complete/.test(text));
+    }
   });
 });
 

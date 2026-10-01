@@ -4,6 +4,15 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Fixed
+
+- `mcp-bridge.cjs`: a `saveDraft` call waits up to 150 s for Thunderbird, like `replyToMessage` and `forwardMessage`
+  with `mode: "draft"`, instead of 30 s. Thunderbird can take up to 120 s to save a draft, so the bridge used to
+  report a timeout for a draft that was still being saved, and a client that retried would create two. After that
+  wait the error says the draft may still appear in the Drafts folder later.
+
 ## [0.12.0] - 2026-10-01
 
 ### Breaking
