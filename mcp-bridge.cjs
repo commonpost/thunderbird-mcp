@@ -1688,6 +1688,7 @@ function tryRequest(hostname, postData, port, token, options = requestOptionsFor
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
+    headers['X-Commonpost-Bridge'] = BRIDGE_HEADER;
     const req = http.request({
       hostname,
       port,
@@ -1830,6 +1831,20 @@ function versionCore(version) {
   const match = VERSION_CORE_PATTERN.exec(version);
   return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
 }
+
+// Sent on every request to the add-on, in X-Commonpost-Bridge: "<X.Y.Z>; packaging=<mcpb|file>[; profile=<name>]".
+// packaging is "mcpb" only when the .mcpb manifest sets COMMONPOST_MCP_PACKAGING=mcpb; profile is reserved for
+// per-client tool sets (the add-on only shows it for now) and sent only when valid; its value is never logged.
+const BRIDGE_PROFILE_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const PACKAGING = process.env.COMMONPOST_MCP_PACKAGING === 'mcpb' ? 'mcpb' : 'file';
+const PROFILE = (() => {
+  const value = process.env.COMMONPOST_MCP_PROFILE;
+  if (value === undefined || value === '') return null;
+  if (BRIDGE_PROFILE_PATTERN.test(value)) return value;
+  debugLog('COMMONPOST_MCP_PROFILE ignored: 1 to 32 characters among a-z, 0-9 and -, not starting with -');
+  return null;
+})();
+const BRIDGE_HEADER = `${versionCore(BRIDGE_VERSION) ?? '0.0.0'}; packaging=${PACKAGING}` + (PROFILE ? `; profile=${PROFILE}` : '');
 
 // The connection (port, token, pid) that last answered a request.
 let lastServed = null;
@@ -2136,6 +2151,7 @@ module.exports = {
   readAttachmentFromPath,
   validateAttachmentStat,
   versionCore,
+  BRIDGE_HEADER,
   isDirectSendCall,
   isDraftCall,
   isSensitiveFilePath,
