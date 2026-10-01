@@ -28,6 +28,8 @@ project is kept in this repository.
   signature, a plain body went out labeled `format=flowed` without being flowed, and an HTML body (`isHtml: true`)
   had every non-ASCII character written as a `&#...;` reference, which made a Cyrillic body several times larger. A
   forward draft's body is still quoted by the tool. By @mazixs in #28.
+  While encrypted content is not allowed, Thunderbird's own quote, which decrypts, is taken only for a message that
+  was read and holds no encrypted part: a reply to a message that could not be read in time quotes nothing, as before.
 
 ### Fixed
 
