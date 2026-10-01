@@ -721,3 +721,97 @@ retryStartBtn.addEventListener("click", async () => {
   // The session token and connection file change on a successful start.
   loadAuthenticationConfig().catch(e => console.error("commonpost-mcp options:", "loadAuthenticationConfig failed:", e));
 });
+
+// --- Bridge (the MCP bridges that connected since Thunderbird started) ---
+const bridgeThresholds = document.getElementById("bridgeThresholds");
+const bridgeEmpty = document.getElementById("bridgeEmpty");
+const bridgeList = document.getElementById("bridgeList");
+const bridgeRefreshBtn = document.getElementById("bridgeRefreshBtn");
+const bridgeRefreshStatus = document.getElementById("bridgeRefreshStatus");
+
+// Checked again here: only a release page of this repository is ever linked.
+const BRIDGE_RELEASE_URL_PATTERN = /^https:\/\/github\.com\/commonpost\/thunderbird-mcp\/releases\/(tag\/v\d{1,6}\.\d{1,6}\.\d{1,6}|latest)$/;
+const BRIDGE_PACKAGING_LABELS = {
+  mcpb: ".mcpb bundle (Claude Desktop)",
+  file: "mcp-bridge.cjs file",
+};
+const BRIDGE_STATE_LABELS = {
+  "up-to-date": "Up to date.",
+  "update-recommended": "Update recommended.",
+  "unversioned": "Update recommended: this bridge does not report a readable version.",
+  "development": "Development build: not checked.",
+  "refused": "Refused: older than the security floor of this add-on (no tool works with it).",
+  "newer-than-add-on": "Newer than this add-on: in Add-ons and Themes, choose Check for Updates in the gear menu, then restart Thunderbird.",
+};
+const BRIDGE_ADVICE_LABELS = {
+  mcpb: "Download the .mcpb bundle from the release page and open it with Claude Desktop to install it again.",
+  other: "Download mcp-bridge.cjs from the release page, replace your copy, then restart your MCP client.",
+};
+
+function bridgeVersionLabel(bridge) {
+  if (bridge.version === null) {
+    return bridge.packaging === "none" ? "not reported (bridge 0.11 or older, or another HTTP client)" : "unreadable";
+  }
+  return bridge.version === "0.0.0" ? "development build (0.0.0)" : bridge.version;
+}
+
+function bridgeLine(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div;
+}
+
+function renderBridge(bridge) {
+  const li = document.createElement("li");
+  li.appendChild(bridgeLine("Version: " + bridgeVersionLabel(bridge)));
+  li.appendChild(bridgeLine("Installed as: " + (BRIDGE_PACKAGING_LABELS[bridge.packaging] || "unknown")));
+  if (bridge.profile) {
+    li.appendChild(bridgeLine("Profile: " + bridge.profile));
+  } else if (bridge.profileInvalid) {
+    li.appendChild(bridgeLine("Profile: invalid (ignored)"));
+  }
+  li.appendChild(bridgeLine("Last seen: " + new Date(bridge.lastSeen).toLocaleString()));
+  li.appendChild(bridgeLine("Status: " + (BRIDGE_STATE_LABELS[bridge.state] || bridge.state)));
+  const needsUpdate = ["update-recommended", "unversioned", "refused"].includes(bridge.state);
+  if (needsUpdate) {
+    li.appendChild(bridgeLine(bridge.packaging === "mcpb" ? BRIDGE_ADVICE_LABELS.mcpb : BRIDGE_ADVICE_LABELS.other));
+  }
+  if ((needsUpdate || bridge.state === "newer-than-add-on") && BRIDGE_RELEASE_URL_PATTERN.test(bridge.releaseUrl)) {
+    const line = bridgeLine("Release page: ");
+    const link = document.createElement("a");
+    link.href = bridge.releaseUrl;
+    link.textContent = bridge.releaseUrl;
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      browser.windows.openDefaultBrowser(bridge.releaseUrl).catch((e) => console.error("commonpost-mcp options:", "openDefaultBrowser failed:", e));
+    });
+    line.appendChild(link);
+    li.appendChild(line);
+  }
+  return li;
+}
+
+async function loadBridgeStatus() {
+  try {
+    const status = await browser.commonpostMcp.getBridgeStatus();
+    let text = status.extensionVersion
+      ? `This add-on (version ${status.extensionVersion}) recommends bridge ${status.minBridgeVersion} or newer.`
+      : `This add-on recommends bridge ${status.minBridgeVersion} or newer.`;
+    if (status.securityFloor !== "0.0.0") {
+      text += ` It refuses bridges older than ${status.securityFloor}.`;
+    }
+    bridgeThresholds.textContent = text;
+    bridgeList.replaceChildren(...status.bridges.map(renderBridge));
+    bridgeEmpty.hidden = status.bridges.length > 0;
+    bridgeRefreshStatus.textContent = "";
+    bridgeRefreshStatus.className = "save-status";
+  } catch (e) {
+    bridgeRefreshStatus.textContent = "Error: " + e.message;
+    bridgeRefreshStatus.className = "save-status error";
+  }
+}
+
+bridgeRefreshBtn.addEventListener("click", () => {
+  loadBridgeStatus().catch(e => console.error("commonpost-mcp options:", "loadBridgeStatus failed:", e));
+});
+loadBridgeStatus().catch(e => console.error("commonpost-mcp options:", "loadBridgeStatus failed:", e));
