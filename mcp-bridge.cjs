@@ -1604,7 +1604,7 @@ function toolErrorResponse(id, message) {
 }
 
 // The mode the caller asked for, for classification only: trimmed and lower-cased. The value sent to the extension
-// is never changed (it rejects "SEND" through its enum). Sorting a call as a send on a spelling the extension would
+// is never changed (its argument coercion normalizes it itself). Sorting a call as a send on a spelling the extension would
 // refuse costs nothing, while missing a send costs the long wait, the silence about versions and the "outcome
 // unknown" error, so the classification errs on the side of a send.
 function requestedMode(message) {
@@ -1816,9 +1816,11 @@ function compactToolResultJsonText(response) {
   return { ...response, result: { ...response.result, content: compactedContent } };
 }
 
-// Bridge and add-on come from the same release but are installed separately, and
-// only the add-on updates itself. The version only ever feeds the notice below:
-// nothing else in the bridge depends on it.
+// Bridge and add-on are installed separately, and only the add-on updates itself. The versions only feed the
+// X-Commonpost-Bridge header and the notice below: nothing else in the bridge depends on them.
+// The oldest add-on that acts on everything this bridge sends (RELEASING.md, "Compatibility thresholds"). Older
+// add-ons get one notice per connection. Never above BRIDGE_VERSION (scripts/check-versions.cjs).
+const MIN_EXTENSION_VERSION = '0.12.0';
 const VERSION_PROBE_TIMEOUT_MS = 1500;
 const VERSION_PROBE_MAX_BYTES = 64 * 1024;
 const VERSION_CORE_PATTERN = /^(\d{1,6})\.(\d{1,6})\.(\d{1,6})(?:$|[-+.])/;
@@ -1918,16 +1920,14 @@ async function versionNotice() {
   const extCore = await state.probe;
   const bridgeCore = versionCore(BRIDGE_VERSION);
   if (state.notified || !extCore || !bridgeCore || extCore === '0.0.0' || bridgeCore === '0.0.0'
-      || extCore === bridgeCore) {
+      || compareCores(extCore, MIN_EXTENSION_VERSION) >= 0) {
     return null;
   }
   state.notified = true;
-  const advice = compareCores(bridgeCore, extCore) < 0
-    ? 'replace mcp-bridge.cjs with the one of the add-on release'
-    : 'check for add-on updates in Thunderbird, then restart it';
-  const text = `Commonpost notice: this MCP bridge is version ${bridgeCore} but the Thunderbird add-on is version ${extCore}. ` +
-    `Use both from the same release (${advice}); the bridge is not updated automatically and some protections live in it. ` +
-    'Please tell the user.';
+  const text = `Commonpost notice (please tell the user): the Thunderbird add-on is version ${extCore}, older than ` +
+    `${MIN_EXTENSION_VERSION}, which this MCP bridge (version ${bridgeCore}) needs. In Thunderbird, open Add-ons and ` +
+    'Themes, choose Check for Updates in the gear menu, then restart Thunderbird (or install the add-on from the ' +
+    `release page below). Release page: https://github.com/commonpost/thunderbird-mcp/releases/tag/v${bridgeCore}`;
   process.stderr.write('[commonpost-mcp] ' + text + '\n');
   return text;
 }
@@ -2152,6 +2152,7 @@ module.exports = {
   validateAttachmentStat,
   versionCore,
   BRIDGE_HEADER,
+  MIN_EXTENSION_VERSION,
   isDirectSendCall,
   isDraftCall,
   isSensitiveFilePath,
