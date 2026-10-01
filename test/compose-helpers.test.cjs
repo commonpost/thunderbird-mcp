@@ -474,3 +474,60 @@ describe('tags of a quote: same result as the regular expressions, in linear tim
     }
   });
 });
+
+// The body of a plain forward is the original message, of any size. joinFlowedLines used to cut each line break out
+// of the whole text (the C++ loop ported as it is, kept here as the reference): the time grew with the square of
+// the number of lines.
+describe('joinFlowedLines: same result as the loop of nsMsgCompose.cpp, in linear time', () => {
+  function reference(body) {
+    let out = String(body || '');
+    let quote = false;
+    for (let i = 0; i < out.length; i++) {
+      if (i === 0 || out[i - 1] === '\n') {
+        if (out[i] === '>') {
+          quote = true;
+          continue;
+        }
+        const s = out.substr(i, 10);
+        if (s.startsWith('-- \r') || s.startsWith('-- \n')) {
+          i += 4;
+          continue;
+        }
+        if (s.startsWith('- -- \r') || s.startsWith('- -- \n')) {
+          i += 6;
+          continue;
+        }
+      }
+      if (out[i] === '\n' && i > 1) {
+        if (quote) {
+          quote = false;
+          continue;
+        }
+        let j = i - 1;
+        if (out[j] === '\r') j--;
+        if (out[j] === ' ') out = out.slice(0, j + 1) + out.slice(i + 1);
+      }
+    }
+    return out;
+  }
+
+  it('gives what the loop gives on random text', () => {
+    const atoms = [' ', ' ', '\n', '\n', '\r\n', '\r', '>', '-', '-- ', '- -- ', 'x', 'yz', '> q ', 'é', '😀'];
+    let seed = 20261001;
+    const next = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    for (let round = 0; round < 30000; round++) {
+      let text = '';
+      for (let k = 1 + next(round % 3 ? 10 : 30); k > 0; k--) text += atoms[next(atoms.length)];
+      assert.equal(api.joinFlowedLines(text), reference(text), JSON.stringify(text));
+    }
+  });
+
+  it('joins 400,000 lines in a moment', () => {
+    for (const text of ['x \n'.repeat(400000), `${'y'.repeat(70)} \r\n`.repeat(40000)]) {
+      const started = process.hrtime.bigint();
+      api.joinFlowedLines(text);
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      assert.ok(ms < 3000, `took ${Math.round(ms)} ms`);
+    }
+  });
+});
