@@ -202,9 +202,14 @@ describe('protocolVersion negotiation', () => {
 
   describe('bridge version', () => {
     const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf8'));
-    const manifest = JSON.parse(
-      fs.readFileSync(path.resolve(__dirname, '..', 'extension', 'manifest.json'), 'utf8')
-    );
+    const bridgeVersion = /^const BRIDGE_VERSION = '([^']*)';$/m.exec(fs.readFileSync(BRIDGE_PATH, 'utf8'))[1];
+    const mcpbManifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'mcpb', 'manifest.json'), 'utf8'));
+    const notNewer = (a, b) => {
+      const x = a.split('.').map(Number);
+      const y = b.split('.').map(Number);
+      const i = [0, 1, 2].find((k) => x[k] !== y[k]);
+      return i === undefined || x[i] < y[i];
+    };
     const tmpDirs = [];
 
     function copyBridgeToTempDir() {
@@ -221,23 +226,24 @@ describe('protocolVersion negotiation', () => {
       }
     });
 
-    it('announces the version of package.json and of the manifest', async () => {
+    it('announces BRIDGE_VERSION, the version of the .mcpb manifest, never newer than package.json', async () => {
       const response = await sendInitialize('2024-11-05');
-      assert.equal(response.result.serverInfo.version, pkg.version);
-      assert.equal(response.result.serverInfo.version, manifest.version);
+      assert.equal(response.result.serverInfo.version, bridgeVersion);
+      assert.equal(response.result.serverInfo.version, mcpbManifest.version);
+      assert.ok(notNewer(bridgeVersion, pkg.version), `${bridgeVersion} > ${pkg.version}`);
     });
 
     it('announces the same version when the bridge is copied alone, as in a release', async () => {
       const { copy } = copyBridgeToTempDir();
       const response = await sendInitialize('2024-11-05', copy);
-      assert.equal(response.result.serverInfo.version, pkg.version);
+      assert.equal(response.result.serverInfo.version, bridgeVersion);
     });
 
     it('ignores a package.json of another project next to the bridge', async () => {
       const { dir, copy } = copyBridgeToTempDir();
       fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'other', version: '3.1.4' }));
       const response = await sendInitialize('2024-11-05', copy);
-      assert.equal(response.result.serverInfo.version, pkg.version);
+      assert.equal(response.result.serverInfo.version, bridgeVersion);
     });
   });
 

@@ -4,7 +4,7 @@
   "display_name": "Commonpost MCP for Thunderbird",
   "version": "0.11.0",
   "description": "Thunderbird email, contacts, calendars and filters for Claude, through the Commonpost MCP add-on.",
-  "long_description": "Contains only the stdio bridge. Requires the Commonpost MCP add-on of the SAME version, enabled in Thunderbird 140+; the bridge talks to it on 127.0.0.1 only.",
+  "long_description": "Contains only the stdio bridge. Requires the Commonpost MCP add-on of the same release or newer, enabled in Thunderbird 140+; the bridge talks to it on 127.0.0.1 only. Claude Desktop does not update a bundle installed from a file: the add-on tells you when to install a new one.",
   "author": {
     "name": "Commonpost contributors",
     "url": "https://github.com/commonpost"
@@ -15,8 +15,8 @@
     "type": "git",
     "url": "https://github.com/commonpost/thunderbird-mcp"
   },
-  "homepage": "https://github.com/commonpost/thunderbird-mcp",
-  "documentation": "https://github.com/commonpost/thunderbird-mcp#readme",
+  "homepage": "https://github.com/commonpost/thunderbird-mcp/releases/latest",
+  "documentation": "https://github.com/commonpost/thunderbird-mcp#claude-desktop-one-click-bundle",
   "support": "https://github.com/commonpost/thunderbird-mcp/issues",
   "keywords": ["thunderbird", "email", "calendar", "contacts", "mcp"],
   "tools_generated": true,
@@ -25,7 +25,10 @@
     "entry_point": "mcp-bridge.cjs",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/mcp-bridge.cjs"]
+      "args": ["${__dirname}/mcp-bridge.cjs"],
+      "env": {
+        "COMMONPOST_MCP_PACKAGING": "mcpb"
+      }
     }
   },
   "compatibility": {

@@ -12,7 +12,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 const BRIDGE = path.resolve(__dirname, '..', 'mcp-bridge.cjs');
-const VERSION = require('../package.json').version;
+const VERSION = /^const BRIDGE_VERSION = '([^']*)';$/m.exec(fs.readFileSync(BRIDGE, 'utf8'))[1];
 const INIT = JSON.stringify({
   jsonrpc: '2.0',
   id: 0,

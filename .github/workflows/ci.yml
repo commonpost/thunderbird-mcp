@@ -57,17 +57,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The previous release tag is the reference of the bridge version rule.
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22.x'
-      - name: Assert package.json, manifests and bridge versions match
-        run: |
-          PKG="$(node -p "require('./package.json').version")"
-          MAN="$(node -p "require('./extension/manifest.json').version")"
-          MCPB="$(node -p "require('./mcpb/manifest.json').version")"
-          BRG="$(sed -n "s/^const BRIDGE_VERSION = '\(.*\)';.*/\1/p" mcp-bridge.cjs)"
-          if [ "$PKG" != "$MAN" ] || [ "$PKG" != "$MCPB" ] || [ "$PKG" != "$BRG" ]; then
-            echo "::error::package.json version ($PKG), extension/manifest.json version ($MAN), mcpb/manifest.json version ($MCPB) and BRIDGE_VERSION in mcp-bridge.cjs ($BRG) must stay in lockstep."
-            exit 1
-          fi
-          echo "Versions in sync: $PKG"
+      - name: Check the product, add-on and bridge versions
+        run: node scripts/check-versions.cjs

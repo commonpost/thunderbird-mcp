@@ -7,7 +7,7 @@
  *       (used where there is no .git, e.g. an offline sandbox copy)
  *   --print-only                                          # print the hash, write nothing
  *
- * Output: dist/commonpost-mcp-v<version>.mcpb and .sha256 (COMMONPOST_OUT_DIR overrides dist/)
+ * Output: dist/commonpost-mcp-v<BRIDGE_VERSION>.mcpb and .sha256 (COMMONPOST_OUT_DIR overrides dist/)
  *
  * The bundle holds the stdio bridge only (no dependency, no add-on): manifest.json (from mcpb/manifest.json),
  * mcp-bridge.cjs, LICENSE, THIRD-PARTY.md and icon.png (extension/icons/icon-128.png). Like the XPI it is a
@@ -23,17 +23,10 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const { buildZip } = require('./zip-stored.cjs');
 
+const { INPUTS, ENTRY_POINT } = require('./mcpb-inputs.cjs');
+
 const ROOT = path.resolve(__dirname, '..');
 const OUT_DIR = path.join(ROOT, 'dist');
-// [path in the repository, name in the archive]
-const INPUTS = [
-  ['mcpb/manifest.json', 'manifest.json'],
-  ['mcp-bridge.cjs', 'mcp-bridge.cjs'],
-  ['LICENSE', 'LICENSE'],
-  ['THIRD-PARTY.md', 'THIRD-PARTY.md'],
-  ['extension/icons/icon-128.png', 'icon.png'],
-];
-const ENTRY_POINT = 'mcp-bridge.cjs';
 
 function die(msg) {
   console.error(`build-mcpb-reproducible: ${msg}`);
@@ -70,8 +63,17 @@ const bridgeMatch = /^const BRIDGE_VERSION = '([^']*)';/m.exec(byName.get('mcp-b
 const bridgeVersion = bridgeMatch ? bridgeMatch[1] : undefined;
 if (manifest.manifest_version !== '0.3') die(`manifest_version ${manifest.manifest_version}, expected 0.3`);
 if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) die(`manifest version ${manifest.version} is not X.Y.Z`);
-if (manifest.version !== pkgVersion || manifest.version !== bridgeVersion) {
-  die(`mcpb manifest ${manifest.version}, package.json ${pkgVersion}, BRIDGE_VERSION ${bridgeVersion} must agree`);
+if (manifest.version !== bridgeVersion) {
+  die(`mcpb manifest ${manifest.version} and BRIDGE_VERSION ${bridgeVersion} must agree`);
+}
+const newer = (a, b) => {
+  const x = a.split('.').map(Number);
+  const y = b.split('.').map(Number);
+  const i = [0, 1, 2].find((k) => x[k] !== y[k]);
+  return i !== undefined && x[i] > y[i];
+};
+if (!/^\d+\.\d+\.\d+$/.test(pkgVersion || '') || newer(bridgeVersion, pkgVersion)) {
+  die(`BRIDGE_VERSION ${bridgeVersion} must not be newer than package.json ${pkgVersion}`);
 }
 if (!manifest.server || manifest.server.entry_point !== ENTRY_POINT) {
   die(`server.entry_point ${manifest.server && manifest.server.entry_point}, expected ${ENTRY_POINT}`);
