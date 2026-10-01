@@ -37,9 +37,36 @@ project is kept in this repository.
   - The draft stores the state Thunderbird's own reply or forward draft stores (`origURIs`, `queuedDisposition`), so
     the original is marked as replied or forwarded when the draft is sent, not when it is saved.
   - The body is quoted by the tool, as for a direct send.
-- The bridge tells the user, once per connection, when its version and the add-on's differ. After the first `tools/list` or `tools/call` that Thunderbird answers, it sends the add-on an `initialize` on the same validated connection (1.5 s at most, answer capped at 64 KB) and, if the two `X.Y.Z` versions differ, appends one text item to the result of the next `tools/call` and writes one line to stderr. It never does so for a direct send (`skipReview`), says nothing when a version is missing, `0.0.0` or malformed, or when the server is not `commonpost-mcp`, and only digits from the add-on reach the text. The version is used for this notice only. Known limit: a bridge 0.11 or older with an add-on 0.12 or newer does not warn (the old bridge has no such code); both sides are covered once they are 0.12 or newer.
-- A `.mcpb` bundle for Claude Desktop (macOS and Windows), attached to each release from the next one on: `commonpost-mcp-v<version>.mcpb`, with a provenance attestation. It contains only the stdio bridge (`mcp-bridge.cjs`, `LICENSE`, `THIRD-PARTY.md`, an icon and a `manifest.json` in `mcpb/`, manifest_version 0.3), needs Node.js 22 or later and the add-on of the same version, has no settings and is not signed. It is built by `scripts/build-mcpb-reproducible.cjs` like the XPI (committed files only, sorted stored entries, fixed date: the same bytes on any Node version), and the release job rebuilds it from the tag and refuses any difference. The zip writer moved to `scripts/zip-stored.cjs` (the XPI is byte for byte unchanged). The Version sync check and the tag check now cover `mcpb/manifest.json` too.
+- The bridge tells the user, once per connection, when the add-on is older than the version it needs
+  (`MIN_EXTENSION_VERSION`, 0.12.0). After the first `tools/list` or `tools/call` that Thunderbird answers, it sends
+  the add-on an `initialize` on the same validated connection (1.5 s at most, answer capped at 64 KB) and, if the
+  add-on is older, appends one text item to the result of the next `tools/call` (Check for Updates, then restart
+  Thunderbird; the release page) and writes one line to stderr. Never for a direct send (`skipReview` or
+  `mode: "send"`); silent when a version is missing, `0.0.0` or malformed, or when the server is not `commonpost-mcp`; only
+  digits from the add-on reach the text. When the add-on is newer, the add-on judges the bridge (below).
+- A `.mcpb` bundle for Claude Desktop (macOS and Windows), attached to each release from the next one on: `commonpost-mcp-v<version>.mcpb`, with a provenance attestation. It contains only the stdio bridge (`mcp-bridge.cjs`, `LICENSE`, `THIRD-PARTY.md`, an icon and a `manifest.json` in `mcpb/`, manifest_version 0.3), needs Node.js 22 or later and the add-on of the same release or newer, has no settings and is not signed. It is built by `scripts/build-mcpb-reproducible.cjs` like the XPI (committed files only, sorted stored entries, fixed date: the same bytes on any Node version), and the release job rebuilds it from the tag and refuses any difference. The zip writer moved to `scripts/zip-stored.cjs` (the XPI is byte for byte unchanged). The Version sync check and the tag check now cover `mcpb/manifest.json` too.
 - The bridge ignores `COMMONPOST_MCP_CONNECTION_FILE` when its value is exactly an unexpanded `${user_config.…}` placeholder (a client passing an empty optional field through as text) and runs the automatic discovery, instead of pinning itself to a path that cannot exist.
+- The bridge answers `server/discover` itself, at once, with the JSON-RPC error -32601 "Method not found", without
+  contacting Thunderbird. Clients that speak both protocol eras (MCP 2026-07-28 and earlier, such as Claude Desktop)
+  probe with it first and fall back to `initialize`; the probe used to reach Thunderbird and, with Thunderbird closed,
+  came back after about 5 s with a discovery error that named local paths.
+- The bridge announces itself on every request to the add-on, in the `X-Commonpost-Bridge` header: its version, how it
+  was installed (`packaging=mcpb` when the `.mcpb` bundle sets `COMMONPOST_MCP_PACKAGING=mcpb`, otherwise `file`) and,
+  when `COMMONPOST_MCP_PROFILE` holds a valid name (a-z, 0-9 and -, 32 at most), `profile=<name>`, reserved for
+  per-client tool sets (nothing uses it yet). The header is self-declared: it is not a security boundary, the token
+  is.
+- The add-on judges bridges older than itself: once per client session (at most every 10 minutes) it adds a notice to
+  a tool result when the bridge is older than 0.12.0 or reports no version (0.11 or older), with the release page and
+  what to do (`.mcpb` or file); never on a direct send. It refuses `replyToMessage` / `forwardMessage` with
+  `mode: "send"` or `"draft"` (without `skipReview`) from such a bridge before doing anything, because an old bridge stops
+  waiting after 30 s and can report a failure for a message that is still being sent; `mode: "window"` and every other
+  call keep working. A program that calls the HTTP API directly can declare itself with the header (README,
+  Development).
+- A local security floor in the add-on (`BRIDGE_SECURITY_FLOOR`), shipped disarmed (`0.0.0`): if a future release arms
+  it, every tool call from an older bridge, or from a client without the header, is refused before anything acts, with
+  the reason and the release page; `tools/list` keeps answering. No remote switch, no setting to bypass it.
+- Options page, section "Bridge": the bridges that connected since Thunderbird started (version, installation,
+  profile, last seen, status) and the release page to update one. Kept in memory only.
 
 ### Changed
 
@@ -70,11 +97,22 @@ project is kept in this repository.
 - README: a "Quick install" section at the top, in five steps, with the Claude Code command (Windows example included) and a bold reminder that the bridge is not updated with the extension. It also corrects the old advice to replace the bridge's `package.json` too: the release ships only `mcp-bridge.cjs`, which needs nothing else.
 - README: a new "Other MCP clients" section with the configuration file, location and format of Claude Desktop, VS Code, Cursor, OpenAI Codex CLI and Gemini CLI, checked against each client's documentation, and when and how to set `COMMONPOST_MCP_CONNECTION_FILE` (only if the bridge cannot find the connection file). The bridge is not tied to any client, and `mcpServers` is not the key every client uses.
 - RELEASING: the verification step now says that a rebase merge rewrites the commit date, so the reproducible hash built from the pull request branch cannot match the release; compare with a rebuild from a checkout of the tag.
+- `BRIDGE_VERSION` is now the release in which the bridge (or anything in its `.mcpb` bundle) last changed, not the
+  product version: a release that changes only the add-on ships the same `mcp-bridge.cjs` and the same
+  `commonpost-mcp-v<bridge version>.mcpb`, byte for byte. `scripts/check-versions.cjs` replaces the shell check of the
+  Version sync job and the version part of the release tag check: product version in `package.json`,
+  `package-lock.json` and the add-on manifest; `BRIDGE_VERSION` = `.mcpb` manifest, never newer than the product;
+  bridge bundle compared with the previous release tag; thresholds at or below `BRIDGE_VERSION`; an armed floor must
+  be announced here.
+- `.mcpb` manifest: `homepage` points to the latest release, `documentation` to the README section of the bundle, and
+  it sets `COMMONPOST_MCP_PACKAGING=mcpb`.
+- Known effect: after a downgrade of the add-on below what the bridge needs, the bridge's notice comes back after each
+  restart of Thunderbird.
 
 ### Fixed
 
 - The bridge did not start under Claude Desktop's built-in Node.js, which loads the entry point of a .mcpb bundle through a host script with import(): it now also starts when process.argv[1] is this file. Found while testing the bundle of #44 in Claude Desktop 2.16120 (Windows).
-- The bridge of a release announced version `0.0.0` in `serverInfo`: it read `package.json`, which the release does not ship (only `mcp-bridge.cjs`), and next to another project's `package.json` it announced that project's version. Its version is now written in `mcp-bridge.cjs` (`BRIDGE_VERSION`) and the Version sync check, the release workflow and a test compare it with `package.json` and the manifest.
+- The bridge of a release announced version `0.0.0` in `serverInfo`: it read `package.json`, which the release does not ship (only `mcp-bridge.cjs`), and next to another project's `package.json` it announced that project's version. Its version is now written in `mcp-bridge.cjs` (`BRIDGE_VERSION`), checked by `scripts/check-versions.cjs` (see Changed).
 
 ## [0.11.0] - 2026-09-30
 
