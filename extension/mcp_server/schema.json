@@ -25,6 +25,13 @@
         "parameters": []
       },
       {
+        "name": "getBridgeStatus",
+        "type": "function",
+        "async": true,
+        "description": "Bridges that connected since Thunderbird started (version, installation, profile, last seen, state) and the add-on's thresholds for them",
+        "parameters": []
+      },
+      {
         "name": "getCurrentAuthToken",
         "type": "function",
         "async": true,

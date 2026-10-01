@@ -31,7 +31,7 @@ reference release by release. Corrections are welcome.
 
 ## Where the code is
 
-- The Experiment schema is `extension/mcp_server/schema.json` (19 functions: server start and status, token,
+- The Experiment schema is `extension/mcp_server/schema.json` (20 functions: server start and status, bridge status, token,
   account and tool access, send-safety and network settings, encrypted-message setting).
 - All privileged code is in `extension/mcp_server/api.js` and `extension/httpd.sys.mjs`; the background page and the
   options page only call `browser.commonpostMcp.*`.
