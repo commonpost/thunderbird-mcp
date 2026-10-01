@@ -73,6 +73,7 @@ project is kept in this repository.
 
 ### Fixed
 
+- The bridge did not start under Claude Desktop's built-in Node.js, which loads the entry point of a .mcpb bundle through a host script with import(): it now also starts when process.argv[1] is this file. Found while testing the bundle of #44 in Claude Desktop 2.16120 (Windows).
 - The bridge of a release announced version `0.0.0` in `serverInfo`: it read `package.json`, which the release does not ship (only `mcp-bridge.cjs`), and next to another project's `package.json` it announced that project's version. Its version is now written in `mcp-bridge.cjs` (`BRIDGE_VERSION`) and the Version sync check, the release workflow and a test compare it with `package.json` and the manifest.
 
 ## [0.11.0] - 2026-09-30

@@ -2074,7 +2074,32 @@ function startBridge() {
   process.on('SIGTERM', () => process.exit(0));
 }
 
-if (require.main === module) {
+// True when this file was launched as the program, or by a host that sets
+// process.argv[1] to this file and loads it with import() (the built-in Node.js
+// of Claude Desktop does this for .mcpb bundles), where require.main is the host.
+// A require() from a test does not start the bridge.
+function isEntryPoint() {
+  if (require.main === module) {
+    return true;
+  }
+  const entry = process.argv[1];
+  if (typeof entry !== 'string' || entry === '') {
+    return false;
+  }
+  try {
+    let a = fs.realpathSync(path.resolve(entry));
+    let b = fs.realpathSync(__filename);
+    if (process.platform === 'win32') {
+      a = a.toLowerCase();
+      b = b.toLowerCase();
+    }
+    return a === b;
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint()) {
   startBridge();
 }
 
