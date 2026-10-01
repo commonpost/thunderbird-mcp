@@ -438,10 +438,28 @@
     {
       "name": "saveDraft",
       "title": "Save Draft",
-      "description": "Save a composed message to the identity's Drafts folder without sending or opening a compose window, as Thunderbird's compose window saves it; returns messageId + folderPath. Useful when a human will review and send the message later from Thunderbird.",
+      "description": "Save a composed message to the identity's Drafts folder without sending or opening a compose window, as Thunderbird's compose window saves it; returns messageId + folderPath. Useful when a human will review and send the message later from Thunderbird. With draftId, rewrite that draft instead: passed fields replace, omitted ones (body, recipients, attachments, reply headers) are kept, and the old version is removed.",
       "inputSchema": {
         "type": "object",
         "properties": {
+          "draftId": {
+            "type": "string",
+            "description": "messageId of an existing draft to edit (from saveDraft, replyToMessage/forwardMessage mode draft, or a search in Drafts)"
+          },
+          "folderPath": {
+            "type": "string",
+            "description": "Drafts folder URI of draftId; searched in all Drafts folders when omitted"
+          },
+          "keepAttachments": {
+            "type": "boolean",
+            "default": true,
+            "description": "With draftId: keep the draft's attachments (new ones are added)"
+          },
+          "keepQuote": {
+            "type": "boolean",
+            "default": true,
+            "description": "With draftId and body: replace only the typed text, keeping cite line, quote, forwarded message and signature"
+          },
           "to": {
             "type": "string",
             "description": "Recipient email address(es), comma-separated. Optional -- a draft can have no recipient."
@@ -464,7 +482,7 @@
           },
           "isHtml": {
             "type": "boolean",
-            "description": "Set to true if body contains HTML markup (default: false)"
+            "description": "Set to true if body contains HTML markup (default: false). With draftId the draft keeps its format; isHtml changes it only when the whole body is replaced"
           },
           "from": {
             "type": "string",
