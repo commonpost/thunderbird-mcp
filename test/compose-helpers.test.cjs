@@ -17,7 +17,7 @@ const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${apiSource.slice(start, end)}
 this.api = { resolveComposeMode, composeModeRefusal, DIRECT_SEND_BLOCKED_ERROR, DRAFT_TOOL_DISABLED_ERROR, computeReplyRecipients, switchIdentityRecipients, buildReplyReferences, referenceIds,
-  mergeDraftFields, draftPriorityName, draftInfoFields,
+  mergeDraftFields, draftPriorityName, draftInfoFields, forEachHtmlTag, trailingSeparatorLength,
   buildCitePrefix, divWrappedHtml, citeText, removePlaintextTag, stripDocumentTags, plainTextToForwardHtml, forwardHeaderRows,
   forwardHeaderTableHtml, forwardPlainText, joinFlowedLines, replaceFileURLs, frameSignature, frameImageSignature,
   userBodyHtml, wrapHtmlDocument, layoutComposeHtml, layoutComposeText, splitDraftBody, removeQueryPart, tagEmbeddedObjects, serializerMetaCharset, plainEditorHtml };`, sandbox);
@@ -667,6 +667,77 @@ describe('joinFlowedLines: same result as the loop of nsMsgCompose.cpp, in linea
       api.joinFlowedLines(text);
       const ms = Number(process.hrtime.bigint() - started) / 1e6;
       assert.ok(ms < 3000, `took ${Math.round(ms)} ms`);
+    }
+  });
+});
+
+// A draft holds the quote of a message anyone can write. The functions that split its body scan forward only; the
+// regular expressions they replace (kept here as the reference) read to the end of the text once per unclosed tag,
+// comment or run of white space.
+describe('body of a draft: same result as the regular expressions, in linear time', () => {
+  const atoms = ['<', '>', '"', '/', ' ', '\n', '-', '--', '<!--', '-->', '!', 'a', 'br', 'x', '<br>', '<BR/>', '<br ', '<brx>', '<p>', '</p>', '<a-b>', '<a->',
+    '</a>', '<title>', '</TITLE>', '<body x>', '\u00a0', 'text'];
+  let seed = 20261001;
+  const next = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const soup = (round) => {
+    let html = '';
+    for (let k = 1 + next(round % 2 ? 12 : 36); k > 0; k--) html += atoms[next(atoms.length)];
+    return html;
+  };
+
+  it('finds the tags the regular expression finds', () => {
+    const reference = (html, from, to) => {
+      const tags = [];
+      const re = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][\w-]*)\b[^>]*>/g;
+      re.lastIndex = from;
+      let m;
+      while ((m = re.exec(html)) && m.index < to) {
+        if (m[2]) tags.push([m.index, re.lastIndex, !!m[1], m[2].toLowerCase(), m[0]]);
+      }
+      return tags;
+    };
+    for (let round = 0; round < 20000; round++) {
+      const html = soup(round);
+      const from = next(4);
+      const to = html.length - next(4);
+      const tags = [];
+      api.forEachHtmlTag(html, from, to, (tag) => { tags.push([tag.index, tag.end, tag.closing, tag.name, tag.text]); });
+      assert.deepEqual(tags, reference(html, from, to), JSON.stringify(html));
+    }
+  });
+
+  it('goes on from the index the callback returns', () => {
+    const names = [];
+    api.forEachHtmlTag('<title><b></title><i>', 0, 21, (tag) => { names.push(tag.name); return tag.name === 'title' && !tag.closing ? 10 : undefined; });
+    assert.deepEqual(names, ['title', 'title', 'i']);
+  });
+
+  it('measures the white space and <br> tags that end a text as the regular expressions do', () => {
+    for (let round = 0; round < 20000; round++) {
+      const text = soup(round);
+      assert.equal(api.trailingSeparatorLength(text, true), text.match(/(?:\s|<br\b[^>]*>)*$/i)[0].length, JSON.stringify(text));
+      assert.equal(api.trailingSeparatorLength(text, false), text.match(/\s*$/)[0].length, JSON.stringify(text));
+    }
+  });
+
+  it('splits a large draft made of unclosed tags, raw-text elements or white space in a moment', () => {
+    const n = 200000;
+    const quote = inner => `<html><body>Hi<blockquote type="cite">${inner}</blockquote></body></html>`;
+    const hostile = [
+      [quote('<title></title>'.repeat(n)), true],
+      [quote('<title>'.repeat(n)), true],
+      [quote('<!-- '.repeat(n)), true],
+      [quote('<p '.repeat(n)), true],
+      ['<body '.repeat(n), true],
+      [`<html><body>a${' '.repeat(n)}x<blockquote type="cite">q</blockquote></body></html>`, true],
+      [`a${' '.repeat(n)}x\n> q\n`, false],
+    ];
+    for (const [index, [body, isHtml]] of hostile.entries()) {
+      const started = process.hrtime.bigint();
+      const parts = api.splitDraftBody(body, isHtml);
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      assert.equal(parts.head + parts.user + parts.tail, body);
+      assert.ok(ms < 3000, `case ${index} took ${Math.round(ms)} ms`);
     }
   });
 });
