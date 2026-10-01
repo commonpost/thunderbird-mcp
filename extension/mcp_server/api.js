@@ -12759,6 +12759,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
                 const mimeMsg = await loadMimeMessage(msgHdr);
                 if (!mimeMsg) return { error: "Could not read the existing draft; nothing was changed" };
+                // An encrypted draft is not decrypted for the assistant: rewriting it would save what is left
+                // of it, in clear, and remove the draft
+                if (!isEncryptedContentAllowed() && isEncryptedMimeMessage(mimeMsg)) {
+                  return { error: `${ENCRYPTED_CONTENT_NOTICE}; nothing was changed` };
+                }
+                // A refused attachment fails the whole call, before anything is read or saved
+                const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(args.attachments);
+                const attachmentFailure = attachmentFailureResult(failedPaths, "changed");
+                if (attachmentFailure) return attachmentFailure;
                 // HTML part of multipart/alternative drafts keeps the formatting
                 const content = extractBodyContent(mimeMsg, true);
                 const existingIsHtml = !!(content.text && content.isHtml);
@@ -12854,15 +12863,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 msgComposeParams.format = format;
                 composeFields.body = newMessageBody(body, isHtml, useHtml, msgComposeParams.identity, false, plainHunks);
 
-                const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(args.attachments);
                 const replacedDraftId = msgHdr.messageId;
                 const result = await saveComposeFieldsAsDraft(
                   composeFields, msgComposeParams.identity, [...merged.keptAttachments, ...fileDescs], useHtml, null, null, msgHdr
                 );
                 if (result.success) {
-                  let msg = "Draft updated";
-                  if (failedPaths.length > 0) msg += ` (failed to attach: ${failedPaths.join(", ")})`;
-                  result.message = msg;
+                  result.message = "Draft updated";
                   result.replacedDraftId = replacedDraftId;
                 }
                 return result;

@@ -49,6 +49,17 @@ describe("wiring in the compose tools", () => {
     assert.deepEqual(sites.map((m) => m[1]), ["sent or opened", "saved", "sent or opened", "sent or opened"]);
   });
 
+  it("saveDraft with draftId checks it too, before the draft is read or replaced", () => {
+    const i = apiSource.indexOf("async function updateDraft(args)");
+    assert.ok(i > 0);
+    const fn = apiSource.slice(i, apiSource.indexOf("\n            }\n", i));
+    const check = fn.search(/filePathsToAttachDescs\(args\.attachments\);\n[ \t]*const attachmentFailure = attachmentFailureResult\(failedPaths, "changed"\);\n[ \t]*if \(attachmentFailure\) return attachmentFailure;/);
+    assert.ok(check > 0);
+    assert.ok(check < fn.indexOf("extractBodyContent(mimeMsg, true)"));
+    assert.ok(check < fn.indexOf("saveComposeFieldsAsDraft("));
+    assert.equal(apiSource.match(/filePathsToAttachDescs\(/g).length, 6, "the definition and five call sites");
+  });
+
   it("no call site reports a partial attachment failure as a success", () => {
     assert.ok(!apiSource.includes("failed to attach"));
   });

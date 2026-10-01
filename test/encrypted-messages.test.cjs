@@ -153,6 +153,16 @@ describe("wiring", () => {
     assert.equal(apiSource.match(/createInstance\(Ci\.nsIMsgQuote\)/g).length, 1);
   });
 
+  it("an encrypted draft is not rewritten: saveDraft with draftId stops before it reads the body", () => {
+    const i = apiSource.indexOf("async function updateDraft(args)");
+    assert.ok(i > 0);
+    const fn = apiSource.slice(i, apiSource.indexOf("\n            }\n", i));
+    const guard = fn.indexOf("if (!isEncryptedContentAllowed() && isEncryptedMimeMessage(mimeMsg)) {\n                  return { error: `${ENCRYPTED_CONTENT_NOTICE}; nothing was changed` };");
+    assert.ok(guard > fn.indexOf("await loadMimeMessage(msgHdr)"));
+    assert.ok(guard < fn.indexOf("extractBodyContent(mimeMsg, true)"));
+    assert.ok(guard < fn.indexOf("saveComposeFieldsAsDraft("));
+  });
+
   it("the option is in the schema and on the options page, unchecked until loaded", () => {
     const schema = JSON.parse(fs.readFileSync(path.join(root, "extension/mcp_server/schema.json"), "utf8"));
     const names = schema[0].functions.map((f) => f.name);

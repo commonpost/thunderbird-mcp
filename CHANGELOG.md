@@ -20,6 +20,8 @@ project is kept in this repository.
   `messageId` (Thunderbird gives every saved draft a new one) and `replacedDraftId`. With a new `body`, `keepQuote`
   (default true) replaces only the typed text and keeps the cite line, quote, forwarded message and signature;
   `keepAttachments: false` drops the draft's attachments. By @mazixs in #30.
+  A refused attachment fails the whole call, as for a new draft, and an encrypted draft is not rewritten while
+  encrypted content is not allowed: in both cases the draft stays as it is.
 
 ### Changed
 
