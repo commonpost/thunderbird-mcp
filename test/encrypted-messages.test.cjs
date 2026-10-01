@@ -18,8 +18,8 @@ assert.ok(start >= 0 && end > start, "encrypted-message helpers block missing");
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${apiSource.slice(start, end)}
-this.api = { isEncryptedMimeMessage, ENCRYPTED_CONTENT_NOTICE, PREF_ALLOW_ENCRYPTED_CONTENT };`, sandbox);
-const { isEncryptedMimeMessage, ENCRYPTED_CONTENT_NOTICE, PREF_ALLOW_ENCRYPTED_CONTENT } = sandbox.api;
+this.api = { isEncryptedMimeMessage, mayQuoteOriginal, ENCRYPTED_CONTENT_NOTICE, PREF_ALLOW_ENCRYPTED_CONTENT };`, sandbox);
+const { isEncryptedMimeMessage, mayQuoteOriginal, ENCRYPTED_CONTENT_NOTICE, PREF_ALLOW_ENCRYPTED_CONTENT } = sandbox.api;
 
 const wrapper = (...parts) => ({ contentType: "message/rfc822", parts });
 
@@ -72,6 +72,29 @@ describe("isEncryptedMimeMessage", () => {
   });
 });
 
+describe("mayQuoteOriginal", () => {
+  const plain = wrapper({ contentType: "text/plain", parts: [] });
+  const encrypted = wrapper({ contentType: "multipart/encrypted", parts: [{ contentType: "application/pgp-encrypted", parts: [] }] });
+
+  it("lets Thunderbird quote a message whose tree was read and holds no encrypted part", () => {
+    assert.equal(mayQuoteOriginal(plain, false), true);
+  });
+
+  it("refuses without the tree: a message that was not loaded or parsed may be encrypted", () => {
+    assert.equal(mayQuoteOriginal(null, false), false);
+    assert.equal(mayQuoteOriginal(undefined, false), false);
+  });
+
+  it("refuses an encrypted message and a tree that cannot be read", () => {
+    assert.equal(mayQuoteOriginal(encrypted, false), false);
+    assert.equal(mayQuoteOriginal({ get contentType() { throw new Error("unreadable"); } }, false), false);
+  });
+
+  it("allows everything once the user allows encrypted content", () => {
+    for (const tree of [plain, encrypted, null, undefined]) assert.equal(mayQuoteOriginal(tree, true), true);
+  });
+});
+
 describe("notice text", () => {
   it("says in plain words that the content was not sent and how to change that", () => {
     assert.match(ENCRYPTED_CONTENT_NOTICE, /message chiffré : contenu non transmis \(option à activer\)/);
@@ -104,8 +127,22 @@ describe("wiring", () => {
   });
 
   it("the send and draft modes of reply and forward stop before quoting an encrypted message", () => {
-    const hits = [...apiSource.matchAll(/if \(composeMode !== "window"\) \{\s*if \(!isEncryptedContentAllowed\(\) && isEncryptedMimeMessage\(mimeMsg\)\) \{\s*return \{ error: `\$\{ENCRYPTED_CONTENT_NOTICE\}; nothing was \$\{composeMode === "send" \? "sent" : "saved"\}` \};\s*\}\s*const originalBody/g)];
+    const guard = /if \(composeMode !== "window"\) \{\s*if \(!isEncryptedContentAllowed\(\) && isEncryptedMimeMessage\(mimeMsg\)\) \{\s*return \{ error: `\$\{ENCRYPTED_CONTENT_NOTICE\}; nothing was \$\{composeMode === "send" \? "sent" : "saved"\}` \};\s*\}/g;
+    const hits = [...apiSource.matchAll(guard)];
     assert.equal(hits.length, 2);
+    // The guard opens the branch: the reply builds its body and the forward reads the original only after it
+    const [reply, forward] = hits.map((hit) => hit.index + hit[0].length);
+    assert.equal(apiSource.match(/await buildReplyBody\(/g).length, 1);
+    const replyBody = apiSource.indexOf("await buildReplyBody(", reply);
+    assert.ok(replyBody > reply && replyBody < forward, "the reply body is built after the guard, in the reply tool");
+    assert.match(apiSource.slice(forward, forward + 120), /^\s*const originalBody = extractPlainTextBody\(mimeMsg\);/);
+  });
+
+  it("Thunderbird's own quote, which decrypts, is taken only for a message known not to be encrypted", () => {
+    // One call, behind mayQuoteOriginal: a message whose tree was not read gets no quote from nsIMsgQuote
+    assert.equal(apiSource.match(/await quoteMessageHtml\(/g).length, 1);
+    assert.ok(apiSource.includes("mayQuoteOriginal(mimeMsg, isEncryptedContentAllowed()) ? await quoteMessageHtml(msgURI, msgHdr) : null"));
+    assert.equal(apiSource.match(/createInstance\(Ci\.nsIMsgQuote\)/g).length, 1);
   });
 
   it("the option is in the schema and on the options page, unchecked until loaded", () => {

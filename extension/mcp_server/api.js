@@ -1412,6 +1412,14 @@ function isEncryptedMimeMessage(root) {
     return true;
   }
 }
+
+// Whether a reply may take Thunderbird's own quote of the original (nsIMsgQuote), which decrypts an encrypted
+// message. While encrypted content is not allowed, only a message whose parsed tree was read and holds no
+// encrypted part: without the tree (not loaded in time, not parsable) nothing says it is not encrypted.
+function mayQuoteOriginal(mimeMsg, encryptedContentAllowed) {
+  if (encryptedContentAllowed) return true;
+  return !!mimeMsg && !isEncryptedMimeMessage(mimeMsg);
+}
 // END ENCRYPTED MESSAGE HELPERS
 
 // BEGIN ACCOUNT RESTRICTION HELPERS
@@ -8195,7 +8203,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               if (autoQuote) {
                 parts.prefix = citePrefixFor(msgHdr);
                 parts.citeRef = citeReferenceFor(msgHdr);
-                const html = await quoteMessageHtml(msgURI, msgHdr);
+                // Thunderbird's quote decrypts: not for a message that may be encrypted (the reply then quotes
+                // what the parsed tree gives, nothing without it)
+                const html = mayQuoteOriginal(mimeMsg, isEncryptedContentAllowed()) ? await quoteMessageHtml(msgURI, msgHdr) : null;
                 if (html === null) {
                   const text = extractPlainTextBody(mimeMsg);
                   parts.quote = useHtml ? (text ? `<pre wrap class="moz-quote-pre">${escapeHtml(text)}</pre>` : "") : text;
