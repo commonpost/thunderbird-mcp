@@ -4,7 +4,7 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## [Unreleased]
+## [0.12.0] - 2026-10-01
 
 ### Breaking
 
