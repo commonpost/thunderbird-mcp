@@ -13,7 +13,14 @@ const { execFileSync, spawnSync } = require("node:child_process");
 const root = path.resolve(__dirname, "..");
 const script = path.join(root, "scripts/build-mcpb-reproducible.cjs");
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-const name = `commonpost-mcp-v${pkg.version}.mcpb`;
+const bridgeVersion = /^const BRIDGE_VERSION = '([^']*)';$/m.exec(fs.readFileSync(path.join(root, "mcp-bridge.cjs"), "utf8"))[1];
+const name = `commonpost-mcp-v${bridgeVersion}.mcpb`;
+const newer = (a, b) => {
+  const x = a.split(".").map(Number);
+  const y = b.split(".").map(Number);
+  const i = [0, 1, 2].find((k) => x[k] !== y[k]);
+  return i !== undefined && x[i] > y[i];
+};
 
 function build(outDir) {
   return execFileSync(process.execPath, [script, "--from-tree"], {
@@ -86,14 +93,25 @@ describe("reproducible .mcpb build", () => {
     assert.deepEqual(get("manifest.json"), fs.readFileSync(path.join(root, "mcpb/manifest.json")));
   });
 
-  it("has a manifest in step with package.json, the bridge and the add-on", () => {
+  it("has a manifest with the bridge version, never newer than package.json", () => {
     assert.equal(manifest.manifest_version, "0.3");
-    assert.equal(manifest.version, pkg.version);
+    assert.equal(manifest.version, bridgeVersion);
+    assert.ok(!newer(bridgeVersion, pkg.version), `${bridgeVersion} > ${pkg.version}`);
     assert.equal(manifest.server.type, "node");
     assert.equal(manifest.server.entry_point, "mcp-bridge.cjs");
     assert.deepEqual(manifest.server.mcp_config.args, ["${__dirname}/mcp-bridge.cjs"]);
-    const addon = JSON.parse(fs.readFileSync(path.join(root, "extension/manifest.json"), "utf8"));
-    assert.equal(manifest.version, addon.version);
+  });
+
+  it("tells the bridge it runs from the bundle, with a fixed value", () => {
+    assert.deepEqual(manifest.server.mcp_config.env, { COMMONPOST_MCP_PACKAGING: "mcpb" });
+  });
+
+  it("links to the releases, the README section of the bundle and the issues", () => {
+    assert.equal(manifest.homepage, "https://github.com/commonpost/thunderbird-mcp/releases/latest");
+    assert.equal(manifest.documentation, "https://github.com/commonpost/thunderbird-mcp#claude-desktop-one-click-bundle");
+    assert.equal(manifest.support, "https://github.com/commonpost/thunderbird-mcp/issues");
+    const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
+    assert.match(readme, /^### Claude Desktop \(one-click bundle\)$/m);
   });
 
   it("asks for the Node version of package.json engines and only macOS and Windows", () => {
@@ -113,7 +131,7 @@ describe("reproducible .mcpb build", () => {
     fs.mkdirSync(path.join(copy, "scripts"));
     fs.mkdirSync(path.join(copy, "mcpb"));
     fs.mkdirSync(path.join(copy, "extension/icons"), { recursive: true });
-    for (const f of ["scripts/build-mcpb-reproducible.cjs", "scripts/zip-stored.cjs", "mcp-bridge.cjs", "LICENSE", "THIRD-PARTY.md", "extension/icons/icon-128.png"]) {
+    for (const f of ["scripts/build-mcpb-reproducible.cjs", "scripts/mcpb-inputs.cjs", "scripts/zip-stored.cjs", "mcp-bridge.cjs", "LICENSE", "THIRD-PARTY.md", "extension/icons/icon-128.png"]) {
       fs.copyFileSync(path.join(root, f), path.join(copy, f));
     }
     fs.writeFileSync(path.join(copy, "package.json"), JSON.stringify({ version: pkg.version }));
@@ -123,7 +141,24 @@ describe("reproducible .mcpb build", () => {
     assert.match(r.stderr, /must agree/);
   });
 
-  it("the extracted bridge starts and announces the version of package.json", () => {
+  it("refuses a bridge version newer than package.json", () => {
+    const copy = fs.mkdtempSync(path.join(os.tmpdir(), "cp-mcpb-newer-"));
+    fs.mkdirSync(path.join(copy, "scripts"));
+    fs.mkdirSync(path.join(copy, "mcpb"));
+    fs.mkdirSync(path.join(copy, "extension/icons"), { recursive: true });
+    for (const f of ["scripts/build-mcpb-reproducible.cjs", "scripts/mcpb-inputs.cjs", "scripts/zip-stored.cjs", "LICENSE", "THIRD-PARTY.md", "extension/icons/icon-128.png"]) {
+      fs.copyFileSync(path.join(root, f), path.join(copy, f));
+    }
+    const bridge = fs.readFileSync(path.join(root, "mcp-bridge.cjs"), "utf8").replace(/^const BRIDGE_VERSION = '[^']*';$/m, "const BRIDGE_VERSION = '999.0.0';");
+    fs.writeFileSync(path.join(copy, "mcp-bridge.cjs"), bridge);
+    fs.writeFileSync(path.join(copy, "package.json"), JSON.stringify({ version: pkg.version }));
+    fs.writeFileSync(path.join(copy, "mcpb/manifest.json"), JSON.stringify({ ...manifest, version: "999.0.0" }));
+    const r = spawnSync(process.execPath, [path.join(copy, "scripts/build-mcpb-reproducible.cjs"), "--from-tree", "--print-only"], { encoding: "utf8" });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /must not be newer than package\.json/);
+  });
+
+  it("the extracted bridge starts and announces BRIDGE_VERSION", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-mcpb-run-"));
     for (const e of entries) fs.writeFileSync(path.join(dir, e.name), e.data);
     const request = JSON.stringify({
@@ -141,7 +176,7 @@ describe("reproducible .mcpb build", () => {
     const line = r.stdout.split("\n").find((l) => l.includes('"serverInfo"'));
     assert.ok(line, `no initialize answer; stderr: ${r.stderr}`);
     const info = JSON.parse(line).result.serverInfo;
-    assert.equal(info.version, pkg.version);
+    assert.equal(info.version, bridgeVersion);
     assert.notEqual(info.version, "0.0.0");
   });
 });

@@ -37,6 +37,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
 
       - name: Setup Node.js
@@ -45,7 +46,7 @@ jobs:
           node-version: '22'
           package-manager-cache: false
 
-      - name: Verify the tag is on main and matches package.json, the manifests and the bridge
+      - name: Verify the tag is on main and the version rules
         env:
           REF_NAME: ${{ github.ref_name }}
         run: |
@@ -53,15 +54,7 @@ jobs:
           git fetch --no-tags origin main:refs/remotes/origin/main
           git merge-base --is-ancestor HEAD refs/remotes/origin/main || {
             echo "::error::Tag ${REF_NAME} is not on main; refusing to release it."; exit 1; }
-          TAG="${REF_NAME#v}"
-          PKG="$(node -p "require('./package.json').version")"
-          MAN="$(node -p "require('./extension/manifest.json').version")"
-          MCPB="$(node -p "require('./mcpb/manifest.json').version")"
-          BRG="$(sed -n "s/^const BRIDGE_VERSION = '\(.*\)';.*/\1/p" mcp-bridge.cjs)"
-          if [ "$TAG" != "$PKG" ] || [ "$TAG" != "$MAN" ] || [ "$TAG" != "$MCPB" ] || [ "$TAG" != "$BRG" ]; then
-            echo "::error::Tag ${REF_NAME}, package.json ${PKG}, manifest ${MAN}, mcpb manifest ${MCPB} and bridge ${BRG} must all agree."
-            exit 1
-          fi
+          node scripts/check-versions.cjs --release-tag "$REF_NAME"
 
       # Before any npm install: only Node's built-in modules and git run here.
       - name: Build the XPI (reproducible)
