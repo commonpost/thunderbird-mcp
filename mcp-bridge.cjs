@@ -1536,6 +1536,11 @@ async function handleMessage(line) {
     }
     case 'ping':
       return { jsonrpc: '2.0', id: message.id, result: {} };
+    // A client that speaks both protocol eras (MCP 2026-07-28 and earlier) first probes with server/discover and
+    // falls back to initialize on any error. Answered here at once, without Thunderbird (which may not be running),
+    // with the plain "Method not found": some clients misread any other text.
+    case 'server/discover':
+      return { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found' } };
     case 'resources/list':
       return { jsonrpc: '2.0', id: message.id, result: { resources: [] } };
     case 'prompts/list':
