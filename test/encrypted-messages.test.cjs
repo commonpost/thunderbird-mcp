@@ -130,12 +130,20 @@ describe("wiring", () => {
     const guard = /if \(composeMode !== "window"\) \{\s*if \(!isEncryptedContentAllowed\(\) && isEncryptedMimeMessage\(mimeMsg\)\) \{\s*return \{ error: `\$\{ENCRYPTED_CONTENT_NOTICE\}; nothing was \$\{composeMode === "send" \? "sent" : "saved"\}` \};\s*\}/g;
     const hits = [...apiSource.matchAll(guard)];
     assert.equal(hits.length, 2);
-    // The guard opens the branch: the reply builds its body and the forward reads the original only after it
+    // The guard opens the branch: the reply and the forward build their body only after it
     const [reply, forward] = hits.map((hit) => hit.index + hit[0].length);
     assert.equal(apiSource.match(/await buildReplyBody\(/g).length, 1);
     const replyBody = apiSource.indexOf("await buildReplyBody(", reply);
     assert.ok(replyBody > reply && replyBody < forward, "the reply body is built after the guard, in the reply tool");
-    assert.match(apiSource.slice(forward, forward + 120), /^\s*const originalBody = extractPlainTextBody\(mimeMsg\);/);
+    assert.equal(apiSource.match(/= buildForwardBody\(/g).length, 1);
+    assert.ok(apiSource.indexOf("= buildForwardBody(") > forward, "the forward body is built after the guard");
+  });
+
+  it("the forward body comes from the parsed message, which is not decrypted, never from Thunderbird's quote", () => {
+    const i = apiSource.indexOf("function forwardBodyFor(mimeMsg, msgHdr, useHtml)");
+    const fn = apiSource.slice(i, apiSource.indexOf("\n            }\n", i));
+    assert.ok(i > 0 && fn.includes("extractBodyContent(mimeMsg, true)"));
+    assert.ok(!/quoteMessageHtml|nsIMsgQuote/.test(fn));
   });
 
   it("Thunderbird's own quote, which decrypts, is taken only for a message known not to be encrypted", () => {
