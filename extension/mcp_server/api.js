@@ -4568,37 +4568,56 @@ function forwardPlainText(delimiter, rows, body) {
 /**
  * BuildBodyMessageAndSignature (nsMsgCompose.cpp), plain text with wrapping on: an unquoted
  * line ending in a space is joined with the next one. Ported with its quirks.
+ * The C++ loop cuts the line break out of the body and goes on with the same index. Here the body is
+ * chars[0..w) (what the loop has passed, line breaks cut) followed by chars[r..): its index is w, and nothing is
+ * copied again for each line that is joined. The text is the original message, of any size.
  */
 function joinFlowedLines(body) {
-  let out = String(body || "");
+  const chars = String(body || "").split("");
+  let w = 0;
+  let r = 0;
   let quote = false;
-  for (let i = 0; i < out.length; i++) {
-    if (i === 0 || out[i - 1] === "\n") {
-      if (out[i] === ">") {
+  // The loop's i++ (and its "i += 4"): the next characters are passed without being looked at
+  const pass = (count) => {
+    for (; count > 0 && r < chars.length; count--) chars[w++] = chars[r++];
+  };
+  while (r < chars.length) {
+    if (w === 0 || chars[w - 1] === "\n") {
+      if (chars[r] === ">") {
         quote = true;
+        pass(1);
         continue;
       }
-      const s = out.substr(i, 10);
+      const s = chars.slice(r, r + 10).join("");
       if (s.startsWith("-- \r") || s.startsWith("-- \n")) {
-        i += 4;
+        pass(5);
         continue;
       }
       if (s.startsWith("- -- \r") || s.startsWith("- -- \n")) {
-        i += 6;
+        pass(7);
         continue;
       }
     }
-    if (out[i] === "\n" && i > 1) {
+    if (chars[r] === "\n" && w > 1) {
       if (quote) {
         quote = false;
+        pass(1);
         continue;
       }
-      let j = i - 1;
-      if (out[j] === "\r") j--;
-      if (out[j] === " ") out = out.slice(0, j + 1) + out.slice(i + 1);
+      let j = w - 1;
+      if (chars[j] === "\r") j--;
+      if (chars[j] === " ") {
+        // body.Cut(j + 1, i - j): the line break goes, and the loop's index then passes as many characters
+        const cut = w - j;
+        w = j + 1;
+        r++;
+        pass(cut);
+        continue;
+      }
     }
+    pass(1);
   }
-  return out;
+  return chars.slice(0, w).join("");
 }
 
 /**
