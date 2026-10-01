@@ -58,6 +58,24 @@ This project bridges three trust boundaries; any of them is in scope:
 - Pre-release / unmerged feature branches. Report against `main`
   or the latest release.
 
+## Bridge and add-on versions
+
+- The bridge announces itself on every request in the `X-Commonpost-Bridge` header (`<version>; packaging=<mcpb|file>`,
+  optionally `; profile=<name>`). The header is **not a security boundary**: any program that holds the token can send
+  any value. The token is the boundary.
+- The add-on warns about bridges older than the version it recommends and can refuse bridges below a local **security
+  floor** written in its code. The floor ships disarmed (`0.0.0`); there is no remote switch and no setting to bypass it:
+  a floor reaches users only through an add-on update.
+- Arming the floor refuses every tool call from clients that send no header: all bridges 0.11.0 or older, and programs
+  that call the HTTP API directly without declaring themselves. It is announced in the release notes ("security floor")
+  and in an advisory.
+- A profile (`profile=`) is self-declared too. A future per-client tool set may only narrow what the global settings
+  allow (effective = global settings ∩ profile); a client without a profile, or with an unknown one, gets the user's
+  default set, never more than the global settings. Restrictions that matter belong in the global settings, not in a
+  profile.
+- Supported: the bridge of the latest release. Its version number is the release in which the bridge last changed, so
+  it can be lower than the add-on's.
+
 ## Coordinated disclosure
 
 We follow the Mozilla / Thunderbird coordinated-disclosure cadence

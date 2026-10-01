@@ -22,7 +22,7 @@ Give your AI assistant full access to Thunderbird -- search mail, compose messag
 ## Quick install (about 3 minutes)
 
 1. Install the extension. Download `commonpost-mcp-v<version>.xpi` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest). In Thunderbird: Tools > Add-ons and Themes > gear menu > Install Add-on From File. Restart Thunderbird.
-2. Download `mcp-bridge.cjs` from the **same release** and put it in a folder you will keep, for example `~/commonpost-mcp/`. The bridge is a single file and needs nothing else: the release does not ship a `package.json`. (If one sits next to the bridge, the bridge only reads it to report a version, so do not place the bridge inside another project's folder.)
+2. Download `mcp-bridge.cjs` from the **same release** and put it in a folder you will keep, for example `~/commonpost-mcp/`. The bridge is a single file and needs nothing else: the release does not ship a `package.json`. (The bridge carries its own version; it reads no `package.json`.)
 3. Check Node.js: `node --version` must show 22 or later.
 4. Register the bridge with your MCP client.
    - Claude Code (use the absolute path of the file):
@@ -52,7 +52,7 @@ Give your AI assistant full access to Thunderbird -- search mail, compose messag
 
 5. Test it. Keep Thunderbird open and ask your assistant: "list my Thunderbird accounts".
 
-**The bridge is not updated automatically. After the extension updates, replace `mcp-bridge.cjs` with the one from the same release, then reconnect your MCP client (`/mcp` in Claude Code).** The extension's version is shown in Tools > Add-ons and Themes.
+**The bridge is not updated automatically.** When it should be replaced, the extension says so in a tool result (your assistant passes it on) and in its options page (section Bridge): download `mcp-bridge.cjs` (or the `.mcpb` bundle) from the release page it names, replace your copy, then reconnect your MCP client (`/mcp` in Claude Code). A release that does not change the bridge ships the same bridge again. The extension's version is shown in Tools > Add-ons and Themes.
 
 Right after installing, open the extension's options page (Tools > Add-ons and Themes > Commonpost MCP for Thunderbird > Options) and choose which accounts and tools your assistant may use. Until you do, every account and tool is visible to MCP clients.
 
@@ -182,7 +182,7 @@ The MCP bridge, `mcp-bridge.cjs`, is attached to each release next to the XPI (w
 
 Requires Thunderbird 140 or later, and Node.js 22 or later for the bridge (`mcp-bridge.cjs`). Tested on Thunderbird 140.16.0esr, 153.3.1esr and 156.0.1.
 
-**Automatic updates:** the add-on checks `https://commonpost.github.io/thunderbird-mcp/updates.json` through Thunderbird's add-on update check; the file lists the hash of each release. Thunderbird downloads updates in the background and applies them on the next restart; because this add-on uses an Experiment API, updates are not hot-swapped. If updates do not arrive, check the Add-ons gear menu and make sure **Update Add-ons Automatically** is enabled. Thunderbird's default `xpinstall.signatures.required=false` lets unsigned add-ons install; a profile hardened to require signatures blocks both manual and automatic installs. Because the auto-update channel is a code-delivery channel, you can turn it off (per add-on, in its details page) and update by hand. **The bridge is not updated automatically:** after the add-on updates (automatically or by hand), replace your `mcp-bridge.cjs` with the file from the same release, then reconnect your MCP client; some protections live in the bridge.
+**Automatic updates:** the add-on checks `https://commonpost.github.io/thunderbird-mcp/updates.json` through Thunderbird's add-on update check; the file lists the hash of each release. Thunderbird downloads updates in the background and applies them on the next restart; because this add-on uses an Experiment API, updates are not hot-swapped. If updates do not arrive, check the Add-ons gear menu and make sure **Update Add-ons Automatically** is enabled. Thunderbird's default `xpinstall.signatures.required=false` lets unsigned add-ons install; a profile hardened to require signatures blocks both manual and automatic installs. Because the auto-update channel is a code-delivery channel, you can turn it off (per add-on, in its details page) and update by hand. **The bridge is not updated automatically:** the add-on tells you (in a tool result and in its options page, section Bridge) when to replace your `mcp-bridge.cjs` or `.mcpb` with the one of a newer release; then reconnect your MCP client. Some protections live in the bridge.
 
 ### 2. Configure your MCP client
 
@@ -203,7 +203,7 @@ Add to your MCP client config (e.g. `~/.claude.json` for Claude Code):
 
 On macOS and Windows, Claude Desktop can install the bridge from a `.mcpb` bundle instead of a hand-edited config file. Download `commonpost-mcp-v<version>.mcpb` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest) and open it with Claude Desktop, then confirm the installation.
 
-- The bundle contains **only the bridge** (`mcp-bridge.cjs`). Install the Thunderbird extension separately (step 1 above), and use the extension and the bundle of the **same version**: the bundle is not updated with the extension, so install the new `.mcpb` after each extension update.
+- The bundle contains **only the bridge** (`mcp-bridge.cjs`). Install the Thunderbird extension separately (step 1 above). The bundle's version is the version of the bridge inside, which changes only when the bridge changes: a release can carry a bundle with a lower number than the add-on, and it is still the current bridge. Claude Desktop never updates a bundle installed from a file: install the new `.mcpb` when the add-on (in a tool result or in its options page, section Bridge) says so.
 - The bundle asks for Node.js 22 or later, like the bridge. It has no settings: if the bridge cannot find the connection file, use the manual configuration in [Other MCP clients](#other-mcp-clients) with `COMMONPOST_MCP_CONNECTION_FILE`.
 - The bundle is not signed. Each release carries a provenance attestation for it (`*.mcpb.sigstore.json`): check it with `gh attestation verify <file>.mcpb --repo commonpost/thunderbird-mcp`. It can be rebuilt byte for byte from the tagged source with `node scripts/build-mcpb-reproducible.cjs`.
 
@@ -322,6 +322,7 @@ Both add-ons can be installed at the same time: they use different ids, preferen
 - **Tool access control**: Disable specific tools via the settings page. Disabled tools are hidden from `tools/list` and blocked at dispatch.
 - **Localhost only**: By default, the server binds to localhost only. The "Listen on all interfaces" option in settings binds to all IPv4 interfaces for WSL, Docker, or remote access. **This exposes the MCP server to every device on your local network.** Only enable on trusted networks. Auth token is always required.
 - **Auto-update integrity**: Auto-update is a code-delivery channel whose integrity depends on continued control of the GitHub repository, the GitHub Actions token, and the `commonpost` GitHub organization.
+- **Bridge version**: the bridge announces its version on every request (`X-Commonpost-Bridge` header). The add-on warns about bridges older than it recommends and can refuse bridges below a security floor written in its code (shipped disarmed); nothing is checked or downloaded over the Internet. The header is self-declared: the token, not the header, protects the server. See [SECURITY.md](SECURITY.md).
 
 ### Attachments refused
 
@@ -400,6 +401,8 @@ curl -X POST http://127.0.0.1:$PORT \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
+
+A program that calls the HTTP API directly, without the bridge, sends no `X-Commonpost-Bridge` header and is treated like a bridge 0.11 or older: tool results can carry a notice to update the bridge, and `replyToMessage` / `forwardMessage` with `mode: "send"` or `"draft"` are refused (an old bridge stops waiting after 30 s). A direct client that waits at least 150 s for those calls can declare itself with `-H "X-Commonpost-Bridge: 0.12.0; packaging=file"`. If a release arms the bridge security floor, a client without the header is refused entirely.
 
 **Dev-only extension reload:** After changing extension source locally, remove the add-on from Thunderbird, restart, reinstall the XPI, and restart again. Thunderbird caches aggressively.
 
