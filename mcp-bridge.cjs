@@ -32,6 +32,8 @@ const DIRECT_SEND_TIMEOUT = 150000;
 // compose that Thunderbird gives up on after 120 s too: the bridge waits as long
 // as for a direct send, or an agent that retries would end up with two drafts.
 const DRAFT_TOOLS = new Set(['replyToMessage', 'forwardMessage']);
+// saveDraft saves through the same compose, whatever its arguments.
+const DRAFT_ONLY_TOOLS = new Set(['saveDraft']);
 const CONNECTION_RETRY_DELAY_MS = 1000;
 const CONNECTION_MAX_RETRIES = 5;
 const CONNECTION_CACHE_TTL_MS = 5000; // 5 seconds
@@ -1619,10 +1621,12 @@ function isDirectSendCall(message) {
     && (Boolean(message.params?.arguments?.skipReview) || requestedMode(message) === 'send');
 }
 
-// Whether it is a tools/call that saves a reply or forward as a draft (a call that may also send counts as a send).
+// Whether it is a tools/call that saves a draft: saveDraft, or a reply or forward with mode "draft" (a call that may
+// also send counts as a send).
 function isDraftCall(message) {
-  return message?.method === 'tools/call'
-    && DRAFT_TOOLS.has(message.params?.name)
+  if (message?.method !== 'tools/call') return false;
+  if (DRAFT_ONLY_TOOLS.has(message.params?.name)) return true;
+  return DRAFT_TOOLS.has(message.params?.name)
     && requestedMode(message) === 'draft'
     && !isDirectSendCall(message);
 }
