@@ -4899,38 +4899,72 @@ function draftBlockKind(tag) {
   return null;
 }
 
+/**
+ * Tags of an HTML text from `from`, in order, comments passed over: calls onTag({ index, end, closing, name, text })
+ * and goes on from the index it returns (after the tag when it returns nothing), until a tag starts at `to` or later.
+ * The same tags as /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][\w-]*)\b[^>]*>/g finds, with a scan that goes forward only:
+ * the regular expression reads to the end of the text once per comment or tag that is not closed, and a draft
+ * holds the quote of a message anyone can write.
+ */
+function forEachHtmlTag(html, from, to, onTag) {
+  const tagStart = /<(\/?)([a-zA-Z][\w-]*)\b/y;
+  let commentsEnd = true;
+  let pos = from;
+  for (;;) {
+    const lt = html.indexOf("<", pos);
+    if (lt < 0 || lt >= to) return;
+    pos = lt + 1;
+    if (html.startsWith("<!--", lt)) {
+      const close = commentsEnd ? html.indexOf("-->", lt + 4) : -1;
+      if (close >= 0) pos = close + 3;
+      else commentsEnd = false;
+      continue;
+    }
+    tagStart.lastIndex = lt;
+    const m = tagStart.exec(html);
+    if (!m) continue;
+    const gt = html.indexOf(">", tagStart.lastIndex);
+    // No ">" after this tag: none after the next ones either
+    if (gt < 0) return;
+    pos = gt + 1;
+    const next = onTag({ index: lt, end: gt + 1, closing: !!m[1], name: m[2].toLowerCase(), text: html.slice(lt, gt + 1) });
+    if (next !== undefined) pos = next;
+  }
+}
+
 // Top-level cite / forward / signature blocks of an HTML body between from and to: [{ start, end, kind }].
 function htmlDraftBlocks(html, from, to) {
   const blocks = [];
   const stack = [];
   let open = null;
-  const re = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][\w-]*)\b[^>]*>/g;
-  re.lastIndex = from;
-  let m;
-  while ((m = re.exec(html)) && m.index < to) {
-    if (!m[2]) continue;
-    const name = m[2].toLowerCase();
-    if (m[1]) {
+  // Where the end tag of a raw-text element is looked for, per name: null once there is none left
+  const rawTextEnd = {};
+  forEachHtmlTag(html, from, to, (tag) => {
+    const { name } = tag;
+    if (tag.closing) {
       const at = stack.lastIndexOf(name);
-      if (at < 0) continue;
+      if (at < 0) return undefined;
       stack.length = at;
       if (open && !stack.length) {
-        blocks.push({ ...open, end: re.lastIndex });
+        blocks.push({ ...open, end: tag.end });
         open = null;
       }
-      continue;
+      return undefined;
     }
     if (!stack.length && !open) {
-      const kind = draftBlockKind(m[0]);
-      if (kind) open = { start: m.index, kind };
+      const kind = draftBlockKind(tag.text);
+      if (kind) open = { start: tag.index, kind };
     }
-    if (VOID_TAGS.has(name) || m[0].endsWith("/>")) continue;
-    if (RAW_TEXT_TAGS.has(name)) {
-      const close = html.toLowerCase().indexOf(`</${name}`, re.lastIndex);
-      if (close >= 0) re.lastIndex = close;
-    }
+    if (VOID_TAGS.has(name) || tag.text.endsWith("/>")) return undefined;
     stack.push(name);
-  }
+    if (!RAW_TEXT_TAGS.has(name) || rawTextEnd[name] === null) return undefined;
+    // The content of a raw-text element holds no tags: go on at its end tag
+    const endTag = rawTextEnd[name] || (rawTextEnd[name] = new RegExp(`</${name}`, "gi"));
+    endTag.lastIndex = tag.end;
+    const close = endTag.exec(html);
+    if (!close) rawTextEnd[name] = null;
+    return close ? close.index : undefined;
+  });
   if (open) blocks.push({ ...open, end: to });
   if (!blocks.some(b => b.kind !== "signature")) {
     const fwd = html.slice(from, to).search(FORWARD_DELIMITER);
@@ -4996,6 +5030,33 @@ function plainDraftBlocks(text, knownSignature) {
 }
 
 /**
+ * Length of the white space (and, in HTML, <br> tags) that ends a text: what /(?:\s|<br\b[^>]*>)*$/i or /\s*$/
+ * matches, read once from the end. Such an expression retries from every character of a long run that does not
+ * end the text.
+ */
+function trailingSeparatorLength(text, isHtml) {
+  const n = text.length;
+  if (!isHtml) {
+    let start = n;
+    while (start > 0 && /\s/.test(text[start - 1])) start--;
+    return n - start;
+  }
+  // ends[i]: the text from i on is only white space and <br> tags; the match starts at the first such i
+  const ends = new Uint8Array(n + 1);
+  ends[n] = 1;
+  let first = n;
+  let gt = -1;
+  for (let i = n - 1; i >= 0; i--) {
+    const c = text[i];
+    if (c === ">") gt = i;
+    if (/\s/.test(c)) ends[i] = ends[i + 1];
+    else if (c === "<" && gt > 0 && ends[gt + 1] && /^<br\b/i.test(text.substr(i, 4))) ends[i] = 1;
+    if (ends[i]) first = i;
+  }
+  return n - first;
+}
+
+/**
  * Draft body around the text the user typed: { head, user, tail, kept } with head + user + tail
  * === body. Thunderbird's blocks (cite line + quote, forward container, signature) stay in head / tail.
  * The user's text is the first gap between blocks with content; without one, the caret position of the
@@ -5006,15 +5067,16 @@ function splitDraftBody(body, isHtml, knownSignature) {
   let from = 0;
   let to = text.length;
   if (isHtml) {
-    const open = text.match(/<body\b[^>]*>/i);
-    if (open) from = open.index + open[0].length;
+    // /<body\b[^>]*>/i, its end found with indexOf
+    const open = /<body\b/i.exec(text);
+    const end = open ? text.indexOf(">", open.index) : -1;
+    if (end >= 0) from = end + 1;
     const close = text.toLowerCase().lastIndexOf("</body>");
     if (close >= from) to = close;
   }
   const blocks = isHtml ? htmlDraftBlocks(text, from, to) : plainDraftBlocks(text, knownSignature);
   if (!blocks.length) return { head: text.slice(0, from), user: text.slice(from, to), tail: text.slice(to), kept: false };
   const sep = isHtml ? /^(?:\s|<br\b[^>]*>)*/i : /^\s*/;
-  const sepEnd = isHtml ? /(?:\s|<br\b[^>]*>)*$/i : /\s*$/;
   const gaps = [];
   let prev = from;
   for (const b of [...blocks, { start: to, end: to }]) {
@@ -5026,7 +5088,7 @@ function splitDraftBody(body, isHtml, knownSignature) {
     const gap = text.slice(a, b);
     const lead = gap.match(sep)[0].length;
     if (lead === gap.length) continue;
-    const trail = gap.slice(lead).match(sepEnd)[0].length;
+    const trail = trailingSeparatorLength(gap.slice(lead), isHtml);
     return split(a + lead, b - trail);
   }
   const [a0, b0] = gaps[0];
@@ -12780,7 +12842,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (parts.kept) {
                     let user;
                     if (existingIsHtml) user = userBodyHtml(args.body, args.isHtml, prefs.paragraphMode);
-                    else user = args.isHtml ? htmlToPlainText(args.body, false, true, false).replace(/\n+$/, "") : String(args.body || "");
+                    else user = args.isHtml ? stripTrailing(htmlToPlainText(args.body, false, true, false), "\n") : String(args.body || "");
                     body = parts.head + user + parts.tail;
                     isHtml = existingIsHtml;
                     if (!existingIsHtml) plainHunks = [{ text: parts.head, quotes: true }, user, { text: parts.tail, quotes: true }];
