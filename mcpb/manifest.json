@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "commonpost-mcp",
   "display_name": "Commonpost MCP for Thunderbird",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Thunderbird email, contacts, calendars and filters for Claude, through the Commonpost MCP add-on.",
   "long_description": "Contains only the stdio bridge. Requires the Commonpost MCP add-on of the same release or newer, enabled in Thunderbird 140+; the bridge talks to it on 127.0.0.1 only. Claude Desktop does not update a bundle installed from a file: the add-on tells you when to install a new one.",
   "author": {

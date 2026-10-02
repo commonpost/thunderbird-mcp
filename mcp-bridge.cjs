@@ -60,7 +60,7 @@ const LATEST_PROTOCOL_VERSION = '2025-11-25';
 // Hard-coded: the release ships mcp-bridge.cjs alone, so there is no package.json
 // to read. The Version sync check and the release workflow compare it with
 // package.json and the manifest.
-const BRIDGE_VERSION = '0.12.0';
+const BRIDGE_VERSION = '0.13.0';
 const SERVER_INFO = Object.freeze({
   name: 'commonpost-mcp',
   version: BRIDGE_VERSION,
