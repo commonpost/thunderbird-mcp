@@ -84,7 +84,8 @@ function updateSteps(version, bridge, minBridge) {
       `Updates, then restart Thunderbird. For a first installation, see the [README](${README_URL}) ` +
       `(\`commonpost-mcp-v${version}.xpi\` below).`,
     `- **MCP bridge**: it is installed in your MCP client and is never updated automatically. ${bridgeLine}`,
-    `  - Claude Desktop: download \`commonpost-mcp-v${version}.mcpb\` below and open it with Claude Desktop; if the ` +
+    // The bundle is named after the bridge it holds (scripts/build-mcpb-reproducible.cjs), not after the release
+    `  - Claude Desktop: download \`commonpost-mcp-v${bridge}.mcpb\` below and open it with Claude Desktop; if the ` +
       'file does not open there (Windows), use Settings > Extensions > Advanced settings > Install Extension.',
     '  - Other clients (Claude Code, Cursor, VS Code, ...): download `mcp-bridge.cjs` below and put it in place of ' +
       'your copy, then restart the client or reconnect the server (`/mcp` in Claude Code). The path of your copy is ' +
