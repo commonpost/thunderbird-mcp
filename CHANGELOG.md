@@ -4,7 +4,18 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## [Unreleased]
+## [0.16.0] - 2026-10-02
+
+- **Fixed:** `listEvents` lists a whole day when it is asked for one date (`2026-10-15` to `2026-10-15`): it returned
+  nothing, with no error, so an assistant answered that the day was free. A date without a time is now a day in
+  local time.
+- **Fixed:** a folder address written with a trailing slash is accepted; `createFolder` answered "Folder not found".
+- **Changed:** three answers now tell an assistant what it needs to go on: an empty search of several words says
+  why it found nothing, a draft whose recipient has no e-mail address carries a warning, and `renameFolder` returns
+  the new address of the folder.
+- **The bridge does not change in this release:** nothing to update in your MCP clients if their bridge is 0.14.0. A
+  bridge 0.13 keeps working; updating it is optional.
+- No call that worked stops working. Updating is not urgent.
 
 ### Changed
 
