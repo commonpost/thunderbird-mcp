@@ -25,9 +25,12 @@ const REQUEST_TIMEOUT = 30000;
 // extension tests it for truthiness, so the bridge does too; next to another
 // mode it still counts, the longer wait is the safe side). Thunderbird itself
 // gives up on a direct send after 120 s, so the bridge must wait longer than
-// that or it reports a failure for a message that may still go out.
+// that or it reports a failure for a message that may still go out. Before
+// the send, the add-on may rebuild a folder summary (20 s), load the original
+// message (20 s) and wait for its quote (15 s): 175 s in all, and
+// test/bridge-send-timeout.test.cjs keeps this wait above their sum.
 const DIRECT_SEND_TOOLS = new Set(['sendMail', 'replyToMessage', 'forwardMessage']);
-const DIRECT_SEND_TIMEOUT = 150000;
+const DIRECT_SEND_TIMEOUT = 180000;
 // replyToMessage and forwardMessage with mode "draft" save through a window-less
 // compose that Thunderbird gives up on after 120 s too: the bridge waits as long
 // as for a direct send, or an agent that retries would end up with two drafts.
