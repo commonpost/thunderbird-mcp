@@ -4,6 +4,20 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Added
+
+- A system notification when a bridge that the add-on recommends updating, or refuses, connects: once per bridge and
+  per Thunderbird session. The hidden preference `extensions.commonpost-mcp.bridgeUpdateAlert` (false) turns it off.
+  It uses the notifications of the system; on a Linux desktop without a notification service nothing is shown.
+- The options page (section Bridge) shows "Newer version available" for a bridge that works but is not the one
+  published with the add-on, and names that version.
+
+### Changed
+
+- The release page calls the bridge update optional when the oldest recommended bridge does not change.
+
 ## [0.14.0] - 2026-10-02
 
 - **Security:** with 0.13.0, a reply or a forward saved as a draft (`mode: "draft"`) could carry an image or a link

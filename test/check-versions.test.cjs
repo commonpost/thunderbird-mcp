@@ -20,14 +20,14 @@ after(() => {
 });
 
 function files(o) {
-  const { V, B, M = B, A = B, MODE = A, F = "0.0.0", body = "// body 1\n", lockV = V, extV = V, mcpbV = B } = o;
+  const { V, B, M = B, A = B, MODE = A, C = B, F = "0.0.0", body = "// body 1\n", lockV = V, extV = V, mcpbV = B } = o;
   return {
     "package.json": JSON.stringify({ version: V }),
     "package-lock.json": JSON.stringify({ version: lockV, packages: { "": { version: lockV } } }),
     "extension/manifest.json": JSON.stringify({ version: extV }),
     "mcpb/manifest.json": `{\n  "version": "${mcpbV}"\n}\n`,
     "mcp-bridge.cjs": `const BRIDGE_VERSION = '${B}';\nconst MIN_EXTENSION_VERSION = '${M}';\n${body}`,
-    "extension/mcp_server/api.js": `const MIN_BRIDGE_VERSION = "${A}";\nconst MODE_MIN_BRIDGE_VERSION = "${MODE}";\nconst BRIDGE_SECURITY_FLOOR = "${F}";\n`,
+    "extension/mcp_server/api.js": `const MIN_BRIDGE_VERSION = "${A}";\nconst MODE_MIN_BRIDGE_VERSION = "${MODE}";\nconst BRIDGE_SECURITY_FLOOR = "${F}";\n${C === null ? "" : `const CURRENT_BRIDGE_VERSION = "${C}";\n`}`,
     "CHANGELOG.md": o.changelog || "# Changelog\n\n## [Unreleased]\n",
     "LICENSE": o.license || "license 1\n",
     "THIRD-PARTY.md": "third party\n",
@@ -191,7 +191,17 @@ describe("check-versions.cjs", () => {
     assert.match(r.out, /must be at most BRIDGE_VERSION/);
   });
 
-  it("13. previousReleaseTag compares tags number by number", () => {
+  it("14. CURRENT_BRIDGE_VERSION must exist and equal BRIDGE_VERSION", () => {
+    const missing = run(makeRepo(PREV, ["v0.11.0"], { ...PREV, C: null }));
+    assert.equal(missing.status, 1);
+    assert.match(missing.out, /needs const CURRENT_BRIDGE_VERSION = "X\.Y\.Z"/);
+    const differs = run(makeRepo(PREV, ["v0.11.0"], { ...PREV, C: "0.11.0" }));
+    assert.equal(differs.status, 1);
+    assert.match(differs.out, /CURRENT_BRIDGE_VERSION 0\.11\.0 .* must equal BRIDGE_VERSION 0\.10\.0/);
+    assert.equal(run(makeRepo(PREV, ["v0.11.0"], { ...PREV })).status, 0);
+  });
+
+  it("15. previousReleaseTag compares tags number by number", () => {
     const tags = ["v0.8.3", "v0.11.0", "v0.10.1", "v1.0.0-rc.1", "x"];
     assert.equal(previousReleaseTag(tags, null), "v0.11.0");
     assert.equal(previousReleaseTag(tags, "v0.11.0"), "v0.10.1");

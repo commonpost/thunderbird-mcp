@@ -10,7 +10,9 @@
  *   release pull request writes it (RELEASING.md); a release from SUMMARY_REQUIRED_FROM on is refused without it.
  * - The add-on updates itself and the bridge does not, so "How to update" gives the steps for both and says whether
  *   this release changes the bridge: BRIDGE_VERSION in mcp-bridge.cjs is the release in which the bridge last
- *   changed (scripts/check-versions.cjs keeps it so).
+ *   changed (scripts/check-versions.cjs keeps it so). A changed bridge is an optional update when
+ *   MIN_BRIDGE_VERSION in extension/mcp_server/api.js is older than this release: the add-on still accepts the
+ *   previous bridge.
  * Prints an ::error:: line and exits 1 when something is missing. `--check` prints nothing (pull requests).
  */
 'use strict';
@@ -60,11 +62,21 @@ function bridgeVersion(bridgeSource) {
   return match ? match[1] : null;
 }
 
-function updateSteps(version, bridge) {
+function minBridgeVersion(apiSource) {
+  const match = /^const MIN_BRIDGE_VERSION = "(\d+\.\d+\.\d+)";$/m.exec(apiSource);
+  return match ? match[1] : null;
+}
+
+function updateSteps(version, bridge, minBridge) {
   const changed = bridge === version;
-  const bridgeLine = changed
-    ? '**This release changes the bridge: update it in every MCP client that uses it.**'
-    : `This release ships the same bridge as v${bridge}: a bridge of version ${bridge} needs no update.`;
+  let bridgeLine;
+  if (changed && minBridge === version) {
+    bridgeLine = '**This release changes the bridge: update it in every MCP client that uses it.**';
+  } else if (changed) {
+    bridgeLine = `**This release changes the bridge. The update is optional:** a bridge ${minBridge} or newer keeps working with this add-on, and the add-on does not ask for more. Update it to get the bridge changes listed below.`;
+  } else {
+    bridgeLine = `This release ships the same bridge as v${bridge}: a bridge of version ${bridge} needs no update.`;
+  }
   return [
     '## How to update',
     '',
@@ -78,17 +90,19 @@ function updateSteps(version, bridge) {
       'your copy, then restart the client or reconnect the server (`/mcp` in Claude Code). The path of your copy is ' +
       'in the MCP configuration of the client (Claude Code: `claude mcp get <server name>`).',
     '  - Not sure which bridges you have? The options page of the add-on (section Bridge) lists the bridges that ' +
-      'connected, each with its version and "Up to date" or "Update recommended". Claude Desktop and another ' +
+      'connected, each with its version and "Up to date", "Newer version available" or "Update recommended". Claude Desktop and another ' +
       'client on the same computer are two bridges, updated separately.',
     '',
     'The `.sigstore.json` files are provenance attestations, not something to install.',
   ].join('\n');
 }
 
-function releaseNotes(version, changelog, bridgeSource) {
+function releaseNotes(version, changelog, bridgeSource, apiSource) {
   if (!VERSION.test(String(version))) throw new Error(`not a version: ${version}`);
   const bridge = bridgeVersion(bridgeSource);
   if (!bridge) throw new Error('BRIDGE_VERSION not found in mcp-bridge.cjs');
+  const minBridge = minBridgeVersion(apiSource || '');
+  if (!minBridge) throw new Error('MIN_BRIDGE_VERSION not found in extension/mcp_server/api.js');
   const section = changelogSection(changelog, version);
   if (!section) throw new Error(`CHANGELOG.md has no section for ${version}`);
   const { summary, details } = splitSection(section);
@@ -98,7 +112,7 @@ function releaseNotes(version, changelog, bridgeSource) {
   }
   const parts = [];
   if (summary) parts.push(`## In short\n\n${summary}`);
-  parts.push(updateSteps(version, bridge));
+  parts.push(updateSteps(version, bridge, minBridge));
   if (details) parts.push(`## All changes\n\n${details}`);
   return `${parts.join('\n\n')}\n`;
 }
@@ -110,7 +124,8 @@ function main(argv) {
     const notes = releaseNotes(
       argv.find(arg => arg !== '--check'),
       fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'),
-      fs.readFileSync(path.join(root, 'mcp-bridge.cjs'), 'utf8')
+      fs.readFileSync(path.join(root, 'mcp-bridge.cjs'), 'utf8'),
+      fs.readFileSync(path.join(root, 'extension', 'mcp_server', 'api.js'), 'utf8')
     );
     if (!check) process.stdout.write(notes);
     return 0;
@@ -124,4 +139,4 @@ if (require.main === module) {
   process.exitCode = main(process.argv.slice(2));
 }
 
-module.exports = { changelogSection, splitSection, bridgeVersion, updateSteps, releaseNotes, SUMMARY_REQUIRED_FROM };
+module.exports = { changelogSection, splitSection, bridgeVersion, minBridgeVersion, updateSteps, releaseNotes, SUMMARY_REQUIRED_FROM };

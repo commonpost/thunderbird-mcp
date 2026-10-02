@@ -15,6 +15,8 @@
  * - Thresholds: MIN_EXTENSION_VERSION (bridge), MIN_BRIDGE_VERSION and MODE_MIN_BRIDGE_VERSION (add-on) are at most
  *   BRIDGE_VERSION, checked once BRIDGE_VERSION is final; BRIDGE_SECURITY_FLOOR is 0.0.0 or at most
  *   MIN_BRIDGE_VERSION, and arming it must be announced in CHANGELOG.md ("security floor").
+ * - CURRENT_BRIDGE_VERSION in extension/mcp_server/api.js (the bridge the add-on shows as the newest) equals
+ *   BRIDGE_VERSION.
  * Needs the release tags (actions/checkout: fetch-depth 0 and fetch-tags true). Prints ::error:: lines, exits 1.
  */
 'use strict';
@@ -104,11 +106,17 @@ function main(argv) {
   const minBridge = constant(apiText, 'MIN_BRIDGE_VERSION', '"');
   const modeMin = constant(apiText, 'MODE_MIN_BRIDGE_VERSION', '"');
   const floor = constant(apiText, 'BRIDGE_SECURITY_FLOOR', '"');
+  const currentBridge = constant(apiText, 'CURRENT_BRIDGE_VERSION', '"');
   const mcpb = JSON.parse(readText('mcpb/manifest.json')).version;
   if (!bridge) fail("mcp-bridge.cjs has no line const BRIDGE_VERSION = 'X.Y.Z';");
   if (!minExtension) fail("mcp-bridge.cjs has no line const MIN_EXTENSION_VERSION = 'X.Y.Z';");
   if (!minBridge || !modeMin || !floor) {
     fail('extension/mcp_server/api.js needs const MIN_BRIDGE_VERSION, MODE_MIN_BRIDGE_VERSION and BRIDGE_SECURITY_FLOOR = "X.Y.Z";');
+  }
+  if (!currentBridge) {
+    fail('extension/mcp_server/api.js needs const CURRENT_BRIDGE_VERSION = "X.Y.Z";');
+  } else if (bridge && currentBridge !== bridge) {
+    fail(`CURRENT_BRIDGE_VERSION ${currentBridge} in extension/mcp_server/api.js must equal BRIDGE_VERSION ${bridge}`);
   }
   if (bridge && mcpb !== bridge) fail(`mcpb/manifest.json version ${mcpb} must equal BRIDGE_VERSION ${bridge}`);
   if (bridge && VERSION.test(version || '') && compareVersions(bridge, version) > 0) {

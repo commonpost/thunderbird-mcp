@@ -11,7 +11,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
 const script = path.join(root, 'scripts', 'release-notes.cjs');
-const { changelogSection, splitSection, bridgeVersion, releaseNotes, SUMMARY_REQUIRED_FROM } = require(script);
+const { changelogSection, splitSection, bridgeVersion, minBridgeVersion, releaseNotes, SUMMARY_REQUIRED_FROM } = require(script);
 
 const CHANGELOG = [
   '# Changelog', '', 'Intro.', '',
@@ -20,6 +20,7 @@ const CHANGELOG = [
   '### Fixed', '', '- A fix in [brackets].', '',
   '## [1.2.0] - 2027-01-01', '', '### Changed', '', '- Older.', '',
 ].join('\n');
+const api = min => `"use strict";\nconst MIN_BRIDGE_VERSION = "${min}";\n`;
 const bridge = version => `'use strict';\nconst BRIDGE_VERSION = '${version}';\n`;
 
 describe('release notes', () => {
@@ -42,7 +43,7 @@ describe('release notes', () => {
   });
 
   it('puts the summary first, then the update steps with the files of this release, then all changes', () => {
-    const notes = releaseNotes('1.3.0', CHANGELOG, bridge('1.3.0'));
+    const notes = releaseNotes('1.3.0', CHANGELOG, bridge('1.3.0'), api('1.3.0'));
     assert.ok(notes.startsWith('## In short\n\nDrafts can be edited. One fix for long messages.\nNothing breaks.\n\n## How to update\n'));
     assert.ok(notes.includes('`commonpost-mcp-v1.3.0.xpi`'));
     assert.ok(notes.includes('`commonpost-mcp-v1.3.0.mcpb`'));
@@ -55,23 +56,43 @@ describe('release notes', () => {
 
   it(`refuses a release without a summary from ${SUMMARY_REQUIRED_FROM} on, and accepts the older ones`, () => {
     const bare = version => `## [${version}] - 2027-01-01\n\n### Fixed\n\n- x\n`;
-    assert.throws(() => releaseNotes(SUMMARY_REQUIRED_FROM, bare(SUMMARY_REQUIRED_FROM), bridge('0.12.0')), /has no summary: write a few plain lines for users/);
-    assert.throws(() => releaseNotes('1.0.0', bare('1.0.0'), bridge('0.12.0')), /has no summary/);
-    const old = releaseNotes('0.12.0', bare('0.12.0'), bridge('0.12.0'));
+    assert.throws(() => releaseNotes(SUMMARY_REQUIRED_FROM, bare(SUMMARY_REQUIRED_FROM), bridge('0.12.0'), api('0.12.0')), /has no summary: write a few plain lines for users/);
+    assert.throws(() => releaseNotes('1.0.0', bare('1.0.0'), bridge('0.12.0'), api('0.12.0')), /has no summary/);
+    const old = releaseNotes('0.12.0', bare('0.12.0'), bridge('0.12.0'), api('0.12.0'));
     assert.ok(old.startsWith('## How to update\n') && old.endsWith('## All changes\n\n### Fixed\n\n- x\n'));
   });
 
   it('says whether this release changes the bridge', () => {
-    assert.match(releaseNotes('1.3.0', CHANGELOG, bridge('1.3.0')), /\*\*This release changes the bridge: update it in every MCP client that uses it\.\*\*/);
-    const same = releaseNotes('1.3.0', CHANGELOG, bridge('1.2.0'));
+    assert.match(releaseNotes('1.3.0', CHANGELOG, bridge('1.3.0'), api('1.3.0')), /\*\*This release changes the bridge: update it in every MCP client that uses it\.\*\*/);
+    const same = releaseNotes('1.3.0', CHANGELOG, bridge('1.2.0'), api('1.2.0'));
     assert.match(same, /This release ships the same bridge as v1\.2\.0: a bridge of version 1\.2\.0 needs no update\./);
     assert.ok(!same.includes('This release changes the bridge'));
   });
 
+  it('reads MIN_BRIDGE_VERSION from api.js', () => {
+    assert.equal(minBridgeVersion(api('1.2.0')), '1.2.0');
+    assert.equal(minBridgeVersion('const MIN_BRIDGE_VERSION = compute();'), null);
+    assert.match(minBridgeVersion(fs.readFileSync(path.join(root, 'extension', 'mcp_server', 'api.js'), 'utf8')), /^\d+\.\d+\.\d+$/);
+  });
+
+  it('calls a changed bridge optional when the add-on does not ask for it', () => {
+    const optional = releaseNotes('1.3.0', CHANGELOG, bridge('1.3.0'), api('1.2.0'));
+    assert.ok(optional.includes('**This release changes the bridge. The update is optional:** a bridge 1.2.0 or newer keeps working with this add-on, and the add-on does not ask for more. Update it to get the bridge changes listed below.'));
+    assert.ok(!optional.includes('update it in every MCP client'));
+    const same = releaseNotes('1.3.0', CHANGELOG, bridge('1.2.0'), api('1.2.0'));
+    assert.ok(!same.includes('optional'));
+    assert.ok(optional.includes('"Up to date", "Newer version available" or "Update recommended"'));
+  });
+
+  it('refuses an api.js without MIN_BRIDGE_VERSION', () => {
+    assert.throws(() => releaseNotes('1.3.0', CHANGELOG, bridge('1.3.0'), 'const x = 1;'), /MIN_BRIDGE_VERSION not found/);
+    assert.throws(() => releaseNotes('1.3.0', CHANGELOG, bridge('1.3.0')), /MIN_BRIDGE_VERSION not found/);
+  });
+
   it('refuses a version without a section, a malformed version and a bridge without BRIDGE_VERSION', () => {
-    assert.throws(() => releaseNotes('1.1.0', CHANGELOG, bridge('1.1.0')), /CHANGELOG\.md has no section for 1\.1\.0/);
-    assert.throws(() => releaseNotes('v1.3.0', CHANGELOG, bridge('1.3.0')), /not a version/);
-    assert.throws(() => releaseNotes('1.3.0', CHANGELOG, 'const x = 1;'), /BRIDGE_VERSION not found/);
+    assert.throws(() => releaseNotes('1.1.0', CHANGELOG, bridge('1.1.0'), api('1.1.0')), /CHANGELOG\.md has no section for 1\.1\.0/);
+    assert.throws(() => releaseNotes('v1.3.0', CHANGELOG, bridge('1.3.0'), api('1.3.0')), /not a version/);
+    assert.throws(() => releaseNotes('1.3.0', CHANGELOG, 'const x = 1;', api('1.3.0')), /BRIDGE_VERSION not found/);
   });
 
   it('runs on this repository for the last released version', () => {

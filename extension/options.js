@@ -737,6 +737,7 @@ const BRIDGE_PACKAGING_LABELS = {
 };
 const BRIDGE_STATE_LABELS = {
   "up-to-date": "Up to date.",
+  "newer-available": "Newer version available: this bridge works, the update is optional.",
   "update-recommended": "Update recommended.",
   "unversioned": "Update recommended: this bridge does not report a readable version.",
   "development": "Development build: not checked.",
@@ -761,7 +762,21 @@ function bridgeLine(text) {
   return div;
 }
 
-function renderBridge(bridge) {
+const BRIDGE_VERSION_PATTERN = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
+
+function validBridgeVersion(version) {
+  return typeof version === "string" && BRIDGE_VERSION_PATTERN.test(version) ? version : null;
+}
+
+function bridgeStatusLabel(bridge, currentBridgeVersion) {
+  const current = validBridgeVersion(currentBridgeVersion);
+  if (bridge.state === "newer-available" && current) {
+    return `Newer version available (${current}): this bridge works, the update is optional.`;
+  }
+  return BRIDGE_STATE_LABELS[bridge.state] || bridge.state;
+}
+
+function renderBridge(bridge, currentBridgeVersion) {
   const li = document.createElement("li");
   li.appendChild(bridgeLine("Version: " + bridgeVersionLabel(bridge)));
   li.appendChild(bridgeLine("Installed as: " + (BRIDGE_PACKAGING_LABELS[bridge.packaging] || "unknown")));
@@ -771,8 +786,8 @@ function renderBridge(bridge) {
     li.appendChild(bridgeLine("Profile: invalid (ignored)"));
   }
   li.appendChild(bridgeLine("Last seen: " + new Date(bridge.lastSeen).toLocaleString()));
-  li.appendChild(bridgeLine("Status: " + (BRIDGE_STATE_LABELS[bridge.state] || bridge.state)));
-  const needsUpdate = ["update-recommended", "unversioned", "refused"].includes(bridge.state);
+  li.appendChild(bridgeLine("Status: " + bridgeStatusLabel(bridge, currentBridgeVersion)));
+  const needsUpdate = ["newer-available", "update-recommended", "unversioned", "refused"].includes(bridge.state);
   if (needsUpdate) {
     li.appendChild(bridgeLine(bridge.packaging === "mcpb" ? BRIDGE_ADVICE_LABELS.mcpb : BRIDGE_ADVICE_LABELS.other));
   }
@@ -800,8 +815,10 @@ async function loadBridgeStatus() {
     if (status.securityFloor !== "0.0.0") {
       text += ` It refuses bridges older than ${status.securityFloor}.`;
     }
+    const current = validBridgeVersion(status.currentBridgeVersion);
+    if (current) text += ` The bridge published with it is ${current}.`;
     bridgeThresholds.textContent = text;
-    bridgeList.replaceChildren(...status.bridges.map(renderBridge));
+    bridgeList.replaceChildren(...status.bridges.map((bridge) => renderBridge(bridge, status.currentBridgeVersion)));
     bridgeEmpty.hidden = status.bridges.length > 0;
     bridgeRefreshStatus.textContent = "";
     bridgeRefreshStatus.className = "save-status";
