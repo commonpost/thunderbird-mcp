@@ -38,6 +38,10 @@ project is kept in this repository.
 - A signature with `file://` images: the URL that was replaced by its data was looked for in a lower-cased copy of the
   signature, made again for every URL, and a character whose lower case is longer (U+0130) before a URL moved the
   place that was replaced. The signature is now read once, as it is.
+- `mcp-bridge.cjs` waits up to 180 s, instead of 150 s, for a direct send or a saved draft. Before the 120 s of the
+  send or the save, the add-on can wait for a folder summary (20 s), the original message (20 s) and its quote
+  (15 s): 175 s in all, so a bridge that gave up at 150 s could report a failure for a message that still went out. A
+  test now keeps the wait of the bridge above the sum of the waits of the add-on. A bridge 0.13 keeps working.
 
 ## [0.13.0] - 2026-10-02
 

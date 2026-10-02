@@ -113,7 +113,7 @@ The Thunderbird extension embeds a local HTTP server with session-scoped auth to
 
 All compose tools open a window for you to review and edit before sending by default. The **Block `skipReview`** preference is on by default, so `skipReview: true` (and `mode: "send"`) is rejected until you explicitly disable the preference; only then can it send directly. `mode: "draft"` only saves a draft, so the preference does not block it (even next to `skipReview: true`); it needs the `saveDraft` tool to be enabled in the settings, as a tool you disabled is not reachable through another one. Attachments can be file paths or inline base64 objects.
 
-A direct send or saving a draft (`saveDraft`, `mode: "draft"`) can take a while: the bridge waits up to 150 s for Thunderbird (30 s for every other call). Your MCP client may also have its own time limit for a tool call; if it is shorter than 150 s, the client can give up while Thunderbird goes on sending or saving, so check the Sent folder and the Outbox (or the Drafts folder) before retrying to avoid sending the message, or saving the draft, twice.
+A direct send or saving a draft (`saveDraft`, `mode: "draft"`) can take a while: the bridge waits up to 180 s for Thunderbird (30 s for every other call). Your MCP client may also have its own time limit for a tool call; if it is shorter than 180 s, the client can give up while Thunderbird goes on sending or saving, so check the Sent folder and the Outbox (or the Drafts folder) before retrying to avoid sending the message, or saving the draft, twice.
 
 Compose tools validate the `from` identity strictly -- if the specified sender doesn't match any configured Thunderbird identity, the tool returns an error instead of silently substituting another account.
 
@@ -402,7 +402,7 @@ curl -X POST http://127.0.0.1:$PORT \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-A program that calls the HTTP API directly, without the bridge, sends no `X-Commonpost-Bridge` header and is treated like a bridge 0.11 or older: tool results can carry a notice to update the bridge, and `replyToMessage` / `forwardMessage` with `mode: "send"` or `"draft"` are refused (an old bridge stops waiting after 30 s). A direct client that waits at least 150 s for those calls can declare itself with `-H "X-Commonpost-Bridge: 0.12.0; packaging=file"`. If a release arms the bridge security floor, a client without the header is refused entirely.
+A program that calls the HTTP API directly, without the bridge, sends no `X-Commonpost-Bridge` header and is treated like a bridge 0.11 or older: tool results can carry a notice to update the bridge, and `replyToMessage` / `forwardMessage` with `mode: "send"` or `"draft"` are refused (an old bridge stops waiting after 30 s). A direct client that waits at least 180 s for those calls can declare itself with `-H "X-Commonpost-Bridge: 0.12.0; packaging=file"`. If a release arms the bridge security floor, a client without the header is refused entirely.
 
 **Dev-only extension reload:** After changing extension source locally, remove the add-on from Thunderbird, restart, reinstall the XPI, and restart again. Thunderbird caches aggressively.
 
