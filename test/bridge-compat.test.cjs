@@ -391,6 +391,20 @@ describe('shipped constants', () => {
       { minBridge: x.MIN_BRIDGE_VERSION, modeMin: x.MODE_MIN_BRIDGE_VERSION, floor: x.BRIDGE_SECURITY_FLOOR });
   });
 
+  it('recommend the first bridge that waits for saveDraft, and keep the modes at the first bridge that waits for them', () => {
+    // 0.13.0 is the first bridge whose isDraftCall counts saveDraft (150 s); a bridge 0.12 gives up after 30 s
+    // while Thunderbird may still save. It gets the notice; nothing is refused.
+    assert.equal(x.MIN_BRIDGE_VERSION, '0.13.0');
+    assert.equal(x.MODE_MIN_BRIDGE_VERSION, '0.12.0');
+    const bridge = require('../mcp-bridge.cjs');
+    const saveDraft = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'saveDraft', arguments: {} } };
+    assert.equal(bridge.requestOptionsFor(saveDraft).timeoutMs, 150000);
+    assert.equal(x.bridgeCompatDecision(info('0.12.0'), '0.13.0', x.BRIDGE_THRESHOLDS), 'warn');
+    assert.equal(x.bridgeCompatDecision(info('0.13.0'), '0.13.0', x.BRIDGE_THRESHOLDS), 'ok');
+    assert.equal(x.bridgeModeRefusal('replyToMessage', { mode: 'draft' }, info('0.12.0'), '0.13.0', x.BRIDGE_THRESHOLDS,
+      { skipReviewBlocked: true, saveDraftEnabled: true }), null);
+  });
+
   it('keep an armed floor at or below the recommended bridge version', () => {
     // Whether the floor is armed is checked against the CHANGELOG by scripts/check-versions.cjs
     if (x.BRIDGE_SECURITY_FLOOR !== '0.0.0') {

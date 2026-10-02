@@ -25,6 +25,9 @@ project is kept in this repository.
 
 ### Changed
 
+- The add-on recommends bridge 0.13.0 or newer (`MIN_BRIDGE_VERSION`), the first that waits 150 s for `saveDraft`:
+  an older bridge still works, and gets the notice to update in a tool result and "Update recommended" in the
+  options page. `mode: "send"` and `"draft"` keep their own minimum, 0.12.0.
 - The notice for a bridge to update, in a tool result and in the options page (section Bridge), says where the copy
   to replace is (the MCP configuration of the client; `claude mcp get <server name>` in Claude Code) and how to
   install the `.mcpb` bundle when the file does not open in Claude Desktop (Settings > Extensions > Advanced settings
