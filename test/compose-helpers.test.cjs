@@ -125,7 +125,7 @@ describe('neutralizeEmbedMarks', () => {
       const html = Array.from({ length: 1 + next(12) }, () => pieces[next(pieces.length)]).join('');
       const out = api.neutralizeEmbedMarks(html);
       for (const m of out.matchAll(/moz-do-not-send/gi)) {
-        assert.equal(out.slice(m.index, m.index + 22), 'moz-do-not-send="true"', JSON.stringify([html, out]));
+        assert.equal(out.slice(m.index, m.index + 22).toLowerCase(), 'moz-do-not-send="true"', JSON.stringify([html, out]));
       }
     }
   });
@@ -654,7 +654,8 @@ describe('splitDraftBody', () => {
 // expressions they replace (kept here as the reference) read to the end of the text once per unterminated tag.
 describe('tags of a quote: same result as the regular expressions, in linear time', () => {
   const reference = {
-    stripDocumentTags: html => html.replace(/<!DOCTYPE[^>]*>|<\/?(?:html|head|body)\b[^>]*>/gi, ''),
+    stripDocumentTags: html => html.replace(/<!DOCTYPE[^>]*>|<\/?(?:html|head|body)\b[^>]*>/gi, '')
+      .replace(/<(?=!DOCTYPE|\/?(?:html|head|body)\b)/gi, '&lt;'),
     serializerMetaCharset: html => html.replace(/<meta\b(?=[^>]*\bhttp-equiv\s*=\s*["']?content-type\b)[^>]*>/gi,
       '<meta http-equiv="content-type" content="text/html; charset=UTF-8">'),
     tagEmbeddedObjects: (html, isSafe) => html.replace(/<(a|img)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag, name) => {
@@ -680,6 +681,20 @@ describe('tags of a quote: same result as the regular expressions, in linear tim
       assert.equal(api.stripDocumentTags(html), reference.stripDocumentTags(html), JSON.stringify(html));
       assert.equal(api.serializerMetaCharset(html), reference.serializerMetaCharset(html), JSON.stringify(html));
       assert.equal(api.tagEmbeddedObjects(html, safe), reference.tagEmbeddedObjects(html, safe), JSON.stringify(html));
+    }
+  });
+
+  it('leaves no document tag: one without end, or one the removal put together, is made text', () => {
+    assert.equal(api.stripDocumentTags('<p>x</p><body background="data:x" '), '<p>x</p>&lt;body background="data:x" ');
+    // as Thunderbird serializes <bo<body x>dy background=...>: an element named "bo<body"
+    assert.equal(api.stripDocumentTags('<bo<body x="">dy background="data:x" y&gt;t</bo<body>'), '&lt;body background="data:x" y&gt;t</bo');
+    assert.equal(api.stripDocumentTags('<HT<html>ML><!DOC<head>TYPE x'), '&lt;HTML>&lt;!DOCTYPE x');
+    const pieces = ['<body', '<bo', 'dy', '<html', '</body', '<!DOCTYPE', '<head', '>', ' ', 'x', '<', '/', 'BODY', 'ht', 'ml', '<!DOC', 'TYPE'];
+    let seed = 20261002;
+    const next = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    for (let i = 0; i < 20000; i++) {
+      const html = Array.from({ length: 1 + next(14) }, () => pieces[next(pieces.length)]).join('');
+      assert.doesNotMatch(api.stripDocumentTags(html), /<!DOCTYPE|<\/?(?:html|head|body)\b/i, JSON.stringify(html));
     }
   });
 
