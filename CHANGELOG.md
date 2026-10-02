@@ -15,7 +15,9 @@ project is kept in this repository.
   published with the add-on, and names that version.
 - Saved searches (virtual folders), through `createFolder` (`savedSearch`), `listFolders` (`savedSearches`) and
   `deleteFolder` (a saved search is deleted as a view, never as mail). By Sven Scharmentke (@svnscha), from
-  TKasperczyk/thunderbird-mcp#198.
+  TKasperczyk/thunderbird-mcp#198. Conditions are the same as `createFilter`'s (same typed values and address-book
+  restrictions), at most 50 folders and 50 conditions; a searched folder of an excluded account is counted in
+  `hiddenSearchFolders`, never named.
 
 ### Changed
 

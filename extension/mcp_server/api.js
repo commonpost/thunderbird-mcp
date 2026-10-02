@@ -3013,6 +3013,32 @@ function readTermGrouping(term, out) {
   return out;
 }
 
+// One search term read back as { attrib, op, value, header... } with its typed
+// value (used for filter conditions and for saved searches).
+function serializeSearchTerm(term) {
+  if (term.matchAll) {
+    return readTermGrouping(term, { matchAll: true, booleanAnd: term.booleanAnd });
+  }
+  const t = {
+    attrib: ATTRIB_NAMES[term.attrib]
+      || (isArbitraryHeaderAttrib(term.attrib) ? "otherHeader" : String(term.attrib)),
+    op: OP_NAMES[term.op] || String(term.op),
+    booleanAnd: term.booleanAnd,
+  };
+  try {
+    t.value = getSearchValue(term.value, term.attrib);
+  } catch (e) {
+    t.value = "";
+    t.valueError = describeError(e);
+  }
+  if (term.arbitraryHeader) t.header = term.arbitraryHeader;
+  if (SEARCH_ATTRIB_CUSTOM !== undefined && term.attrib === SEARCH_ATTRIB_CUSTOM) t.customId = term.customId;
+  // The message-header property a hdrProperty term tests (two such terms
+  // differ only by it).
+  if (SEARCH_ATTRIB_HDR_PROPERTY.includes(term.attrib) || term.hdrProperty) t.hdrProperty = term.hdrProperty;
+  return readTermGrouping(term, t);
+}
+
 // Read a rule back for listFilters/updateFilter. Nothing unreadable is
 // skipped silently: the entry says what could not be read.
 function serializeFilterRule(filter, index) {
@@ -3020,28 +3046,7 @@ function serializeFilterRule(filter, index) {
   let termsError = null;
   try {
     for (const term of filter.searchTerms) {
-      if (term.matchAll) {
-        terms.push(readTermGrouping(term, { matchAll: true, booleanAnd: term.booleanAnd }));
-        continue;
-      }
-      const t = {
-        attrib: ATTRIB_NAMES[term.attrib]
-          || (isArbitraryHeaderAttrib(term.attrib) ? "otherHeader" : String(term.attrib)),
-        op: OP_NAMES[term.op] || String(term.op),
-        booleanAnd: term.booleanAnd,
-      };
-      try {
-        t.value = getSearchValue(term.value, term.attrib);
-      } catch (e) {
-        t.value = "";
-        t.valueError = describeError(e);
-      }
-      if (term.arbitraryHeader) t.header = term.arbitraryHeader;
-      if (SEARCH_ATTRIB_CUSTOM !== undefined && term.attrib === SEARCH_ATTRIB_CUSTOM) t.customId = term.customId;
-      // The message-header property a hdrProperty term tests (two such terms
-      // differ only by it).
-      if (SEARCH_ATTRIB_HDR_PROPERTY.includes(term.attrib) || term.hdrProperty) t.hdrProperty = term.hdrProperty;
-      terms.push(readTermGrouping(term, t));
+      terms.push(serializeSearchTerm(term));
     }
   } catch (e) {
     termsError = describeError(e);
@@ -13696,6 +13701,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
 
                 if (savedSearch !== undefined && savedSearch !== null) {
+                  if (!isPlainObject(savedSearch)) return { error: "savedSearch must be an object" };
                   return createVirtualFolder(name, parentFolderPath, savedSearch.searchFolderPaths, savedSearch.conditions, savedSearch.searchOnline);
                 }
 
@@ -13741,72 +13747,30 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               ).VirtualFolderHelper;
             }
 
+            // At most this many searched folders and conditions per saved search.
+            const SAVED_SEARCH_MAX_FOLDERS = 50;
+            const SAVED_SEARCH_MAX_CONDITIONS = 50;
+
+            function isPlainObject(v) {
+              return v !== null && typeof v === "object" && !Array.isArray(v);
+            }
+
             /**
-             * Build nsIMsgSearchTerm objects outside of a filter. Filters mint
-             * terms via filter.createTerm(); a saved search has no filter, so we
-             * borrow a throwaway search session as the term factory. Same strict
-             * ATTRIB_MAP/OP_MAP allow-lists as buildTerms -- raw enum values must
-             * not be reachable from MCP input.
+             * Build nsIMsgSearchTerm objects outside of a filter. buildTerms
+             * only needs createTerm() and appendTerm() from its "filter"; a
+             * saved search has none, so a throwaway search session mints the
+             * terms and a list collects them. Same allow-lists, typed values
+             * and address-book restrictions as createFilter.
              */
             function buildSearchTerms(conditions) {
               const session = Cc["@mozilla.org/messenger/searchSession;1"]
                 .createInstance(Ci.nsIMsgSearchSession);
               const terms = [];
-              for (const cond of conditions) {
-                if (!Object.prototype.hasOwnProperty.call(ATTRIB_MAP, cond.attrib)) {
-                  throw new Error(`Unknown attribute: ${cond.attrib}`);
-                }
-                if (!Object.prototype.hasOwnProperty.call(OP_MAP, cond.op)) {
-                  throw new Error(`Unknown operator: ${cond.op}`);
-                }
-                const term = session.createTerm();
-                term.attrib = ATTRIB_MAP[cond.attrib];
-                term.op = OP_MAP[cond.op];
-
-                // nsIMsgSearchValue is a tagged union: only the member matching
-                // the attribute's type may be written. Assigning .str to a
-                // numeric/status attribute throws NS_ERROR_ILLEGAL_VALUE, so
-                // dispatch on the attribute rather than assuming everything is
-                // a string.
-                const value = term.value;
-                value.attrib = term.attrib;
-                const raw = cond.value == null ? "" : String(cond.value);
-                const num = parseInt(raw, 10);
-                switch (term.attrib) {
-                  case 13: // hasAttachment -- matched via the message flag
-                    value.status = Ci.nsMsgMessageFlags.Attachment;
-                    break;
-                  case 5:  // status
-                  case 14: // junkStatus
-                    value.status = Number.isNaN(num) ? 0 : num;
-                    break;
-                  case 4: // priority
-                    value.priority = Number.isNaN(num) ? 0 : num;
-                    break;
-                  case 10: // ageInDays
-                    value.age = Number.isNaN(num) ? 0 : num;
-                    break;
-                  case 11: // size
-                    value.size = Number.isNaN(num) ? 0 : num;
-                    break;
-                  case 15: // junkPercent
-                    value.junkPercent = Number.isNaN(num) ? 0 : num;
-                    break;
-                  case 3: { // date -- nsIMsgSearchValue.date is PRTime (microseconds)
-                    const parsed = Date.parse(raw);
-                    if (Number.isNaN(parsed)) throw new Error(`Invalid date value: ${raw}`);
-                    value.date = parsed * 1000;
-                    break;
-                  }
-                  default:
-                    value.str = raw;
-                }
-                term.value = value;
-
-                term.booleanAnd = cond.booleanAnd !== false;
-                if (cond.header) term.arbitraryHeader = cond.header;
-                terms.push(term);
-              }
+              buildTerms(
+                { createTerm: () => session.createTerm(), appendTerm: (t) => terms.push(t) },
+                conditions,
+                { isAddressBookAllowed: checkFilterAddressBook }
+              );
               return terms;
             }
 
@@ -13821,12 +13785,27 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (!Array.isArray(searchFolderPaths) || searchFolderPaths.length === 0) {
                   return { error: "searchFolderPaths must be a non-empty array of folder URIs" };
                 }
+                if (searchFolderPaths.length > SAVED_SEARCH_MAX_FOLDERS) {
+                  return { error: `searchFolderPaths has ${searchFolderPaths.length} folders; at most ${SAVED_SEARCH_MAX_FOLDERS} are allowed` };
+                }
+                if (searchFolderPaths.some((p) => typeof p !== "string" || !p)) {
+                  return { error: "searchFolderPaths must contain only non-empty folder URI strings" };
+                }
                 if (!Array.isArray(conditions) || conditions.length === 0) {
                   return { error: "conditions must be a non-empty array" };
+                }
+                if (conditions.length > SAVED_SEARCH_MAX_CONDITIONS) {
+                  return { error: `conditions has ${conditions.length} entries; at most ${SAVED_SEARCH_MAX_CONDITIONS} are allowed` };
+                }
+                if (!conditions.every(isPlainObject)) {
+                  return { error: "each condition must be an object" };
                 }
 
                 const parentResult = getAccessibleFolder(parentFolderPath);
                 if (parentResult.error) return parentResult;
+                if (parentResult.folder.flags & Ci.nsMsgFolderFlags.Virtual) {
+                  return { error: "Cannot create a saved search under a saved search" };
+                }
 
                 // Every searched folder goes through the same access check as the
                 // parent -- otherwise a saved search would be a way to read mail
@@ -13874,32 +13853,39 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 for (const folder of MailServices.accounts.allFolders) {
                   if (!(folder.flags & Ci.nsMsgFolderFlags.Virtual)) continue;
                   if (getAccessibleFolder(folder.URI).error) continue;
-                  const serverKey = folder.server ? folder.server.key : null;
-                  if (accountId && serverKey !== accountId) continue;
+                  // The account key (as listAccounts and listFolders give it), not the key of its server
+                  let accountKey = null;
+                  try { accountKey = MailServices.accounts.findAccountForServer(folder.server)?.key ?? null; } catch { /* no account */ }
+                  if (accountId && accountKey !== accountId) continue;
 
                   let searchFolders = [];
+                  let hiddenSearchFolders = 0;
                   let terms = [];
                   let onlineSearch = false;
                   try {
                     const w = helper.wrapVirtualFolder(folder);
-                    searchFolders = (w.searchFolders || []).map((f) => f.URI);
+                    // A searched folder of an account the user excluded is
+                    // counted, not named: its URI would reveal it.
+                    for (const f of w.searchFolders || []) {
+                      let accessible = false;
+                      try { accessible = !getAccessibleFolder(f.URI).error; } catch { /* hidden */ }
+                      if (accessible) searchFolders.push(f.URI);
+                      else hiddenSearchFolders++;
+                    }
                     onlineSearch = !!w.onlineSearch;
-                    terms = (w.searchTerms || []).map((t) => ({
-                      attrib: ATTRIB_NAMES[t.attrib] ?? t.attrib,
-                      op: OP_NAMES[t.op] ?? t.op,
-                      value: t.value ? t.value.str : "",
-                      booleanAnd: t.booleanAnd,
-                    }));
+                    terms = (w.searchTerms || []).map(serializeSearchTerm);
                   } catch { /* unreadable wrapper -- still report the folder */ }
 
-                  out.push({
+                  const entry = {
                     name: folder.prettyName || folder.name,
                     path: folder.URI,
-                    accountId: serverKey,
+                    accountId: accountKey,
                     searchFolders,
                     onlineSearch,
                     terms,
-                  });
+                  };
+                  if (hiddenSearchFolders) entry.hiddenSearchFolders = hiddenSearchFolders;
+                  out.push(entry);
                 }
                 return out;
               } catch (e) {
