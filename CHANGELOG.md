@@ -8,9 +8,16 @@ project is kept in this repository.
 
 ### Added
 
-- `replyToMessage` `latestInThread: true` replies to the newest message of the conversation (Sent included); the
-  result names it in `repliedTo`. The server instructions gain a line on replies and one on editing drafts with
-  `saveDraft` `draftId`. Thanks to Konstantin (@mazixs), last piece of #18.
+- `replyToMessage` `latestInThread: true` replies to the newest message of the conversation (Sent included; Drafts,
+  Templates and the Outbox left out), found as `searchMessages` `threadOf` finds it. When that is another message
+  than the one passed, the result names it in `repliedTo` (`messageId`, `folderPath`, `date`, and
+  `linkedBy: "subject"` when it has no References to the conversation). The server instructions gain a line on
+  replies and one on editing drafts with `saveDraft` `draftId`. Thanks to Konstantin (@mazixs), last piece of #18.
+  - Only for a window or a draft, which you review: with `mode: "send"` (or `skipReview`) it is refused, because
+    anyone can join a conversation with a message and the newest one would be quoted and answered unseen. It also
+    needs the `searchMessages` tool enabled.
+  - `threadIncomplete: true` in the result means the mailbox holds more messages than the conversation search reads
+    (10,000 headers): a newer message may exist.
 
 ## [0.13.0] - 2026-10-02
 

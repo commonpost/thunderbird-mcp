@@ -16,7 +16,7 @@ assert.ok(start >= 0 && end > start, 'COMPOSE HELPERS markers missing');
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${apiSource.slice(start, end)}
-this.api = { resolveComposeMode, composeModeRefusal, DIRECT_SEND_BLOCKED_ERROR, DRAFT_TOOL_DISABLED_ERROR, computeReplyRecipients, switchIdentityRecipients, buildReplyReferences, referenceIds,
+this.api = { resolveComposeMode, composeModeRefusal, DIRECT_SEND_BLOCKED_ERROR, DRAFT_TOOL_DISABLED_ERROR, latestInThreadRefusal, LATEST_IN_THREAD_SEND_ERROR, LATEST_IN_THREAD_SEARCH_DISABLED_ERROR, computeReplyRecipients, switchIdentityRecipients, buildReplyReferences, referenceIds,
   mergeDraftFields, draftPriorityName, draftInfoFields, forEachHtmlTag, trailingSeparatorLength,
   buildCitePrefix, divWrappedHtml, citeText, removePlaintextTag, stripDocumentTags, plainTextToForwardHtml, forwardHeaderRows,
   forwardHeaderTableHtml, forwardPlainText, joinFlowedLines, replaceFileURLs, frameSignature, frameImageSignature,
@@ -53,6 +53,25 @@ describe('composeModeRefusal (the skipReview block)', () => {
     for (const [mode, skipReview] of [['draft', true], ['draft', false], ['window', true], [undefined, false]]) {
       const composeMode = api.resolveComposeMode(mode, skipReview);
       assert.equal(api.composeModeRefusal(composeMode, { skipReviewBlocked: true, saveDraftEnabled: true }), null, `${mode} ${skipReview}`);
+    }
+  });
+});
+
+describe('latestInThreadRefusal', () => {
+  it('never lets the conversation pick the message of a direct send, whichever way the send was asked for', () => {
+    for (const [mode, skipReview] of [['send', false], ['send', true], [undefined, true]]) {
+      const composeMode = api.resolveComposeMode(mode, skipReview);
+      for (const searchEnabled of [true, false]) {
+        assert.equal(api.latestInThreadRefusal(composeMode, { searchEnabled }), api.LATEST_IN_THREAD_SEND_ERROR, `${mode} ${skipReview}`);
+      }
+    }
+  });
+
+  it('allows a window or a draft, where the reply is reviewed, when searchMessages is enabled', () => {
+    for (const [mode, skipReview] of [['draft', true], ['draft', false], ['window', true], [undefined, false]]) {
+      const composeMode = api.resolveComposeMode(mode, skipReview);
+      assert.equal(api.latestInThreadRefusal(composeMode, { searchEnabled: true }), null, `${mode} ${skipReview}`);
+      assert.equal(api.latestInThreadRefusal(composeMode, { searchEnabled: false }), api.LATEST_IN_THREAD_SEARCH_DISABLED_ERROR, `${mode} ${skipReview}`);
     }
   });
 });
