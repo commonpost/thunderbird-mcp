@@ -96,7 +96,7 @@ The Thunderbird extension embeds a local HTTP server with session-scoped auth to
 | `updateMessage` | Mark read/unread, flag/unflag, add/remove tags, move between folders, or trash -- supports bulk via `messageIds` |
 | `deleteMessages` | Delete messages -- drafts are safely moved to Trash |
 | `createFolder` | Create new subfolders to organize your mail, or a saved search (virtual folder: a live view, nothing moved) with `savedSearch` |
-| `renameFolder` | Rename an existing mail folder |
+| `renameFolder` | Rename an existing mail folder; returns its new URI as `path` |
 | `deleteFolder` | Delete a folder (moves to Trash, or permanently deletes if already in Trash); a saved search is removed as a view, no mail deleted |
 | `moveFolder` | Move a folder to a new parent within the same account |
 | `emptyTrash` | Permanently delete all messages in Trash (including subfolders) |

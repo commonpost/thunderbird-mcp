@@ -6,6 +6,18 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Changed
+
+- `searchMessages` adds a `hint` to an empty result of a search of several words: every word must match as written,
+  and a single leading operator (`from:Carol training budget`) sends every word to that field. Results that found
+  something are unchanged.
+- `sendMail`, `saveDraft`, `replyToMessage` and `forwardMessage` add a `warning` when a recipient has no e-mail address
+  (`to: "Frank Osei"`): the draft was saved and reported as a success, addressed to nobody. The call still succeeds,
+  because the name of a Thunderbird mailing list is such a recipient too. A direct send that fails names it as the
+  likely cause.
+- `renameFolder` returns the new URI of the folder as `path`, next to `oldPath`, and says so in its message: a caller
+  that went on with the old URI got "Folder not found".
+
 ### Fixed
 
 - `listEvents` lists a whole day when `startDate` and `endDate` are the same date without a time (`2026-10-15`): it
