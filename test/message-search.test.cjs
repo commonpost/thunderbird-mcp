@@ -42,7 +42,7 @@ describe('parseSearchQuery', () => {
 
   it('keeps the legacy single leading operator meaning', () => {
     assert.deepEqual(parse('from:Alice Smith'), {
-      terms: [{ field: 'author', value: 'alice' }, { field: 'author', value: 'smith' }], failed: false,
+      terms: [{ field: 'author', value: 'alice' }, { field: 'author', value: 'smith' }], failed: false, allInOperator: 'from',
     });
     assert.deepEqual(parse('subject: quarterly report').terms.map(t => t.field), ['subject', 'subject']);
   });

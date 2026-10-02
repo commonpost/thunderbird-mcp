@@ -1884,7 +1884,7 @@ function parseSearchQuery(query) {
   if (opCount === 1 && tokens[0].op) {
     const field = SEARCH_FIELD_OPERATORS[tokens[0].op];
     const values = tokens.map(t => t.value).filter(Boolean);
-    return { terms: values.map(value => ({ field, value })), failed: values.length === 0 };
+    return { terms: values.map(value => ({ field, value })), failed: values.length === 0, allInOperator: tokens[0].op };
   }
 
   const terms = [];
@@ -1903,6 +1903,28 @@ function parseSearchQuery(query) {
     terms.push({ field: t.op ? SEARCH_FIELD_OPERATORS[t.op] : null, value: t.value });
   }
   return { terms, failed: terms.length === 0 };
+}
+
+/**
+ * What to tell the caller when a header search of several words finds nothing: the rule that made it empty, so the
+ * next query has a chance (an agent otherwise retries blindly, or reports "no such mail"). Null for 0 or 1 word.
+ */
+function emptySearchHint(parsed) {
+  if (!parsed || !Array.isArray(parsed.terms) || parsed.terms.length < 2) return null;
+  if (parsed.allInOperator) {
+    const op = parsed.allInOperator;
+    return `Nothing matched. A single leading operator applies to every word: all ${parsed.terms.length} words were searched in ${op}: only. `
+      + `Put the operator last ("other words ${op}:value") or search fewer words.`;
+  }
+  return "Nothing matched. Every word must match as written (no other word forms): search fewer or other words.";
+}
+
+// Adds the hint to an empty search envelope ({ totalMatches: 0 } or { count: 0 }); anything else is returned as is.
+function withEmptySearchHint(result, parsed) {
+  if (!result || typeof result !== "object" || Array.isArray(result) || result.error) return result;
+  if (result.totalMatches !== 0 && result.count !== 0) return result;
+  const hint = emptySearchHint(parsed);
+  return hint ? { ...result, hint } : result;
 }
 
 /**
@@ -4299,6 +4321,46 @@ const COMPOSE_MODES = ["window", "draft", "send"];
 function resolveComposeMode(mode, skipReview) {
   if (COMPOSE_MODES.includes(mode)) return mode;
   return skipReview ? "send" : "window";
+}
+
+// Recipients given without an e-mail address ("Frank Osei"). Thunderbird keeps such an entry as typed, so a draft
+// looks addressed while nobody would receive it. The name of a Thunderbird mailing list is such an entry too, which
+// is why the compose tools warn instead of refusing. Returns at most 5 entries of the to/cc/bcc headers, quotes and
+// angle brackets respected ('"Osei, Frank" <f@x.org>' is one entry, with an address).
+function recipientsWithoutAddress(...headers) {
+  const out = [];
+  for (const header of headers) {
+    if (typeof header !== "string") continue;
+    let entry = "";
+    let quoted = false;
+    let angle = false;
+    const flush = () => {
+      const e = entry.trim();
+      if (e && !e.includes("@") && out.length < 5) out.push(e.length > 80 ? `${e.slice(0, 80)}...` : e);
+      entry = "";
+    };
+    for (const ch of header) {
+      if (ch === '"') quoted = !quoted;
+      else if (!quoted && ch === "<") angle = true;
+      else if (!quoted && ch === ">") angle = false;
+      if ((ch === "," || ch === ";") && !quoted && !angle) flush();
+      else entry += ch;
+    }
+    flush();
+  }
+  return out;
+}
+
+// A compose result plus a note when a recipient has no address: a warning on a result that succeeded, the likely
+// cause after an error (a direct send to a bare name fails with an opaque status).
+function withRecipientWarning(result, to, cc, bcc) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+  const missing = recipientsWithoutAddress(to, cc, bcc);
+  if (!missing.length) return result;
+  const warning = `No e-mail address in: ${missing.map(m => JSON.stringify(m)).join(", ")}. Unless this is a Thunderbird mailing list, `
+    + "nobody would receive the message: look the address up (searchContacts, then searchMessages) and correct the recipients.";
+  if (result.error) return { ...result, error: `${result.error} ${warning}` };
+  return { ...result, warning: result.warning ? `${result.warning} ${warning}` : warning };
 }
 
 const DIRECT_SEND_BLOCKED_ERROR = "User preference blocks direct sending (mode \"send\" or skipReview). Use mode \"draft\" to save a draft, or \"window\" (the default) to open a review window.";
@@ -9972,7 +10034,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                return Promise.resolve(glodaBodySearch(args, prepared)).then(res => (res.error || Array.isArray(res) ? res : { ...res, warning }));
 	              }
 
-	              const { terms, failed } = parseSearchQuery(args.query);
+	              const parsedQuery = parseSearchQuery(args.query);
+	              const { terms, failed } = parsedQuery;
 	              // Whitespace-only queries and bare operators ("from:") match nothing;
 	              // an empty string is the documented way to match everything.
 	              if (failed) return finishSearch([], args, prepared, false);
@@ -10005,7 +10068,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                return true;
 	              });
 	              if (walked) return walked;
-	              return finishSearch(rows, args, prepared, incomplete);
+	              return withEmptySearchHint(finishSearch(rows, args, prepared, incomplete), parsedQuery);
 	            }
 
 	            function headerMatchesTerms(msgHdr, terms) {
@@ -13983,12 +14046,33 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 const renameResult = getAccessibleFolder(folderPath);
                 if (renameResult.error) return renameResult;
                 const folder = renameResult.folder;
+                const parent = folder.parent;
 
                 folder.rename(newName, null);
+
+                // The renamed folder has a new URI; a caller that goes on with
+                // the old one (moveFolder, say) gets "Folder not found".
+                let newPath = null;
+                try {
+                  if (parent?.hasSubFolders) {
+                    for (const sub of parent.subFolders) {
+                      if (folderDisplayName(sub) === newName || sub.name === newName) {
+                        newPath = sub.URI;
+                        break;
+                      }
+                    }
+                  }
+                } catch {
+                  // Not visible yet (IMAP): the caller reads it from listFolders
+                }
+
                 return {
                   success: true,
-                  message: `Folder renamed to "${newName}"`,
+                  message: newPath
+                    ? `Folder renamed to "${newName}". Its URI changed: use ${newPath} from now on.`
+                    : `Folder renamed to "${newName}". Its URI changed: read the new one from listFolders.`,
                   oldPath: folderPath,
+                  path: newPath,
                 };
               } catch (e) {
                 return { error: e.toString() };
@@ -15388,14 +15472,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "updateTask":
                   return await updateTask(args.taskId, args.calendarId, args.title, args.dueDate, args.description, args.completed, args.percentComplete, args.priority);
                 case "sendMail":
-                  return await composeMail(args.to, args.subject, args.body, args.cc, args.bcc, args.isHtml, args.from, args.attachments, args.skipReview);
+                  return withRecipientWarning(await composeMail(args.to, args.subject, args.body, args.cc, args.bcc, args.isHtml, args.from, args.attachments, args.skipReview), args.to, args.cc, args.bcc);
                 case "saveDraft":
-                  if (args.draftId) return await updateDraft(args);
-                  return await saveDraft(args.to, args.subject, args.body, args.cc, args.bcc, args.isHtml, args.from, args.attachments);
+                  if (args.draftId) return withRecipientWarning(await updateDraft(args), args.to, args.cc, args.bcc);
+                  return withRecipientWarning(await saveDraft(args.to, args.subject, args.body, args.cc, args.bcc, args.isHtml, args.from, args.attachments), args.to, args.cc, args.bcc);
                 case "replyToMessage":
-                  return await replyToMessage(args.messageId, args.folderPath, args.body, args.replyAll, args.isHtml, args.to, args.cc, args.bcc, args.from, args.attachments, args.skipReview, args.mode, args.latestInThread);
+                  return withRecipientWarning(await replyToMessage(args.messageId, args.folderPath, args.body, args.replyAll, args.isHtml, args.to, args.cc, args.bcc, args.from, args.attachments, args.skipReview, args.mode, args.latestInThread), args.to, args.cc, args.bcc);
                 case "forwardMessage":
-                  return await forwardMessage(args.messageId, args.folderPath, args.to, args.body, args.isHtml, args.cc, args.bcc, args.from, args.attachments, args.skipReview, args.mode);
+                  return withRecipientWarning(await forwardMessage(args.messageId, args.folderPath, args.to, args.body, args.isHtml, args.cc, args.bcc, args.from, args.attachments, args.skipReview, args.mode), args.to, args.cc, args.bcc);
                 case "getRecentMessages":
                   return getRecentMessages(args);
                 case "displayMessage":
