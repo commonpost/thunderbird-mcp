@@ -52,7 +52,7 @@ Give your AI assistant full access to Thunderbird -- search mail, compose messag
 
 5. Test it. Keep Thunderbird open and ask your assistant: "list my Thunderbird accounts".
 
-**The bridge is not updated automatically.** When it should be replaced, the extension says so in a tool result (your assistant passes it on) and in its options page (section Bridge): download `mcp-bridge.cjs` (or the `.mcpb` bundle) from the release page it names, replace your copy, then reconnect your MCP client (`/mcp` in Claude Code). A release that does not change the bridge ships the same bridge again. The extension's version is shown in Tools > Add-ons and Themes.
+**The bridge is not updated automatically, and each MCP client has its own.** When one should be replaced, the extension says so in a tool result (your assistant passes it on) and in its options page (section Bridge), which lists the bridges that connected with "Up to date" or "Update recommended". Every [release page](https://github.com/commonpost/thunderbird-mcp/releases) starts with what the release brings, whether it changes the bridge, and the steps: download `mcp-bridge.cjs` and put it in place of your copy (its path is in the MCP configuration of your client; in Claude Code: `claude mcp get <server name>`), then reconnect your MCP client (`/mcp` in Claude Code); in Claude Desktop, install the `.mcpb` bundle again. A release that does not change the bridge ships the same bridge again. The extension's version is shown in Tools > Add-ons and Themes.
 
 Right after installing, open the extension's options page (Tools > Add-ons and Themes > Commonpost MCP for Thunderbird > Options) and choose which accounts and tools your assistant may use. Until you do, every account and tool is visible to MCP clients.
 
@@ -201,7 +201,7 @@ Add to your MCP client config (e.g. `~/.claude.json` for Claude Code):
 
 ### Claude Desktop (one-click bundle)
 
-On macOS and Windows, Claude Desktop can install the bridge from a `.mcpb` bundle instead of a hand-edited config file. Download `commonpost-mcp-v<version>.mcpb` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest) and open it with Claude Desktop, then confirm the installation.
+On macOS and Windows, Claude Desktop can install the bridge from a `.mcpb` bundle instead of a hand-edited config file. Download `commonpost-mcp-v<version>.mcpb` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest) and open it with Claude Desktop, then confirm the installation. If the file does not open in Claude Desktop (on Windows it may not be associated with it), use Settings > Extensions > Advanced settings > Install Extension and choose the file.
 
 - The bundle contains **only the bridge** (`mcp-bridge.cjs`). Install the Thunderbird extension separately (step 1 above). The bundle's version is the version of the bridge inside, which changes only when the bridge changes: a release can carry a bundle with a lower number than the add-on, and it is still the current bridge. Claude Desktop never updates a bundle installed from a file: install the new `.mcpb` when the add-on (in a tool result or in its options page, section Bridge) says so.
 - The bundle asks for Node.js 22 or later, like the bridge. It has no settings: if the bridge cannot find the connection file, use the manual configuration in [Other MCP clients](#other-mcp-clients) with `COMMONPOST_MCP_CONNECTION_FILE`.

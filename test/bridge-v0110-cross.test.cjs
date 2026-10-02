@@ -44,7 +44,7 @@ const T0 = { minBridge: '0.12.0', modeMin: '0.12.0', floor: '0.0.0' };
 const T1 = { minBridge: '0.12.1', modeMin: '0.12.0', floor: '0.12.1' };
 const PREFS = { skipReviewBlocked: false, saveDraftEnabled: true };
 const TAG = 'https://github.com/commonpost/thunderbird-mcp/releases/tag/v';
-const ADVICE_FILE = 'Replace mcp-bridge.cjs with the one from the release page below (or install the .mcpb bundle from it in Claude Desktop), then restart the MCP client.';
+const ADVICE_FILE = 'Download mcp-bridge.cjs from the release page below and put it in place of the copy this MCP client runs (its path is in the MCP configuration of the client; in Claude Code: claude mcp get <server name>), then restart the client or reconnect the server. In Claude Desktop, install the .mcpb bundle from that page instead.';
 const G1 = `Commonpost notice (please tell the user): the MCP bridge does not report its version (0.11 or older); this Thunderbird add-on (version 0.12.0) recommends bridge 0.12.0 or newer. ${ADVICE_FILE} Release page: ${TAG}0.12.0`;
 const G5 = `Commonpost (please tell the user): mode "send" needs an MCP bridge of version 0.12.0 or newer, and this bridge does not report its version (0.11 or older): an older bridge stops waiting after 30 s and can report a failure while Thunderbird is still working, which can lead to a second message or draft. Nothing was sent or saved. Use mode "window" for now. ${ADVICE_FILE} Release page: ${TAG}0.12.0`;
 

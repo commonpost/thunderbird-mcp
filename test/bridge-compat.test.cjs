@@ -36,8 +36,8 @@ const T1 = { minBridge: '0.12.1', modeMin: '0.12.0', floor: '0.12.1' };
 const PREFS = { skipReviewBlocked: false, saveDraftEnabled: true };
 const TAG = 'https://github.com/commonpost/thunderbird-mcp/releases/tag/v';
 const LATEST = 'https://github.com/commonpost/thunderbird-mcp/releases/latest';
-const ADVICE_FILE = 'Replace mcp-bridge.cjs with the one from the release page below (or install the .mcpb bundle from it in Claude Desktop), then restart the MCP client.';
-const ADVICE_MCPB = "Install the .mcpb bundle from the release page below in Claude Desktop again (a bundle installed from a file is never updated automatically; its version number can be lower than the add-on's: it is still the current bridge).";
+const ADVICE_FILE = 'Download mcp-bridge.cjs from the release page below and put it in place of the copy this MCP client runs (its path is in the MCP configuration of the client; in Claude Code: claude mcp get <server name>), then restart the client or reconnect the server. In Claude Desktop, install the .mcpb bundle from that page instead.';
+const ADVICE_MCPB = "Download the .mcpb bundle from the release page below and install it in Claude Desktop again: open the file with Claude Desktop, or use Settings > Extensions > Advanced settings > Install Extension (a bundle installed from a file is never updated automatically; its version number can be lower than the add-on's: it is still the current bridge).";
 
 const info = (version, packaging = 'file', profile = null, profileInvalid = false) => ({ version, packaging, profile, profileInvalid });
 const NONE = info(null, 'none');

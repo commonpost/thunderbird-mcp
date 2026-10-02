@@ -744,8 +744,8 @@ const BRIDGE_STATE_LABELS = {
   "newer-than-add-on": "Newer than this add-on: in Add-ons and Themes, choose Check for Updates in the gear menu, then restart Thunderbird.",
 };
 const BRIDGE_ADVICE_LABELS = {
-  mcpb: "Download the .mcpb bundle from the release page and open it with Claude Desktop to install it again.",
-  other: "Download mcp-bridge.cjs from the release page, replace your copy, then restart your MCP client.",
+  mcpb: "Download the .mcpb bundle from the release page and install it in Claude Desktop again: open the file with Claude Desktop, or use Settings > Extensions > Advanced settings > Install Extension.",
+  other: "Download mcp-bridge.cjs from the release page and put it in place of the copy your MCP client runs (its path is in the MCP configuration of the client; in Claude Code: claude mcp get <server name>), then restart the client or reconnect the server.",
 };
 
 function bridgeVersionLabel(bridge) {

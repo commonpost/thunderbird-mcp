@@ -13,6 +13,13 @@ project is kept in this repository.
   then the list of changes as before. `scripts/release-notes.cjs` writes it from `CHANGELOG.md` and `BRIDGE_VERSION`;
   from 0.13.0 on, a release whose CHANGELOG section has no summary is refused by the Version sync check.
 
+### Changed
+
+- The notice for a bridge to update, in a tool result and in the options page (section Bridge), says where the copy
+  to replace is (the MCP configuration of the client; `claude mcp get <server name>` in Claude Code) and how to
+  install the `.mcpb` bundle when the file does not open in Claude Desktop (Settings > Extensions > Advanced settings
+  > Install Extension). The options page and the README say that each MCP client has its own bridge.
+
 ### Fixed
 
 - `mcp-bridge.cjs`: a `saveDraft` call waits up to 150 s for Thunderbird, like `replyToMessage` and `forwardMessage`
