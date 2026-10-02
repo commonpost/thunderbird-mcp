@@ -19,6 +19,20 @@ project is kept in this repository.
   - `threadIncomplete: true` in the result means the mailbox holds more messages than the conversation search reads
     (10,000 headers): a newer message may exist.
 
+### Security
+
+- A reply or a forward saved as a draft (`mode: "draft"`) could keep an image or a link of the original message
+  without the `moz-do-not-send="true"` mark that Thunderbird's own reply sets, and with the sender's own
+  `moz-do-not-send="false"`. The mark was set on the tags found in the text of the quote, and a tag that the text
+  and Thunderbird's parser read differently (a quote character in an attribute name is enough) was missed. Opened in
+  the compose window and sent, such a draft makes Thunderbird fetch the URL and attach what it gets, as it does for
+  an object marked `"false"`. The elements Thunderbird's parser finds in the quote are now checked after the text,
+  and no `moz-do-not-send` written by the message is kept. A direct send was not affected (it embeds nothing), nor
+  a reply made in Thunderbird's window.
+- `moz-do-not-send="false"` in the HTML body given by the caller (`sendMail`, `saveDraft`, `replyToMessage`,
+  `forwardMessage`) is no longer kept either, for the same reason: text an assistant wrote after reading a message
+  must not make Thunderbird fetch and attach a URL. `moz-do-not-send="true"` is kept.
+
 ## [0.13.0] - 2026-10-02
 
 - **New:** `saveDraft` can edit an existing draft (`draftId`) instead of creating another one. A reply or a forward

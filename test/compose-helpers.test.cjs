@@ -20,7 +20,7 @@ this.api = { resolveComposeMode, composeModeRefusal, DIRECT_SEND_BLOCKED_ERROR, 
   mergeDraftFields, draftPriorityName, draftInfoFields, forEachHtmlTag, trailingSeparatorLength,
   buildCitePrefix, divWrappedHtml, citeText, removePlaintextTag, stripDocumentTags, plainTextToForwardHtml, forwardHeaderRows,
   forwardHeaderTableHtml, forwardPlainText, joinFlowedLines, replaceFileURLs, frameSignature, frameImageSignature,
-  userBodyHtml, wrapHtmlDocument, layoutComposeHtml, layoutComposeText, splitDraftBody, removeQueryPart, tagEmbeddedObjects, serializerMetaCharset, plainEditorHtml };`, sandbox);
+  userBodyHtml, wrapHtmlDocument, layoutComposeHtml, layoutComposeText, splitDraftBody, removeQueryPart, tagEmbeddedObjects, markEmbeddedElements, neutralizeEmbedMarks, serializerMetaCharset, plainEditorHtml };`, sandbox);
 const api = sandbox.api;
 const plain = v => JSON.parse(JSON.stringify(v));
 
@@ -54,6 +54,87 @@ describe('composeModeRefusal (the skipReview block)', () => {
       const composeMode = api.resolveComposeMode(mode, skipReview);
       assert.equal(api.composeModeRefusal(composeMode, { skipReviewBlocked: true, saveDraftEnabled: true }), null, `${mode} ${skipReview}`);
     }
+  });
+});
+
+describe('markEmbeddedElements (the parsed elements of a quote)', () => {
+  const el = (localName, attrs) => ({
+    localName,
+    attrs: { ...attrs },
+    getAttribute(name) { return name in this.attrs ? this.attrs[name] : null; },
+    setAttribute(name, value) { this.attrs[name] = value; },
+  });
+  const rootOf = elements => ({ querySelectorAll(selector) { assert.equal(selector, 'img, a'); return elements; } });
+  const safe = url => url.startsWith('mailbox:');
+
+  it('marks an element with a URL that is not safe, when Thunderbird would still take it', () => {
+    const elements = [
+      el('img', { src: 'http://192.168.0.1/status' }),
+      el('img', { src: 'http://192.168.0.1/status', 'moz-do-not-send': 'false' }),
+      el('a', { href: 'news://example.test/1', 'moz-do-not-send': '' }),
+    ];
+    assert.equal(api.markEmbeddedElements(rootOf(elements), safe), 3);
+    for (const e of elements) assert.equal(e.attrs['moz-do-not-send'], 'true');
+  });
+
+  it('leaves a safe URL, an element without URL and an element already marked', () => {
+    const elements = [
+      el('img', { src: 'mailbox:///Inbox?number=5&part=1.2' }),
+      el('a', { name: 'top' }),
+      el('img', { alt: 'x' }),
+      el('img', { src: 'https://x.test/i.png', 'moz-do-not-send': 'true' }),
+      // any value but "false" stops Thunderbird's send
+      el('a', { href: 'https://x.test/', 'moz-do-not-send': 'yes' }),
+    ];
+    const before = JSON.stringify(elements.map(e => e.attrs));
+    assert.equal(api.markEmbeddedElements(rootOf(elements), safe), 0);
+    assert.equal(JSON.stringify(elements.map(e => e.attrs)), before);
+  });
+
+  it('reads the URL of the element, src for an image and href for a link', () => {
+    const elements = [el('img', { href: 'mailbox:///x', src: 'file:///etc/hostname' }), el('a', { src: 'mailbox:///x', href: 'http://x.test/' })];
+    assert.equal(api.markEmbeddedElements(rootOf(elements), safe), 2);
+  });
+});
+
+describe('neutralizeEmbedMarks', () => {
+  it('keeps moz-do-not-send="true" as tagEmbeddedObjects and the serializer write it', () => {
+    const html = '<img src="x" moz-do-not-send="true"><a href=y moz-do-not-send="true">t</a>';
+    assert.equal(api.neutralizeEmbedMarks(html), html);
+    assert.equal(api.neutralizeEmbedMarks(api.tagEmbeddedObjects('<img src=x><a href="y">t</a>', () => false)),
+      '<img src=x moz-do-not-send="true"><a href="y" moz-do-not-send="true">t</a>');
+  });
+
+  it('turns every other one into another attribute, whatever its case, value or place', () => {
+    assert.equal(api.neutralizeEmbedMarks('<image moz-do-not-send="false" src="http://192.168.0.1/">'),
+      '<image moz&#45;do-not-send="false" src="http://192.168.0.1/">');
+    assert.equal(api.neutralizeEmbedMarks('<img MOZ-DO-NOT-SEND=false src=x>'), '<img moz&#45;do-not-send=false src=x>');
+    assert.equal(api.neutralizeEmbedMarks("<img moz-do-not-send='true' moz-do-not-send = \"true\" moz-do-not-send>"),
+      "<img moz&#45;do-not-send='true' moz&#45;do-not-send = \"true\" moz&#45;do-not-send>");
+    // hidden from a first parse in an attribute value or a comment: still not there for a second one
+    assert.equal(api.neutralizeEmbedMarks('<p title=\'"><img moz-do-not-send=false src=x>\'><!-- moz-do-not-send="false" -->'),
+      '<p title=\'"><img moz&#45;do-not-send=false src=x>\'><!-- moz&#45;do-not-send="false" -->');
+    assert.equal(api.neutralizeEmbedMarks(null), '');
+  });
+
+  it('leaves no attribute named moz-do-not-send with another value than "true"', () => {
+    const pieces = ['moz-do-not-send', 'MOZ-DO-NOT-SEND', '="true"', '="false"', '=false', '=', '"', "'", ' ', '<img ', '>', 'true', '<!--', '-->'];
+    let seed = 20261002;
+    const next = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    for (let i = 0; i < 5000; i++) {
+      const html = Array.from({ length: 1 + next(12) }, () => pieces[next(pieces.length)]).join('');
+      const out = api.neutralizeEmbedMarks(html);
+      for (const m of out.matchAll(/moz-do-not-send/gi)) {
+        assert.equal(out.slice(m.index, m.index + 22), 'moz-do-not-send="true"', JSON.stringify([html, out]));
+      }
+    }
+  });
+
+  it('is applied to the HTML the caller gives for the body', () => {
+    assert.equal(api.userBodyHtml('<p>x</p><img src="http://192.168.0.1/" moz-do-not-send="false">', true, true),
+      '<p>x</p><img src="http://192.168.0.1/" moz&#45;do-not-send="false">');
+    // plain text is escaped, the words stay
+    assert.equal(api.userBodyHtml('moz-do-not-send="false"', false, false), 'moz-do-not-send=&quot;false&quot;');
   });
 });
 

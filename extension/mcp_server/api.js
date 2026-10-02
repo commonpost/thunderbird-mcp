@@ -4761,9 +4761,43 @@ function tagEmbeddedObject(tag, name, isSafe) {
   return `${rest.slice(0, end)} moz-do-not-send="true"${selfClosing ? "/" : ""}>`;
 }
 
-// Text the user adds, as typed at the caret: a paragraph in paragraph mode, HTML as given.
+/**
+ * The elements Thunderbird's send would attach (MessageSend._gatherEmbeddedAttachments reads the parsed <img> and
+ * <a> elements: one with a URL is a candidate unless moz-do-not-send is set to something else than "false"), marked
+ * moz-do-not-send="true" unless the URL is safe. Returns how many were marked.
+ * tagEmbeddedObjects marks the tags it finds in the text, and the parser can read the same text differently, even
+ * when the quote comes from Thunderbird's own serializer: a quote character in an attribute name (written as it
+ * is: <img src="..." x"y="">), or a comment or a <style> that holds '<a title="', moves the end of a tag for the
+ * text, and " src=" inside the value of another attribute is not the src. So the parsed elements are checked
+ * after it.
+ */
+function markEmbeddedElements(root, isSafe) {
+  let marked = 0;
+  for (const el of root.querySelectorAll("img, a")) {
+    const url = el.getAttribute(el.localName === "img" ? "src" : "href");
+    if (!url || isSafe(url)) continue;
+    const mark = el.getAttribute("moz-do-not-send");
+    if (mark && mark !== "false") continue;
+    el.setAttribute("moz-do-not-send", "true");
+    marked++;
+  }
+  return marked;
+}
+
+/**
+ * moz-do-not-send="false" makes Thunderbird's send fetch an http(s) or news URL and attach what it gets, so the
+ * attribute is never taken from a message or from the caller: only moz-do-not-send="true", as tagEmbeddedObjects and
+ * the serializer write it, stays. Any other "moz-do-not-send" gets a character reference in its name. An attribute
+ * name is not decoded, so it becomes another attribute, wherever a parser finds it; text and attribute values are
+ * decoded and read the same.
+ */
+function neutralizeEmbedMarks(html) {
+  return String(html || "").replace(/moz-do-not-send(?!="true")/gi, "moz&#45;do-not-send");
+}
+
+// Text the user adds, as typed at the caret: a paragraph in paragraph mode, HTML as given (see neutralizeEmbedMarks).
 function userBodyHtml(body, isHtml, paragraphMode) {
-  if (isHtml) return stripDocumentTags(body);
+  if (isHtml) return neutralizeEmbedMarks(stripDocumentTags(body));
   const text = String(body || "");
   const html = escapeHtml(text).replace(/\r\n|\r|\n/g, "<br>");
   if (!paragraphMode) return html;
@@ -8450,6 +8484,21 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               };
             }
 
+            // BEGIN QUOTED OBJECTS
+            /**
+             * HTML of the original message for a reply or a forward: tagEmbeddedObjects on the text, then the same
+             * rule on the elements Thunderbird's parser finds in it (markEmbeddedElements), in a document that
+             * loads and runs nothing. The text is kept as it is unless the parser found an element the text missed;
+             * the quote is then the parsed one, serialized. No moz-do-not-send of the message is left either way.
+             */
+            function tagQuotedObjects(html, isSafe) {
+              const tagged = neutralizeEmbedMarks(tagEmbeddedObjects(html, isSafe));
+              const template = new DOMParser().parseFromString("", "text/html").createElement("template");
+              template.innerHTML = tagged;
+              return markEmbeddedElements(template.content, isSafe) ? neutralizeEmbedMarks(template.innerHTML) : tagged;
+            }
+            // END QUOTED OBJECTS
+
             const QUOTE_TIMEOUT_MS = 15000;
             // nsMsgQuote holds its listener weakly: keep it alive until the quote is done
             const pendingQuotes = new Set();
@@ -8713,7 +8762,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               if (Services.prefs.getBoolPref("mail.html_sanitize.drop_conditional_css", true)) {
                 container = stripDocumentTags(Cc["@mozilla.org/parserutils;1"].getService(Ci.nsIParserUtils).removeConditionalCSS(container));
               }
-              return tagEmbeddedObjects(container, embeddedObjectFilter(msgHdr.folder.getUriForMsg(msgHdr)));
+              return tagQuotedObjects(container, embeddedObjectFilter(msgHdr.folder.getUriForMsg(msgHdr)));
             }
 
             /**
@@ -8736,7 +8785,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   const text = extractPlainTextBody(mimeMsg);
                   parts.quote = useHtml ? (text ? `<pre wrap class="moz-quote-pre">${escapeHtml(text)}</pre>` : "") : text;
                 } else if (useHtml) {
-                  parts.quote = tagEmbeddedObjects(removePlaintextTag(stripDocumentTags(html)), embeddedObjectFilter(msgURI));
+                  parts.quote = tagQuotedObjects(removePlaintextTag(stripDocumentTags(html)), embeddedObjectFilter(msgURI));
                 } else {
                   parts.quote = htmlToPlainText(`${html}</html>`, Services.prefs.getBoolPref("mailnews.send_plaintext_flowed", true), true, false);
                 }
@@ -8750,8 +8799,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             function newMessageBody(body, isHtml, useHtml, identity, withSignature = true, plainHunks = null) {
               const prefs = composeLayoutPrefs(identity);
               const signature = withSignature ? signatureFor(identity, Ci.nsIMsgCompType.New, useHtml, false, prefs) : "";
-              const text = String(body || "");
+              let text = String(body || "");
               if (!useHtml) return plainEditorOutput(layoutComposeText("new", { user: plainHunks || text, signature }, prefs));
+              if (isHtml) text = neutralizeEmbedMarks(text);
               if (isHtml && /<html[\s>]/i.test(text)) {
                 const end = text.toLowerCase().lastIndexOf("</body>");
                 return composeHtmlOutput(end >= 0 ? text.slice(0, end) + signature + text.slice(end) : text + signature);
