@@ -54,6 +54,15 @@ describe('release notes', () => {
     assert.ok(!notes.includes('Older.') && !notes.includes('Not yet.'));
   });
 
+  it('names the .mcpb after the bridge when the release does not change it, as the release files are named', () => {
+    // 0.15.0 shipped the bridge of 0.14.0 as commonpost-mcp-v0.14.0.mcpb, and its page first said v0.15.0.mcpb
+    const notes = releaseNotes('1.3.0', CHANGELOG, bridge('1.2.0'), api('1.2.0'));
+    assert.ok(notes.includes('`commonpost-mcp-v1.3.0.xpi`'));
+    assert.ok(notes.includes('`commonpost-mcp-v1.2.0.mcpb`'));
+    assert.ok(!notes.includes('commonpost-mcp-v1.3.0.mcpb'));
+    assert.ok(notes.includes('This release ships the same bridge as v1.2.0'));
+  });
+
   it(`refuses a release without a summary from ${SUMMARY_REQUIRED_FROM} on, and accepts the older ones`, () => {
     const bare = version => `## [${version}] - 2027-01-01\n\n### Fixed\n\n- x\n`;
     assert.throws(() => releaseNotes(SUMMARY_REQUIRED_FROM, bare(SUMMARY_REQUIRED_FROM), bridge('0.12.0'), api('0.12.0')), /has no summary: write a few plain lines for users/);
@@ -100,7 +109,10 @@ describe('release notes', () => {
     const released = /^## \[(\d+\.\d+\.\d+)\]/m.exec(changelog)[1];
     const out = execFileSync(process.execPath, [script, released], { encoding: 'utf8' });
     assert.ok(out.includes('\n## How to update\n') || out.startsWith('## How to update\n'));
-    assert.ok(out.includes(`commonpost-mcp-v${released}.mcpb`));
+    // the .mcpb of the release is named after the bridge it holds, which an add-on-only release does not change
+    const shipped = bridgeVersion(fs.readFileSync(path.join(root, 'mcp-bridge.cjs'), 'utf8'));
+    assert.ok(out.includes(`\`commonpost-mcp-v${shipped}.mcpb\``));
+    assert.ok(out.includes(`\`commonpost-mcp-v${released}.xpi\``));
     assert.ok(out.includes(splitSection(changelogSection(changelog, released)).details));
     assert.equal(execFileSync(process.execPath, [script, released, '--check'], { encoding: 'utf8' }), '');
   });

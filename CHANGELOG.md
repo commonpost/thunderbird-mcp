@@ -4,6 +4,14 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Fixed
+
+- Release pages name the `.mcpb` file as it is published. The bundle carries the version of the bridge, so a release
+  that does not change the bridge ships the bundle of an earlier version: the page of 0.15.0 said
+  `commonpost-mcp-v0.15.0.mcpb` for the file `commonpost-mcp-v0.14.0.mcpb` (corrected by hand on that page).
+
 ## [0.15.0] - 2026-10-02
 
 - **New:** saved searches (virtual folders): create one with `createFolder`, list them with `listFolders`, delete one
