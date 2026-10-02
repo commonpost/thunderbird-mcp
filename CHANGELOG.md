@@ -26,6 +26,9 @@ project is kept in this repository.
   with `mode: "draft"`, instead of 30 s. Thunderbird can take up to 120 s to save a draft, so the bridge used to
   report a timeout for a draft that was still being saved, and a client that retried would create two. After that
   wait the error says the draft may still appear in the Drafts folder later.
+- The notice for a bridge to update reached only one of several clients that share an entry, as every bridge 0.11
+  or older does (it sends no version): a session that listed its tools within 10 minutes of that notice never got
+  one. Its notice now waits and goes out with its first tool call after those 10 minutes.
 
 ## [0.12.0] - 2026-10-01
 
