@@ -4502,7 +4502,9 @@ function stripDocumentTags(html) {
     out += text.slice(from, m.index);
     from = open.lastIndex = end + 1;
   }
-  return out + text.slice(from);
+  // What is left of such a tag is made text: one without ">", or one that the removal put together
+  // ("<bo<body x>dy background=...>"). A second <body> would give its attributes to the body of the message.
+  return (out + text.slice(from)).replace(/<(?=!DOCTYPE|\/?(?:html|head|body)\b)/gi, "&lt;");
 }
 
 // mimedrft.cpp convert_plaintext_body_to_html: escaped text, ">" levels as cite blockquotes, "-- " opens the signature.

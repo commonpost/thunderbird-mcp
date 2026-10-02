@@ -29,6 +29,9 @@ project is kept in this repository.
   an object marked `"false"`. The elements Thunderbird's parser finds in the quote are now checked after the text,
   and no `moz-do-not-send` written by the message is kept. A direct send was not affected (it embeds nothing), nor
   a reply made in Thunderbird's window.
+- The `<html>`, `<head>` and `<body>` tags of a quoted message are removed from its text; a `<body>` tag could be
+  left when the removal itself put one together (`<bo<body x>dy background=...>`), and it then gave its attributes,
+  a background image for one, to the body of the draft. What is left of such a tag is now text.
 - `moz-do-not-send="false"` in the HTML body given by the caller (`sendMail`, `saveDraft`, `replyToMessage`,
   `forwardMessage`) is no longer kept either, for the same reason: text an assistant wrote after reading a message
   must not make Thunderbird fetch and attach a URL. `moz-do-not-send="true"` is kept.
