@@ -1334,7 +1334,7 @@
           },
           "latestInThread": {
             "type": "boolean",
-            "description": "Reply to the newest message of this conversation instead (Sent included); result has repliedTo"
+            "description": "Reply to the newest message of this conversation instead (Sent included); not with mode send. Result: repliedTo when another message was answered, threadIncomplete when the mailbox was read in part and a newer message may exist"
           },
           "isHtml": {
             "type": "boolean",

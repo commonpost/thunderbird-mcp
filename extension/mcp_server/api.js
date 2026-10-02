@@ -4268,6 +4268,17 @@ function composeModeRefusal(composeMode, { skipReviewBlocked, saveDraftEnabled }
   return null;
 }
 
+const LATEST_IN_THREAD_SEND_ERROR = "latestInThread cannot be combined with mode \"send\" (or skipReview): anyone can join a conversation with a message, and the newest one would be quoted and answered without review. Use mode \"draft\" or \"window\", or find the message with searchMessages threadOf and pass its messageId.";
+const LATEST_IN_THREAD_SEARCH_DISABLED_ERROR = "latestInThread reads the conversation as searchMessages threadOf does, and the searchMessages tool is disabled. Pass the messageId of the message to answer.";
+
+// latestInThread lets the conversation pick the message that is answered: never for a direct send, and only
+// where the assistant may search the mail anyway.
+function latestInThreadRefusal(composeMode, { searchEnabled }) {
+  if (composeMode === "send") return LATEST_IN_THREAD_SEND_ERROR;
+  if (!searchEnabled) return LATEST_IN_THREAD_SEARCH_DISABLED_ERROR;
+  return null;
+}
+
 const mailboxKey = mailbox => String(mailbox?.email || "").toLowerCase();
 
 // RemoveDuplicateAddresses (MimeJSComponents): drops mailboxes already seen or listed in `remove`.
@@ -5923,7 +5934,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             folderPath: { type: "string", description: "The folder URI path (from searchMessages results)" },
             body: { type: "string", description: "Reply body text" },
             replyAll: { type: "boolean", description: "Reply to all recipients (default: false)" },
-            latestInThread: { type: "boolean", description: "Reply to the newest message of this conversation instead (Sent included); result has repliedTo" },
+            latestInThread: { type: "boolean", description: "Reply to the newest message of this conversation instead (Sent included); not with mode send. Result: repliedTo when another message was answered, threadIncomplete when the mailbox was read in part and a newer message may exist" },
             isHtml: { type: "boolean", description: "Set to true if body contains HTML markup (default: false)" },
             mode: { type: "string", enum: ["window", "draft", "send"], description: "window (default), draft or send" },
             to: { type: "string", description: "Override the recipients Thunderbird computes (required with mode send)" },
@@ -12880,19 +12891,32 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
-            // Newest message of the conversation outside Drafts/Templates/Outbox.
+            // BEGIN LATEST IN THREAD
+            // Newest message of the conversation outside Drafts/Templates/Outbox: { latest, incomplete }.
+            // latest is null when that message is the one the caller named, in this folder or as a copy in
+            // another one (the caller's folder is kept). linkedBy "subject" is passed on: such a message has
+            // no References to the conversation. incomplete: the threadOf scan stopped at its cap, so a
+            // newer message may exist.
             function findLatestInThread(messageId, folderPath) {
               const res = searchMessages({ query: "", threadOf: { messageId, folderPath }, sortOrder: "desc", maxResults: MAX_SEARCH_RESULTS_CAP });
               if (res.error) return res;
               const skipFlags = Ci.nsMsgFolderFlags.Drafts | Ci.nsMsgFolderFlags.Templates | Ci.nsMsgFolderFlags.Queue;
+              const seedId = normalizeMessageIdForDedup(messageId);
+              let latest = null;
               for (const row of res.messages || []) {
                 let folder = null;
                 try { folder = MailServices.folderLookup.getFolderForURL(row.folderPath); } catch { /* skip */ }
                 if (!folder || folder.isSpecialFolder(skipFlags, true)) continue;
-                return { messageId: row.id, folderPath: row.folderPath };
+                if (normalizeMessageIdForDedup(row.id) !== seedId) {
+                  latest = { messageId: row.id, folderPath: row.folderPath };
+                  if (row.date) latest.date = row.date;
+                  if (row.linkedBy) latest.linkedBy = row.linkedBy;
+                }
+                break;
               }
-              return { messageId, folderPath };
+              return { latest, incomplete: !!res.incomplete };
             }
+            // END LATEST IN THREAD
 
             /**
              * Replies to a message with quoted original. mode "window" (default)
@@ -12915,20 +12939,27 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (refusal) {
                   return { error: refusal };
                 }
+                const latestRefusal = latestInThread ? latestInThreadRefusal(composeMode, { searchEnabled: isToolEnabled("searchMessages") }) : null;
+                if (latestRefusal) {
+                  return { error: latestRefusal };
+                }
                 if (composeMode === "send" && (!to || !from)) {
                   return { error: "mode \"send\" (or skipReview) needs explicit to and from: a direct reply takes no address from the original message. Pass them, or use mode \"draft\" or \"window\" to review the reply first." };
                 }
                 let repliedTo = null;
+                let threadIncomplete = false;
                 if (latestInThread) {
-                  const latest = findLatestInThread(messageId, folderPath);
-                  if (latest.error) return latest;
-                  if (normalizeMessageIdForDedup(latest.messageId) !== normalizeMessageIdForDedup(messageId) || latest.folderPath !== folderPath) {
-                    ({ messageId, folderPath } = latest);
-                    repliedTo = latest;
+                  const thread = findLatestInThread(messageId, folderPath);
+                  if (thread.error) return thread;
+                  threadIncomplete = thread.incomplete;
+                  if (thread.latest) {
+                    repliedTo = thread.latest;
+                    ({ messageId, folderPath } = repliedTo);
                   }
                 }
                 const withContext = result => {
                   if (result.success && repliedTo) result.repliedTo = repliedTo;
+                  if (result.success && threadIncomplete) result.threadIncomplete = true;
                   return result;
                 };
                 const found = findMessage(messageId, folderPath);
@@ -14946,7 +14977,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             ]);
 
             async function callTool(name, args) {
-              const notReady = FOLDER_READING_TOOLS.has(name) ? await prepareFolderDatabase(args.folderPath)
+              // replyToMessage latestInThread reads the conversation as a threadOf search does
+              const notReady = name === "replyToMessage" && args.latestInThread ? await prepareSearchFolders({ threadOf: { messageId: args.messageId, folderPath: args.folderPath } })
+                : FOLDER_READING_TOOLS.has(name) ? await prepareFolderDatabase(args.folderPath)
                 : FOLDER_SEARCHING_TOOLS.has(name) ? await prepareSearchFolders(args)
                   : REPLY_TEMPLATE_READING_TOOLS.has(name) ? await prepareReplyTemplateFolders(args)
                     : null;
