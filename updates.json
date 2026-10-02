@@ -3,9 +3,9 @@
     "commonpost-mcp@commonpost.github.io": {
       "updates": [
         {
-          "version": "0.14.0",
-          "update_link": "https://github.com/commonpost/thunderbird-mcp/releases/download/v0.14.0/commonpost-mcp-v0.14.0.xpi",
-          "update_hash": "sha256:021128c8e4c9344ba94f98e0f6acfd63efc95986406cbd4793bbf30250ea6519",
+          "version": "0.15.0",
+          "update_link": "https://github.com/commonpost/thunderbird-mcp/releases/download/v0.15.0/commonpost-mcp-v0.15.0.xpi",
+          "update_hash": "sha256:da1c67592023329319d25262be7cc74f5c856e1379bd10a4a1019ca6d8b9f35b",
           "applications": {
             "gecko": {
               "strict_min_version": "140.0",
