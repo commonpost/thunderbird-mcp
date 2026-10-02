@@ -87,7 +87,9 @@ function updateSteps(version, bridge, minBridge) {
     // The bundle is named after the bridge it holds (scripts/build-mcpb-reproducible.cjs), not after the release
     `  - Claude Desktop: download \`commonpost-mcp-v${bridge}.mcpb\` below and open it with Claude Desktop; if the ` +
       'file does not open there (Windows), use Settings > Extensions > Advanced settings > Install Extension.',
-    '  - Other clients (Claude Code, Cursor, VS Code, ...): download `mcp-bridge.cjs` below and put it in place of ' +
+    '  - Claude Code with the plugin: `/plugin marketplace update commonpost` (or turn on auto-update for the ' +
+      'marketplace in `/plugin`), then `/reload-plugins`. The plugin always carries the bridge of the release.',
+    '  - Other clients (Claude Code without the plugin, Cursor, VS Code, ...): download `mcp-bridge.cjs` below and put it in place of ' +
       'your copy, then restart the client or reconnect the server (`/mcp` in Claude Code). The path of your copy is ' +
       'in the MCP configuration of the client (Claude Code: `claude mcp get <server name>`).',
     '  - Not sure which bridges you have? The options page of the add-on (section Bridge) lists the bridges that ' +

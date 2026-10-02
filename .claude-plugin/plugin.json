@@ -1,0 +1,20 @@
+{
+  "name": "commonpost-mcp",
+  "displayName": "Commonpost MCP for Thunderbird",
+  "version": "0.16.0",
+  "description": "Thunderbird mail, contacts, calendars and filters as MCP tools, through the Commonpost MCP add-on. This plugin carries the bridge (mcp-bridge.cjs) and keeps it current; the add-on is installed in Thunderbird separately.",
+  "author": {
+    "name": "Commonpost contributors",
+    "url": "https://github.com/commonpost"
+  },
+  "homepage": "https://github.com/commonpost/thunderbird-mcp#claude-code-plugin",
+  "repository": "https://github.com/commonpost/thunderbird-mcp",
+  "license": "MIT",
+  "keywords": ["thunderbird", "email", "calendar", "contacts", "mcp"],
+  "mcpServers": {
+    "commonpost-mail": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-bridge.cjs"]
+    }
+  }
+}

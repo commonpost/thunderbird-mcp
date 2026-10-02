@@ -4,6 +4,16 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Added
+
+- A Claude Code plugin: this repository is a plugin marketplace (`claude plugin marketplace add
+  commonpost/thunderbird-mcp`, then `claude plugin install commonpost-mcp@commonpost`). The plugin declares the
+  `commonpost-mail` server and carries the bridge of the release, so Claude Code users have no `mcp-bridge.cjs` to
+  download or to replace by hand: updating the plugin updates the bridge. Its version is the product's (the version
+  check requires it), so every release reaches plugin users.
+
 ## [0.16.0] - 2026-10-02
 
 - **Fixed:** `listEvents` lists a whole day when it is asked for one date (`2026-10-15` to `2026-10-15`): it returned

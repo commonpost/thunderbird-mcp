@@ -206,4 +206,16 @@ describe("check-versions.cjs", () => {
     assert.equal(previousReleaseTag(tags, null), "v0.11.0");
     assert.equal(previousReleaseTag(tags, "v0.11.0"), "v0.10.1");
   });
+
+  it("plugin: .claude-plugin/plugin.json must carry the product version when it exists", () => {
+    const dir = makeRepo(PREV, ["v0.11.0"], PREV);
+    fs.mkdirSync(path.join(dir, ".claude-plugin"), { recursive: true });
+    fs.writeFileSync(path.join(dir, ".claude-plugin/plugin.json"), JSON.stringify({ name: "x", version: "0.10.0" }));
+    let r = run(dir);
+    assert.equal(r.status, 1);
+    assert.match(r.out, /plugin\.json version 0\.10\.0 must equal package\.json 0\.11\.0/);
+    fs.writeFileSync(path.join(dir, ".claude-plugin/plugin.json"), JSON.stringify({ name: "x", version: "0.11.0" }));
+    r = run(dir);
+    assert.equal(r.status, 0, r.out);
+  });
 });

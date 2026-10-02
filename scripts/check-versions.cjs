@@ -5,7 +5,8 @@
  *   node scripts/check-versions.cjs                       # pull requests and main
  *   node scripts/check-versions.cjs --release-tag vX.Y.Z  # release workflow
  *
- * - package.json, package-lock.json (twice) and extension/manifest.json carry the product version (= the tag).
+ * - package.json, package-lock.json (twice), extension/manifest.json and .claude-plugin/plugin.json (the Claude Code
+ *   plugin) carry the product version (= the tag).
  * - BRIDGE_VERSION in mcp-bridge.cjs is the release in which the bridge bundle last changed; mcpb/manifest.json
  *   carries it; it is never newer than the product version.
  * - The bridge bundle is mcp-bridge.cjs and the other files of the .mcpb, plus the scripts that build it
@@ -97,6 +98,13 @@ function main(argv) {
   const addon = JSON.parse(readText('extension/manifest.json')).version;
   if (addon !== version) fail(`extension/manifest.json version ${addon} must equal package.json ${version}`);
   if (releaseTag !== null && releaseTag !== `v${version}`) fail(`tag ${releaseTag} must be v${version} (package.json)`);
+  // The Claude Code plugin (.claude-plugin/plugin.json) is the repository itself; its version is the product's, so
+  // that a release reaches plugin users (a plugin whose version does not change is never updated).
+  const pluginManifest = path.join(root, '.claude-plugin/plugin.json');
+  if (fs.existsSync(pluginManifest)) {
+    const plugin = JSON.parse(readText('.claude-plugin/plugin.json')).version;
+    if (plugin !== version) fail(`.claude-plugin/plugin.json version ${plugin} must equal package.json ${version}`);
+  }
 
   // Bridge version and thresholds
   const bridgeText = readText('mcp-bridge.cjs');
