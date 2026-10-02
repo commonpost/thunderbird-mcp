@@ -1,6 +1,6 @@
 {
   "name": "commonpost-mcp",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Commonpost MCP for Thunderbird - MCP server that gives AI assistants access to Thunderbird email, contacts, and calendars (continuation of thunderbird-mcp)",
   "author": "Commonpost contributors (continuation of thunderbird-mcp by Tomasz Kasperczyk)",
   "license": "MIT",
