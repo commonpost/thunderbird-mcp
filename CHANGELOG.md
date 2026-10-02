@@ -4,7 +4,16 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## [Unreleased]
+## [0.15.0] - 2026-10-02
+
+- **New:** saved searches (virtual folders): create one with `createFolder`, list them with `listFolders`, delete one
+  with `deleteFolder`. A saved search is a live view: nothing is moved, copied or deleted.
+- **New:** Thunderbird shows a notification when an MCP client connects with a bridge that should be updated, and
+  the options page (section Bridge) now says "Newer version available" for a bridge that works but is not the latest.
+- **Changed:** release pages say whether updating the bridge is needed or optional.
+- **The bridge does not change in this release:** nothing to update in your MCP clients if their bridge is 0.14.0. A
+  bridge 0.13 keeps working; updating it is optional.
+- No call that worked stops working.
 
 ### Added
 
