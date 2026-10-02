@@ -33,6 +33,12 @@ project is kept in this repository.
   `forwardMessage`) is no longer kept either, for the same reason: text an assistant wrote after reading a message
   must not make Thunderbird fetch and attach a URL. `moz-do-not-send="true"` is kept.
 
+### Fixed
+
+- A signature with `file://` images: the URL that was replaced by its data was looked for in a lower-cased copy of the
+  signature, made again for every URL, and a character whose lower case is longer (U+0130) before a URL moved the
+  place that was replaced. The signature is now read once, as it is.
+
 ## [0.13.0] - 2026-10-02
 
 - **New:** `saveDraft` can edit an existing draft (`draftId`) instead of creating another one. A reply or a forward

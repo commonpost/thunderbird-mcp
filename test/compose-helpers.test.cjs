@@ -717,6 +717,68 @@ describe('tags of a quote: same result as the regular expressions, in linear tim
 // The body of a plain forward is the original message, of any size. joinFlowedLines used to cut each line break out
 // of the whole text (the C++ loop ported as it is, kept here as the reference): the time grew with the square of
 // the number of lines.
+describe('replaceFileURLs: same result as the loop it replaces, without a copy of the text per URL', () => {
+  // The loop before: a lower-cased copy of the whole text for every "file://"
+  const reference = (data, toDataURL) => {
+    let out = String(data || '');
+    let offset = 0;
+    for (;;) {
+      const pos = out.toLowerCase().indexOf('file://', offset);
+      if (pos < 0) break;
+      const q = pos > 0 ? out[pos - 1] : '';
+      let end;
+      if (q === '"' || q === "'") {
+        end = out.indexOf(q, pos);
+      } else {
+        const space = out.indexOf(' ', pos);
+        const gt = out.indexOf('>', pos);
+        end = space < 0 ? gt : (gt < 0 ? space : Math.min(space, gt));
+      }
+      if (end < 0) break;
+      let dataURL = null;
+      try { dataURL = toDataURL(out.slice(pos, end)); } catch { /* keep the file URL */ }
+      if (dataURL) {
+        out = out.slice(0, pos) + dataURL + out.slice(end);
+        offset = pos + dataURL.length;
+      } else {
+        offset = end;
+      }
+    }
+    return out;
+  };
+  // a data URL that itself holds "file://", a URL that is kept, and one that throws
+  const toData = url => {
+    if (/missing/i.test(url)) return null;
+    if (/broken/i.test(url)) throw new Error('unreadable');
+    return `data:x;file://${url.length},"'`;
+  };
+
+  it('gives what the loop gave on random signatures', () => {
+    const atoms = ['file://', 'FILE://', 'File://', '"', "'", ' ', '>', '<img src=', '/a.png', '/missing', '/broken', 'x', '\n', '="', "='", 'file:/', '//'];
+    let seed = 20261002;
+    const next = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    for (let round = 0; round < 20000; round++) {
+      let html = '';
+      for (let k = 1 + next(round % 2 ? 10 : 30); k > 0; k--) html += atoms[next(atoms.length)];
+      assert.equal(api.replaceFileURLs(html, toData), reference(html, toData), JSON.stringify(html));
+    }
+  });
+
+  it('replaces the URL it found when lower-casing changes the length of the text before it', () => {
+    // U+0130 lower-cases to two characters: the copy was one index ahead of the text
+    assert.equal(api.replaceFileURLs('İ <img src="file:///a.png">', () => 'data:x'), 'İ <img src="data:x">');
+  });
+
+  it('reads a signature of many file URLs once', () => {
+    const html = '<img src="file:///a.png"> '.repeat(40000);
+    const started = process.hrtime.bigint();
+    const out = api.replaceFileURLs(html, () => null);
+    const ms = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.equal(out, html);
+    assert.ok(ms < 3000, `took ${Math.round(ms)} ms`);
+  });
+});
+
 describe('joinFlowedLines: same result as the loop of nsMsgCompose.cpp, in linear time', () => {
   function reference(body) {
     let out = String(body || '');

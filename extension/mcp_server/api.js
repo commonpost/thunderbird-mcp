@@ -4638,31 +4638,34 @@ function joinFlowedLines(body) {
  * toDataURL(fileURL) returns the data: URL or throws.
  */
 function replaceFileURLs(data, toDataURL) {
-  let out = String(data || "");
-  let offset = 0;
-  for (;;) {
-    const pos = out.toLowerCase().indexOf("file://", offset);
-    if (pos < 0) break;
-    const q = pos > 0 ? out[pos - 1] : "";
+  const text = String(data || "");
+  // Found in the text itself: a lower-cased copy per "file://" read the whole text each time, and lower-casing can
+  // change the length of the text (U+0130), which moved every index after it
+  const fileURL = /file:\/\//gi;
+  let out = "";
+  let from = 0;
+  let m;
+  while ((m = fileURL.exec(text))) {
+    const pos = m.index;
+    const q = pos > 0 ? text[pos - 1] : "";
     let end;
     if (q === '"' || q === "'") {
-      end = out.indexOf(q, pos);
+      end = text.indexOf(q, pos);
     } else {
-      const space = out.indexOf(" ", pos);
-      const gt = out.indexOf(">", pos);
+      const space = text.indexOf(" ", pos);
+      const gt = text.indexOf(">", pos);
       end = space < 0 ? gt : (gt < 0 ? space : Math.min(space, gt));
     }
     if (end < 0) break;
     let dataURL = null;
-    try { dataURL = toDataURL(out.slice(pos, end)); } catch { /* keep the file URL */ }
+    try { dataURL = toDataURL(text.slice(pos, end)); } catch { /* keep the file URL */ }
     if (dataURL) {
-      out = out.slice(0, pos) + dataURL + out.slice(end);
-      offset = pos + dataURL.length;
-    } else {
-      offset = end;
+      out += text.slice(from, pos) + dataURL;
+      from = end;
     }
+    fileURL.lastIndex = end;
   }
-  return out;
+  return out + text.slice(from);
 }
 
 /**
