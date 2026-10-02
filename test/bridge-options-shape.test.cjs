@@ -53,6 +53,7 @@ describe("Bridge section of the options page", () => {
     it("labels every state", () => {
       for (const label of [
         '"up-to-date": "Up to date."',
+        '"newer-available": "Newer version available: this bridge works, the update is optional."',
         '"update-recommended": "Update recommended."',
         '"unversioned": "Update recommended: this bridge does not report a readable version."',
         '"development": "Development build: not checked."',
@@ -61,6 +62,14 @@ describe("Bridge section of the options page", () => {
       ]) {
         assert.ok(block.includes(label), label);
       }
+    });
+
+    it("names the newest bridge only when its version is valid, and gives the advice and link for an optional update", () => {
+      assert.ok(block.includes("const BRIDGE_VERSION_PATTERN = /^\\d{1,6}\\.\\d{1,6}\\.\\d{1,6}$/;"));
+      assert.ok(block.includes("`Newer version available (${current}): this bridge works, the update is optional.`"));
+      assert.ok(block.includes('["newer-available", "update-recommended", "unversioned", "refused"].includes(bridge.state)'));
+      assert.ok(block.includes("renderBridge(bridge, status.currentBridgeVersion)"));
+      assert.ok(block.includes("` The bridge published with it is ${current}.`"));
     });
 
     it("loads at the top level and on refresh", () => {

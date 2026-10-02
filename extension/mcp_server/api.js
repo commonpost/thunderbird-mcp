@@ -2239,6 +2239,7 @@ let _tempFileCounter = 0;
 const PREF_ALLOWED_ACCOUNTS = "extensions.commonpost-mcp.allowedAccounts";
 const PREF_DISABLED_TOOLS = "extensions.commonpost-mcp.disabledTools";
 const PREF_BLOCK_SKIPREVIEW = "extensions.commonpost-mcp.blockSkipReview";
+const PREF_BRIDGE_UPDATE_ALERT = "extensions.commonpost-mcp.bridgeUpdateAlert";
 const PREF_STABLE_AUTH_TOKEN = "extensions.commonpost-mcp.stableAuthToken";
 const PREF_GET_MESSAGES_LIMIT = "extensions.commonpost-mcp.getMessagesLimit";
 const PREF_LISTEN_ALL = "extensions.commonpost-mcp.listenAll";
@@ -5211,9 +5212,12 @@ function draftInfoFields(draftInfo) {
 // release, so the two sides never warn about the same pair. Only digits parsed here, fixed words and fixed addresses
 // reach a text; the raw header and the profile never do.
 const MIN_BRIDGE_VERSION = "0.13.0";
+// The bridge published with this version of the add-on. Equal to BRIDGE_VERSION in mcp-bridge.cjs (the version
+// check requires it). A bridge between MIN_BRIDGE_VERSION and this one works, and is shown as an optional update.
+const CURRENT_BRIDGE_VERSION = "0.14.0";
 const MODE_MIN_BRIDGE_VERSION = "0.12.0";
 const BRIDGE_SECURITY_FLOOR = "0.0.0";
-const BRIDGE_THRESHOLDS = Object.freeze({ minBridge: MIN_BRIDGE_VERSION, modeMin: MODE_MIN_BRIDGE_VERSION, floor: BRIDGE_SECURITY_FLOOR });
+const BRIDGE_THRESHOLDS = Object.freeze({ minBridge: MIN_BRIDGE_VERSION, modeMin: MODE_MIN_BRIDGE_VERSION, floor: BRIDGE_SECURITY_FLOOR, current: CURRENT_BRIDGE_VERSION });
 const BRIDGE_NOTICE_COOLDOWN_MS = 10 * 60 * 1000;
 const BRIDGES_SEEN_MAX = 8;
 const BRIDGE_HEADER_MAX = 256;
@@ -5281,7 +5285,8 @@ function bridgeFloorArmed(thresholds) {
   return thresholds.floor !== "0.0.0";
 }
 
-// "up-to-date" | "update-recommended" | "refused" | "unversioned" | "development" | "newer-than-add-on"
+// "up-to-date" | "newer-available" | "update-recommended" | "refused" | "unversioned" | "development" | "newer-than-add-on"
+// "newer-available": works, and a newer bridge was published with this add-on (only when thresholds.current is set).
 function bridgeState(info, extCore, thresholds) {
   const armed = bridgeFloorArmed(thresholds);
   if (info.version === null) return armed ? "refused" : "unversioned";
@@ -5289,6 +5294,7 @@ function bridgeState(info, extCore, thresholds) {
   if (armed && compareVersionCores(info.version, thresholds.floor) < 0) return "refused";
   if (extCore && extCore !== "0.0.0" && compareVersionCores(info.version, extCore) > 0) return "newer-than-add-on";
   if (compareVersionCores(info.version, thresholds.minBridge) < 0) return "update-recommended";
+  if (thresholds.current && compareVersionCores(info.version, thresholds.current) < 0) return "newer-available";
   return "up-to-date";
 }
 
@@ -5381,6 +5387,7 @@ function rememberBridge(seen, info, nowMs) {
       armed: true,
       pending: false,
       lastNoticedMs: null,
+      alerted: false,
     };
   }
   entry.lastSeenMs = nowMs;
@@ -5410,6 +5417,29 @@ function takeBridgeNotice(entry, nowMs) {
   return true;
 }
 
+// True the first time for an entry (one system notification per bridge and Thunderbird session), false after.
+function takeBridgeAlert(entry) {
+  if (entry.alerted) return false;
+  entry.alerted = true;
+  return true;
+}
+
+// The system notification for a bridge to update or refused: { title, text }, or null when none is due (or the
+// add-on's own version is unreadable). Fixed words and parsed digits only.
+function bridgeAlertContent(info, extCore, thresholds) {
+  if (!extCore || extCore === "0.0.0") return null;
+  const decision = bridgeCompatDecision(info, extCore, thresholds);
+  if (decision !== "warn" && decision !== "refuse") return null;
+  const title = "Commonpost MCP: update the bridge";
+  const see = "See the options of the add-on, section Bridge.";
+  if (decision === "refuse") {
+    return { title, text: `An MCP client connected with a bridge that this add-on refuses for security reasons (older than ${thresholds.floor}). No tool works with it. ${see}` };
+  }
+  const advice = `This add-on (version ${extCore}) recommends bridge ${thresholds.minBridge} or newer. ${see}`;
+  if (info.version !== null) return { title, text: `An MCP client connected with bridge ${info.version}. ${advice}` };
+  return { title, text: `An MCP client connected with a bridge that ${bridgePhrase(info)}. ${advice}` };
+}
+
 // Appends the notice as the last item of a tools/call result when one is due; returns it, or null.
 function appendBridgeNotice(result, toolName, rawArgs, info, entry, extCore, thresholds, nowMs) {
   if (!result || !Array.isArray(result.content)) return null;
@@ -5427,6 +5457,7 @@ function bridgeStatusView(seen, extCore, thresholds) {
   return {
     extensionVersion: extCore && extCore !== "0.0.0" ? extCore : null,
     minBridgeVersion: thresholds.minBridge,
+    currentBridgeVersion: thresholds.current ?? null,
     securityFloor: thresholds.floor,
     bridges: entries.map((entry) => {
       const state = bridgeState(entry, extCore, thresholds);
@@ -6735,6 +6766,28 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 return false;
               }
             }
+
+            // BEGIN BRIDGE ALERT
+            // A system notification, once per bridge and Thunderbird session, for a bridge this add-on recommends
+            // updating or refuses. The hidden pref bridgeUpdateAlert turns it off.
+            function showBridgeAlert(alert) {
+              try {
+                if (!Services.prefs.getBoolPref(PREF_BRIDGE_UPDATE_ALERT, true)) return;
+                const service = Cc["@mozilla.org/alerts-service;1"].getService(Ci.nsIAlertsService);
+                if (typeof service.showAlert === "function") {
+                  // Thunderbird 156 has only this form (showAlertNotification is gone); the name replaces an
+                  // alert of ours that is still shown
+                  const notification = Cc["@mozilla.org/alert-notification;1"].createInstance(Ci.nsIAlertNotification);
+                  notification.init("commonpost-mcp-bridge", "", alert.title, alert.text);
+                  service.showAlert(notification);
+                } else {
+                  service.showAlertNotification("", alert.title, alert.text, false, "", null, "commonpost-mcp-bridge");
+                }
+              } catch (e) {
+                console.warn("commonpost-mcp: bridge alert not shown:", e);
+              }
+            }
+            // END BRIDGE ALERT
 
             /**
              * Check if the user has disabled the skipReview shortcut.
@@ -15226,6 +15279,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const bridgeInfo = parseBridgeHeader(rawBridgeHeader);
               const bridgeEntry = rememberBridge(globalThis.__cpMcpBridgesSeen ??= new Map(), bridgeInfo, Date.now());
               const bridgeExtCore = versionCoreOf(getExtVersion());
+              const bridgeAlert = bridgeAlertContent(bridgeInfo, bridgeExtCore, BRIDGE_THRESHOLDS);
+              if (bridgeAlert && takeBridgeAlert(bridgeEntry)) showBridgeAlert(bridgeAlert);
               // END BRIDGE HEADER READ
 
               // Streamable HTTP notifications are accepted without a JSON-RPC body.

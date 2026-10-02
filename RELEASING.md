@@ -71,6 +71,11 @@ older other side, with its own threshold; `scripts/check-versions.cjs` keeps eve
 - [ ] `MIN_BRIDGE_VERSION` (`extension/mcp_server/api.js`): the oldest bridge whose `isDirectSendCall` / `isDraftCall`
   classify every tool and mode of this add-on that sends or saves without a window, and that has no fixed flaw users
   should not keep. Raising it adds a notice; it refuses nothing.
+- [ ] `CURRENT_BRIDGE_VERSION` (`extension/mcp_server/api.js`): the bridge published with this add-on. It rises with
+  `BRIDGE_VERSION` in the release pull request and always equals it (the version check requires it). A bridge between
+  `MIN_BRIDGE_VERSION` and this one is shown as "Newer version available" in the options page, with no notice in tool
+  results. The release page follows the same rule: a changed bridge is called an optional update while
+  `MIN_BRIDGE_VERSION` does not move; to ask everyone to update, raise `MIN_BRIDGE_VERSION` to the new bridge.
 - [ ] `MODE_MIN_BRIDGE_VERSION`: the oldest bridge that waits long enough for `mode: "send"` and `"draft"`; older
   bridges get those calls refused before anything is done.
 - [ ] `BRIDGE_SECURITY_FLOOR` stays `0.0.0` unless a flaw in a protection that only the bridge has (connection file

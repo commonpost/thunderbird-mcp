@@ -23,11 +23,11 @@ const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${['COMPOSE HELPERS', 'BRIDGE COMPAT'].map(snippet).join('\n')}
 this.x = {
-  MIN_BRIDGE_VERSION, MODE_MIN_BRIDGE_VERSION, BRIDGE_SECURITY_FLOOR, BRIDGE_THRESHOLDS, BRIDGE_NOTICE_COOLDOWN_MS,
+  MIN_BRIDGE_VERSION, CURRENT_BRIDGE_VERSION, MODE_MIN_BRIDGE_VERSION, BRIDGE_SECURITY_FLOOR, BRIDGE_THRESHOLDS, BRIDGE_NOTICE_COOLDOWN_MS,
   BRIDGES_SEEN_MAX, versionCoreOf, compareVersionCores, parseBridgeHeader, bridgeFloorArmed, bridgeState,
   bridgeCompatDecision, bridgeReleaseUrl, bridgePhrase, bridgeAdvice, bridgeAddOn, bridgeNoticeText, bridgeRefusalText,
   bridgeModeRefusal, isRawDirectSend, rememberBridge, armBridgeNotice, takeBridgeNotice, appendBridgeNotice,
-  bridgeStatusView,
+  bridgeStatusView, takeBridgeAlert, bridgeAlertContent,
 };`, sandbox);
 const x = sandbox.x;
 
@@ -289,7 +289,7 @@ describe('the memory of bridges seen', () => {
   it('keeps parsed values only', () => {
     const entry = x.rememberBridge(new Map(), info('0.12.0', 'mcpb', 'x'), 5);
     assert.deepEqual(Object.keys(entry).sort(),
-      ['armed', 'firstSeenMs', 'lastNoticedMs', 'lastSeenMs', 'packaging', 'pending', 'profile', 'profileInvalid', 'version']);
+      ['alerted', 'armed', 'firstSeenMs', 'lastNoticedMs', 'lastSeenMs', 'packaging', 'pending', 'profile', 'profileInvalid', 'version']);
   });
 });
 
@@ -382,13 +382,161 @@ describe('bridgeStatusView', () => {
   });
 });
 
+const TC = { minBridge: '0.12.0', modeMin: '0.12.0', floor: '0.0.0', current: '0.13.0' };
+
+describe('newer-available state', () => {
+  it('is a bridge between the recommended version and the current one, and is not a warning', () => {
+    assert.equal(x.bridgeState(info('0.12.0'), '0.13.0', TC), 'newer-available');
+    assert.equal(x.bridgeState(info('0.12.5'), '0.13.0', TC), 'newer-available');
+    assert.equal(x.bridgeCompatDecision(info('0.12.0'), '0.13.0', TC), 'ok');
+    assert.equal(x.bridgeNoticeText(info('0.12.0'), '0.13.0', TC), null);
+  });
+
+  it('is up-to-date at the current version, update-recommended below the recommended one', () => {
+    assert.equal(x.bridgeState(info('0.13.0'), '0.13.0', TC), 'up-to-date');
+    assert.equal(x.bridgeState(info('0.11.9'), '0.13.0', TC), 'update-recommended');
+  });
+
+  it('does not exist without thresholds.current, and keeps newer-than-add-on first', () => {
+    assert.equal(x.bridgeState(info('0.12.0'), '0.13.0', T0), 'up-to-date');
+    assert.equal(x.bridgeState(info('0.14.0'), '0.13.0', TC), 'newer-than-add-on');
+  });
+
+  it('shows the current bridge version in the status view', () => {
+    const seen = new Map();
+    x.rememberBridge(seen, info('0.12.0'), 1000);
+    const view = JSON.parse(JSON.stringify(x.bridgeStatusView(seen, '0.13.0', TC)));
+    assert.equal(view.currentBridgeVersion, '0.13.0');
+    assert.equal(view.bridges[0].state, 'newer-available');
+    assert.equal(x.bridgeStatusView(seen, '0.13.0', T0).currentBridgeVersion, null);
+  });
+});
+
+describe('takeBridgeAlert', () => {
+  it('is true once per entry, and again for another identity', () => {
+    const seen = new Map();
+    const a = x.rememberBridge(seen, info('0.11.5'), 1000);
+    assert.equal(a.alerted, false);
+    assert.equal(x.takeBridgeAlert(a), true);
+    assert.equal(x.takeBridgeAlert(x.rememberBridge(seen, info('0.11.5'), 2000)), false);
+    assert.equal(x.takeBridgeAlert(x.rememberBridge(seen, info('0.11.6'), 3000)), true);
+    assert.equal(x.takeBridgeAlert(x.rememberBridge(seen, info('0.11.5', 'mcpb'), 4000)), true);
+  });
+});
+
+describe('bridgeAlertContent', () => {
+  const TITLE = 'Commonpost MCP: update the bridge';
+  const SEE = 'See the options of the add-on, section Bridge.';
+
+  it('says which bridge connected when its version is readable', () => {
+    assert.deepEqual(plain(x.bridgeAlertContent(info('0.11.5'), '0.12.0', T0)), {
+      title: TITLE,
+      text: `An MCP client connected with bridge 0.11.5. This add-on (version 0.12.0) recommends bridge 0.12.0 or newer. ${SEE}`,
+    });
+  });
+
+  it('describes a bridge without a readable version', () => {
+    assert.equal(x.bridgeAlertContent(NONE, '0.12.0', T0).text,
+      `An MCP client connected with a bridge that does not report its version (0.11 or older). This add-on (version 0.12.0) recommends bridge 0.12.0 or newer. ${SEE}`);
+  });
+
+  it('says that a refused bridge cannot work', () => {
+    assert.deepEqual(plain(x.bridgeAlertContent(info('0.12.0'), '0.12.1', T1)), {
+      title: TITLE,
+      text: `An MCP client connected with a bridge that this add-on refuses for security reasons (older than 0.12.1). No tool works with it. ${SEE}`,
+    });
+  });
+
+  it('is null when nothing is due or the add-on version is unreadable', () => {
+    assert.equal(x.bridgeAlertContent(info('0.12.0'), '0.12.0', T0), null);
+    assert.equal(x.bridgeAlertContent(info('0.12.0'), '0.13.0', TC), null);
+    assert.equal(x.bridgeAlertContent(info('0.15.0'), '0.13.0', TC), null);
+    assert.equal(x.bridgeAlertContent(info('0.11.5'), null, T0), null);
+    assert.equal(x.bridgeAlertContent(info('0.11.5'), '0.0.0', T0), null);
+  });
+
+  it('never carries the raw header or the profile', () => {
+    const alert = x.bridgeAlertContent(info('0.11.5', 'file', 'secret-profile'), '0.12.0', T0);
+    assert.ok(!alert.text.includes('secret-profile'));
+  });
+});
+
+describe('BRIDGE ALERT wiring', () => {
+  it('calls the alert in the header block, right after the add-on version is read', () => {
+    const block = snippet('BRIDGE HEADER READ');
+    const first = 'const bridgeAlert = bridgeAlertContent(bridgeInfo, bridgeExtCore, BRIDGE_THRESHOLDS);';
+    const second = 'if (bridgeAlert && takeBridgeAlert(bridgeEntry)) showBridgeAlert(bridgeAlert);';
+    const core = block.indexOf('const bridgeExtCore = versionCoreOf(getExtVersion());');
+    assert.ok(core >= 0 && block.indexOf(first) > core && block.indexOf(second) > block.indexOf(first));
+  });
+
+  it('reads the pref with true as default and calls the alerts service in a try/catch', () => {
+    const block = snippet('BRIDGE ALERT');
+    assert.ok(block.includes('Services.prefs.getBoolPref(PREF_BRIDGE_UPDATE_ALERT, true)'));
+    assert.ok(block.includes('Cc["@mozilla.org/alerts-service;1"].getService(Ci.nsIAlertsService)'));
+    assert.ok(block.indexOf('try {') >= 0 && block.indexOf('try {') < block.indexOf('service.showAlert(') && block.includes('} catch (e) {'));
+    assert.ok(apiSource.includes('const PREF_BRIDGE_UPDATE_ALERT = "extensions.commonpost-mcp.bridgeUpdateAlert";'));
+  });
+
+  describe('showBridgeAlert', () => {
+    const ALERT = { title: 'T', text: 'X' };
+    // modern: a service with showAlert(nsIAlertNotification), as Thunderbird 156; otherwise only showAlertNotification
+    function load({ pref, throws = false, modern = true }) {
+      const calls = [];
+      const warnings = [];
+      const service = modern
+        ? { showAlert: (n) => { if (throws) throw new Error('no alerts'); calls.push(['alert', ...n.inited]); } }
+        : { showAlertNotification: (...args) => { if (throws) throw new Error('no alerts'); calls.push(['alert', ...args]); } };
+      const box = {
+        PREF_BRIDGE_UPDATE_ALERT: 'extensions.commonpost-mcp.bridgeUpdateAlert',
+        Services: { prefs: { getBoolPref: (name, fallback) => { calls.push(['pref', name, fallback]); return pref; } } },
+        Cc: {
+          '@mozilla.org/alerts-service;1': { getService: () => service },
+          '@mozilla.org/alert-notification;1': { createInstance: () => ({ init(...args) { this.inited = args; } }) },
+        },
+        Ci: { nsIAlertsService: {}, nsIAlertNotification: {} },
+        console: { warn: (...args) => warnings.push(args) },
+      };
+      vm.createContext(box);
+      vm.runInContext(`${snippet('BRIDGE ALERT')}\nthis.show = showBridgeAlert;`, box);
+      return { show: box.show, calls, warnings };
+    }
+
+    it('does nothing when the pref is false', () => {
+      const t = load({ pref: false });
+      t.show(ALERT);
+      assert.deepEqual(t.calls.filter((c) => c[0] === 'alert'), []);
+    });
+
+    it('shows the notification when the pref is true', () => {
+      const t = load({ pref: true });
+      t.show(ALERT);
+      assert.deepEqual(t.calls.filter((c) => c[0] === 'alert'), [['alert', 'commonpost-mcp-bridge', '', 'T', 'X']]);
+      assert.deepEqual(t.calls[0], ['pref', 'extensions.commonpost-mcp.bridgeUpdateAlert', true]);
+    });
+
+    it('uses showAlertNotification where the service has no showAlert', () => {
+      const t = load({ pref: true, modern: false });
+      t.show(ALERT);
+      assert.deepEqual(t.calls.filter((c) => c[0] === 'alert'),
+        [['alert', '', 'T', 'X', false, '', null, 'commonpost-mcp-bridge']]);
+    });
+
+    it('lets nothing escape when the service throws', () => {
+      const t = load({ pref: true, throws: true });
+      assert.doesNotThrow(() => t.show(ALERT));
+      assert.equal(t.warnings.length, 1);
+    });
+  });
+});
+
 describe('shipped constants', () => {
   it('are versions, grouped in BRIDGE_THRESHOLDS', () => {
-    for (const value of [x.MIN_BRIDGE_VERSION, x.MODE_MIN_BRIDGE_VERSION, x.BRIDGE_SECURITY_FLOOR]) {
+    for (const value of [x.MIN_BRIDGE_VERSION, x.CURRENT_BRIDGE_VERSION, x.MODE_MIN_BRIDGE_VERSION, x.BRIDGE_SECURITY_FLOOR]) {
       assert.match(value, /^\d+\.\d+\.\d+$/);
     }
     assert.deepEqual(plain(x.BRIDGE_THRESHOLDS),
-      { minBridge: x.MIN_BRIDGE_VERSION, modeMin: x.MODE_MIN_BRIDGE_VERSION, floor: x.BRIDGE_SECURITY_FLOOR });
+      { minBridge: x.MIN_BRIDGE_VERSION, modeMin: x.MODE_MIN_BRIDGE_VERSION, floor: x.BRIDGE_SECURITY_FLOOR, current: x.CURRENT_BRIDGE_VERSION });
   });
 
   it('recommend the first bridge that waits for saveDraft, and keep the modes at the first bridge that waits for them', () => {
