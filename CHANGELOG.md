@@ -8,6 +8,13 @@ project is kept in this repository.
 
 ### Fixed
 
+- `listEvents` lists a whole day when `startDate` and `endDate` are the same date without a time (`2026-10-15`): it
+  returned an empty list, with no error, and an assistant answered that the day was free. A date without a time is now
+  a calendar day in local time: as `startDate` the start of that day, as `endDate` the end of it. A date with a time
+  is read as before.
+- A folder URI written with a trailing slash (`mailbox://nobody@Local%20Folders/`) is accepted wherever a tool takes
+  a folder: `createFolder` answered "Folder not found" for it. `moveFolder` still says "already under this parent"
+  when that parent is written this way.
 - Release pages name the `.mcpb` file as it is published. The bundle carries the version of the bridge, so a release
   that does not change the bridge ships the bundle of an earlier version: the page of 0.15.0 said
   `commonpost-mcp-v0.15.0.mcpb` for the file `commonpost-mcp-v0.14.0.mcpb` (corrected by hand on that page).

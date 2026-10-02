@@ -1371,6 +1371,19 @@ function isUncOrDevicePath(attachmentPath) {
 function folderDisplayName(folder) {
   return folder?.localizedName ?? folder?.prettyName;
 }
+
+// A folder URI written with a trailing slash ("mailbox://nobody@Local%20Folders/")
+// names the same folder, but getFolderForURL() only finds the canonical form.
+// Returns the URI without its trailing slashes, or null when there is none to
+// remove or when only the scheme would be left.
+function folderUriWithoutTrailingSlash(uri) {
+  if (typeof uri !== "string") return null;
+  let end = uri.length;
+  while (end > 0 && uri.charCodeAt(end - 1) === 47) end--;
+  if (end === uri.length) return null;
+  const trimmed = uri.slice(0, end);
+  return /^[a-z][a-z0-9+.-]*:\/\/[^/]/i.test(trimmed) ? trimmed : null;
+}
 // END FOLDER NAME HELPERS
 
 // BEGIN ENCRYPTED MESSAGE HELPERS
@@ -1517,6 +1530,33 @@ function pickDefaultWriteCalendar(calendars, accepts, kind) {
   };
 }
 // END CALENDAR WRITE TARGET HELPERS
+
+// BEGIN EVENT RANGE HELPERS
+// The range listEvents queries. A date-only value ("2026-10-15") is a calendar
+// day in local time, not an instant: as startDate it is the start of that day,
+// as endDate the end of it, so startDate = endDate lists that one day. Read as
+// an instant, both would be the same midnight and the range would be empty.
+// Returns { startJs, endJs } (end exclusive) or { error }.
+function localDayStart(value, plusDays) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(typeof value === "string" ? value.trim() : "");
+  if (!m) return undefined;
+  const year = Number(m[1]), month = Number(m[2]) - 1, day = Number(m[3]);
+  const start = new Date(year, month, day);
+  // new Date() rolls an impossible day over ("2026-02-30" becomes March 2).
+  if (start.getFullYear() !== year || start.getMonth() !== month || start.getDate() !== day) return null;
+  return new Date(year, month, day + plusDays);
+}
+
+function eventRangeBounds(startDate, endDate, now) {
+  let startJs = startDate ? localDayStart(startDate, 0) : now;
+  if (startJs === undefined) startJs = new Date(startDate);
+  if (startJs === null || isNaN(startJs.getTime())) return { error: `Invalid startDate: ${startDate}` };
+  let endJs = endDate ? localDayStart(endDate, 1) : new Date(startJs.getTime() + 30 * 86400000);
+  if (endJs === undefined) endJs = new Date(endDate);
+  if (endJs === null || isNaN(endJs.getTime())) return { error: `Invalid endDate: ${endDate}` };
+  return { startJs, endJs };
+}
+// END EVENT RANGE HELPERS
 
 // BEGIN UNTRUSTED CONTENT HELPERS
 // What these tools return is text written by third parties: a message's
@@ -5821,8 +5861,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           type: "object",
           properties: {
             calendarId: { type: "string", description: "Calendar ID to query (from listCalendars). If omitted, queries all calendars." },
-            startDate: { type: "string", description: "Start of date range in ISO 8601 format (default: now)" },
-            endDate: { type: "string", description: "End of date range in ISO 8601 format (default: 30 days from startDate)" },
+            startDate: { type: "string", description: "ISO 8601 start (default: now)" },
+            endDate: { type: "string", description: "ISO 8601 end (default: start + 30 days); date-only includes the whole day" },
             maxResults: { type: "integer", minimum: 1, maximum: 500, default: 100, description: "Max events" },
             format: { type: "string", enum: ["objects", "table"], description: "'table' returns { columns, rows }" },
           },
@@ -6885,7 +6925,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * Returns { folder } on success, or { error } if not found or restricted.
              */
             function getAccessibleFolder(folderPath) {
-              const folder = MailServices.folderLookup.getFolderForURL(folderPath);
+              let folder = MailServices.folderLookup.getFolderForURL(folderPath);
+              if (!folder) {
+                const trimmed = folderUriWithoutTrailingSlash(folderPath);
+                if (trimmed) folder = MailServices.folderLookup.getFolderForURL(trimmed);
+              }
               if (!folder) return { error: `Folder not found: ${folderPath}` };
               if (!isFolderAccessible(folder)) return { error: `Account not accessible for folder: ${folderPath}` };
               return { folder };
@@ -10707,10 +10751,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   targets = [found];
                 }
 
-                const startJs = startDate ? new Date(startDate) : new Date();
-                if (isNaN(startJs.getTime())) return { error: `Invalid startDate: ${startDate}` };
-                const endJs = endDate ? new Date(endDate) : new Date(startJs.getTime() + 30 * 86400000);
-                if (isNaN(endJs.getTime())) return { error: `Invalid endDate: ${endDate}` };
+                const range = eventRangeBounds(startDate, endDate, new Date());
+                if (range.error) return range;
+                const { startJs, endJs } = range;
 
                 const rangeStart = cal.dtz.jsDateToDateTime(startJs, cal.dtz.defaultTimezone);
                 const rangeEnd = cal.dtz.jsDateToDateTime(endJs, cal.dtz.defaultTimezone);
@@ -14140,7 +14183,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 const newParent = destResult.folder;
                 const parentName = folderDisplayName(newParent) || newParent.name || newParentPath;
 
-                if (folder.parent && folder.parent.URI === newParentPath) {
+                if (folder.parent && folder.parent.URI === newParent.URI) {
                   return { error: "Folder is already under this parent" };
                 }
 
