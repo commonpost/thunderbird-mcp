@@ -15,7 +15,12 @@ environment can publish.
     ships the same bridge and `.mcpb` again, byte for byte);
   - reviews the compatibility thresholds (below) and copies their checklist, ticked, into the pull request description;
   - turns the `Unreleased` section of `CHANGELOG.md` into `## [x.y.z] - YYYY-MM-DD`, crediting contributors and
-    the upstream pull requests that were adapted.
+    the upstream pull requests that were adapted;
+  - writes the summary of the release right under that heading, before its first `###` heading: a few plain lines
+    for a user, not a developer. What is new, what is fixed, what breaks and what to do about it, and whether
+    updating is urgent (a security release says so). It opens the release page, under "In short". The Version sync
+    check (`node scripts/release-notes.cjs <version> --check`) refuses a release without it, and
+    `node scripts/release-notes.cjs <version>` prints the page as it will be published: read it once.
 - Before merging, build twice from a clean checkout with `node scripts/build-xpi-reproducible.cjs` and
   `node scripts/build-mcpb-reproducible.cjs`: both XPI files, and both `.mcpb` files, must have the same SHA-256.
 
@@ -30,12 +35,15 @@ environment can publish.
 
 1. Checks that the tag is on `main` and runs `scripts/check-versions.cjs --release-tag` (tag =
    `package.json` = add-on manifest; `BRIDGE_VERSION` = `.mcpb` manifest, the new version only if the bridge bundle
-   changed since the previous tag; thresholds; an armed floor announced in the CHANGELOG).
+   changed since the previous tag; thresholds; an armed floor announced in the CHANGELOG), then
+   `scripts/release-notes.cjs --check` (a CHANGELOG section with its summary).
 2. Builds the XPI and the `.mcpb` (Claude Desktop bundle) reproducibly and runs the tests.
 3. Waits for a maintainer to approve the `release` environment.
 4. Rebuilds both from the tag and refuses any difference with the first build.
 5. Attests the build provenance of the XPI, the `.mcpb` and `mcp-bridge.cjs` (Sigstore bundles).
-6. Creates the release with the XPI, the `.mcpb`, the bridge and the three `.sigstore.json` bundles.
+6. Creates the release with the XPI, the `.mcpb`, the bridge and the three `.sigstore.json` bundles. Its page is
+   written by `scripts/release-notes.cjs`: the summary ("In short"), how to update the add-on and the bridge (it
+   says whether this release changes the bridge, from `BRIDGE_VERSION`), then the CHANGELOG section.
 7. Publishes `updates.json` on `gh-pages` with the new version and its `update_hash`, so installed copies update.
 
 ## 4. Verify

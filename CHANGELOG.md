@@ -6,6 +6,13 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Added
+
+- Every release page now starts with a summary in plain words ("In short": what is new, what is fixed, what breaks),
+  then the steps to update the add-on and the bridge, with a line that says whether the release changes the bridge,
+  then the list of changes as before. `scripts/release-notes.cjs` writes it from `CHANGELOG.md` and `BRIDGE_VERSION`;
+  from 0.13.0 on, a release whose CHANGELOG section has no summary is refused by the Version sync check.
+
 ### Fixed
 
 - `mcp-bridge.cjs`: a `saveDraft` call waits up to 150 s for Thunderbird, like `replyToMessage` and `forwardMessage`
