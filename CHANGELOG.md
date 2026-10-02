@@ -4,7 +4,19 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## [Unreleased]
+## [0.13.0] - 2026-10-02
+
+- **New:** `saveDraft` can edit an existing draft (`draftId`) instead of creating another one. A reply or a forward
+  saved as a draft or sent directly, and a new draft, now have the body Thunderbird itself would write: the quote with
+  its formatting, the forward header, your signature.
+- **Fixed:** the bridge waits long enough for `saveDraft`: a slow save could be reported as failed and end in a second
+  draft. The notice about a bridge to update no longer skips a session that starts shortly after another one, and
+  says where the bridge is.
+- **Changes you may notice:** drafts and direct sends now carry your signature when you have one, and the subject of
+  a forward made without a window always gets the `Fwd:` prefix. No call that worked stops working.
+- **This release changes the bridge: update it in every MCP client** (steps below). A bridge 0.12 keeps working, and
+  the add-on reminds you until it is replaced.
+- Release pages start with this summary and the steps to update, from now on.
 
 ### Added
 
