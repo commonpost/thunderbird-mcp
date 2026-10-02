@@ -4435,8 +4435,8 @@ const RELEASE_TAG_URL = "https://github.com/commonpost/thunderbird-mcp/releases/
 const RELEASE_LATEST_URL = "https://github.com/commonpost/thunderbird-mcp/releases/latest";
 const BRIDGE_DIRECT_SEND_TOOLS = new Set(["sendMail", "replyToMessage", "forwardMessage"]);
 const BRIDGE_MODE_TOOLS = new Set(["replyToMessage", "forwardMessage"]);
-const BRIDGE_ADVICE_MCPB = "Install the .mcpb bundle from the release page below in Claude Desktop again (a bundle installed from a file is never updated automatically; its version number can be lower than the add-on's: it is still the current bridge).";
-const BRIDGE_ADVICE_FILE = "Replace mcp-bridge.cjs with the one from the release page below (or install the .mcpb bundle from it in Claude Desktop), then restart the MCP client.";
+const BRIDGE_ADVICE_MCPB = "Download the .mcpb bundle from the release page below and install it in Claude Desktop again: open the file with Claude Desktop, or use Settings > Extensions > Advanced settings > Install Extension (a bundle installed from a file is never updated automatically; its version number can be lower than the add-on's: it is still the current bridge).";
+const BRIDGE_ADVICE_FILE = "Download mcp-bridge.cjs from the release page below and put it in place of the copy this MCP client runs (its path is in the MCP configuration of the client; in Claude Code: claude mcp get <server name>), then restart the client or reconnect the server. In Claude Desktop, install the .mcpb bundle from that page instead.";
 
 // "X.Y.Z" from a version string, or null. Never throws. Same rule as versionCore in mcp-bridge.cjs.
 function versionCoreOf(version) {
