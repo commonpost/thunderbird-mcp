@@ -289,7 +289,7 @@ describe('the memory of bridges seen', () => {
   it('keeps parsed values only', () => {
     const entry = x.rememberBridge(new Map(), info('0.12.0', 'mcpb', 'x'), 5);
     assert.deepEqual(Object.keys(entry).sort(),
-      ['armed', 'firstSeenMs', 'lastNoticedMs', 'lastSeenMs', 'packaging', 'profile', 'profileInvalid', 'version']);
+      ['armed', 'firstSeenMs', 'lastNoticedMs', 'lastSeenMs', 'packaging', 'pending', 'profile', 'profileInvalid', 'version']);
   });
 });
 
@@ -304,6 +304,24 @@ describe('arming the notice', () => {
     assert.equal(x.takeBridgeNotice(entry, 1000 + 5 * MIN), false);
     x.armBridgeNotice(entry, 1000 + 10 * MIN);
     assert.equal(x.takeBridgeNotice(entry, 1000 + 10 * MIN), true);
+  });
+
+  it('keeps the notice of a session that starts during the cooldown for its first call after it', () => {
+    // Two clients behind bridges 0.11 share the entry: the first one takes the notice, the second one lists its
+    // tools two minutes later
+    const entry = x.rememberBridge(new Map(), NONE, 0);
+    assert.equal(x.takeBridgeNotice(entry, 1000), true);
+    x.armBridgeNotice(entry, 1000 + 2 * MIN);
+    assert.equal(x.takeBridgeNotice(entry, 1000 + 3 * MIN), false, 'not during the cooldown');
+    assert.equal(x.takeBridgeNotice(entry, 1000 + 98 * MIN), true, 'the first call after it');
+    assert.equal(x.takeBridgeNotice(entry, 1000 + 99 * MIN), false, 'once');
+    assert.equal(x.takeBridgeNotice(entry, 1000 + 200 * MIN), false, 'and no more without a new session');
+  });
+
+  it('does not repeat the notice to a session that goes on, however long', () => {
+    const entry = x.rememberBridge(new Map(), NONE, 0);
+    assert.equal(x.takeBridgeNotice(entry, 1000), true);
+    for (const minutes of [1, 11, 60, 600]) assert.equal(x.takeBridgeNotice(entry, 1000 + minutes * MIN), false);
   });
 });
 

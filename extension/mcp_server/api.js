@@ -4590,6 +4590,7 @@ function rememberBridge(seen, info, nowMs) {
       firstSeenMs: nowMs,
       lastSeenMs: nowMs,
       armed: true,
+      pending: false,
       lastNoticedMs: null,
     };
   }
@@ -4599,14 +4600,23 @@ function rememberBridge(seen, info, nowMs) {
   return entry;
 }
 
-// A tools/list (a client starting a session) arms the notice again, at most once per cooldown.
+function bridgeNoticeCooledDown(entry, nowMs) {
+  return entry.lastNoticedMs === null || nowMs - entry.lastNoticedMs >= BRIDGE_NOTICE_COOLDOWN_MS;
+}
+
+// A tools/list (a client starting a session) arms the notice again, at most once per cooldown. A session that
+// starts during the cooldown is not forgotten: its notice is pending and goes out with the first tools/call after
+// the cooldown. Several clients can share one entry (every bridge 0.11 or older does: it sends no header), and a
+// second session would otherwise never be told.
 function armBridgeNotice(entry, nowMs) {
-  if (entry.lastNoticedMs === null || nowMs - entry.lastNoticedMs >= BRIDGE_NOTICE_COOLDOWN_MS) entry.armed = true;
+  if (bridgeNoticeCooledDown(entry, nowMs)) entry.armed = true;
+  else entry.pending = true;
 }
 
 function takeBridgeNotice(entry, nowMs) {
-  if (!entry.armed) return false;
+  if (!entry.armed && !(entry.pending && bridgeNoticeCooledDown(entry, nowMs))) return false;
   entry.armed = false;
+  entry.pending = false;
   entry.lastNoticedMs = nowMs;
   return true;
 }
