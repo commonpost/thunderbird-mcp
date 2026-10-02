@@ -4,7 +4,17 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## [Unreleased]
+## [0.14.0] - 2026-10-02
+
+- **Security:** with 0.13.0, a reply or a forward saved as a draft (`mode: "draft"`) could carry an image or a link
+  of the original message that Thunderbird fetches and attaches when the draft is opened and sent. Fixed here; update
+  if you use drafts of replies or forwards. Direct sends and replies made in Thunderbird's window were not affected.
+- **New:** `replyToMessage` can answer the newest message of a conversation (`latestInThread`), in a window or as a
+  draft.
+- **Fixed:** a signature with images read from files, and the bridge now waits long enough for a slow send or save.
+- **Changes you may notice:** `moz-do-not-send="false"` in an HTML body passed to the compose tools is no longer
+  kept. No call that worked stops working.
+- **This release changes the bridge: update it in every MCP client** (steps below). A bridge 0.13 keeps working.
 
 ### Added
 
