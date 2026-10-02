@@ -55,6 +55,8 @@ jobs:
           git merge-base --is-ancestor HEAD refs/remotes/origin/main || {
             echo "::error::Tag ${REF_NAME} is not on main; refusing to release it."; exit 1; }
           node scripts/check-versions.cjs --release-tag "$REF_NAME"
+          # The release page can be written: a CHANGELOG section with its summary (scripts/release-notes.cjs)
+          node scripts/release-notes.cjs "${REF_NAME#v}" --check
 
       # Before any npm install: only Node's built-in modules and git run here.
       - name: Build the XPI (reproducible)
@@ -202,8 +204,8 @@ jobs:
             gh release upload "$TAG" "${ASSETS[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
             VER="${TAG#v}"
-            awk -v v="$VER" 'index($0, "## [" v "]") == 1 {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
-            test -s "$RUNNER_TEMP/notes.md" || { echo "::error::CHANGELOG.md has no section for ${VER}"; exit 1; }
+            # In short, how to update (add-on and bridge), then the section of CHANGELOG.md
+            node scripts/release-notes.cjs "$VER" > "$RUNNER_TEMP/notes.md"
             gh release create "$TAG" "${ASSETS[@]}" \
               --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
           fi

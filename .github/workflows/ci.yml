@@ -65,3 +65,5 @@ jobs:
           node-version: '22.x'
       - name: Check the product, add-on and bridge versions
         run: node scripts/check-versions.cjs
+      - name: Check that the release page of this version can be written
+        run: node scripts/release-notes.cjs "$(node -p "require('./package.json').version")" --check
