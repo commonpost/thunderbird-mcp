@@ -1,0 +1,17 @@
+{
+  "name": "commonpost",
+  "description": "Commonpost MCP for Thunderbird: the MCP bridge for Claude Code, kept current with the add-on's releases.",
+  "owner": {
+    "name": "Commonpost contributors",
+    "url": "https://github.com/commonpost"
+  },
+  "plugins": [
+    {
+      "name": "commonpost-mcp",
+      "source": ".",
+      "description": "Thunderbird mail, contacts, calendars and filters as MCP tools (needs the Commonpost MCP add-on in Thunderbird).",
+      "category": "productivity",
+      "tags": ["thunderbird", "email", "calendar", "contacts"]
+    }
+  ]
+}

@@ -25,7 +25,14 @@ Give your AI assistant full access to Thunderbird -- search mail, compose messag
 2. Download `mcp-bridge.cjs` from the **same release** and put it in a folder you will keep, for example `~/commonpost-mcp/`. The bridge is a single file and needs nothing else: the release does not ship a `package.json`. (The bridge carries its own version; it reads no `package.json`.)
 3. Check Node.js: `node --version` must show 22 or later.
 4. Register the bridge with your MCP client.
-   - Claude Code (use the absolute path of the file):
+   - Claude Code, with the plugin (no file to download or to update by hand; see [Claude Code plugin](#claude-code-plugin)):
+
+     ```
+     claude plugin marketplace add commonpost/thunderbird-mcp
+     claude plugin install commonpost-mcp@commonpost
+     ```
+
+   - Claude Code, with the file (use the absolute path of the file):
 
      ```
      claude mcp add commonpost-mail -- node /absolute/path/to/mcp-bridge.cjs
@@ -52,7 +59,7 @@ Give your AI assistant full access to Thunderbird -- search mail, compose messag
 
 5. Test it. Keep Thunderbird open and ask your assistant: "list my Thunderbird accounts".
 
-**The bridge is not updated automatically, and each MCP client has its own.** When one should be replaced, the extension says so in a tool result (your assistant passes it on) and in its options page (section Bridge), which lists the bridges that connected with "Up to date", "Newer version available" (it works; updating is optional) or "Update recommended". For a bridge to update or one the extension refuses, Thunderbird also shows a system notification, once per bridge and per Thunderbird session; the hidden preference `extensions.commonpost-mcp.bridgeUpdateAlert` set to `false` turns it off. Every [release page](https://github.com/commonpost/thunderbird-mcp/releases) starts with what the release brings, whether it changes the bridge, and the steps: download `mcp-bridge.cjs` and put it in place of your copy (its path is in the MCP configuration of your client; in Claude Code: `claude mcp get <server name>`), then reconnect your MCP client (`/mcp` in Claude Code); in Claude Desktop, install the `.mcpb` bundle again. A release that does not change the bridge ships the same bridge again. The extension's version is shown in Tools > Add-ons and Themes.
+**The bridge is not updated automatically, and each MCP client has its own.** When one should be replaced, the extension says so in a tool result (your assistant passes it on) and in its options page (section Bridge), which lists the bridges that connected with "Up to date", "Newer version available" (it works; updating is optional) or "Update recommended". For a bridge to update or one the extension refuses, Thunderbird also shows a system notification, once per bridge and per Thunderbird session; the hidden preference `extensions.commonpost-mcp.bridgeUpdateAlert` set to `false` turns it off. Every [release page](https://github.com/commonpost/thunderbird-mcp/releases) starts with what the release brings, whether it changes the bridge, and the steps: download `mcp-bridge.cjs` and put it in place of your copy (its path is in the MCP configuration of your client; in Claude Code: `claude mcp get <server name>`), then reconnect your MCP client (`/mcp` in Claude Code); in Claude Desktop, install the `.mcpb` bundle again; with the [Claude Code plugin](#claude-code-plugin), update the plugin. A release that does not change the bridge ships the same bridge again. The extension's version is shown in Tools > Add-ons and Themes.
 
 Right after installing, open the extension's options page (Tools > Add-ons and Themes > Commonpost MCP for Thunderbird > Options) and choose which accounts and tools your assistant may use. Until you do, every account and tool is visible to MCP clients.
 
@@ -198,6 +205,30 @@ Add to your MCP client config (e.g. `~/.claude.json` for Claude Code):
   }
 }
 ```
+
+### Claude Code plugin
+
+This repository is also a [Claude Code plugin marketplace](https://code.claude.com/docs/en/plugins): the plugin
+`commonpost-mcp` declares the `commonpost-mail` MCP server and carries the bridge of the release, so there is no
+`mcp-bridge.cjs` to download or to replace by hand.
+
+```
+claude plugin marketplace add commonpost/thunderbird-mcp
+claude plugin install commonpost-mcp@commonpost
+```
+
+- The plugin contains **only the bridge** and the files of this repository; install the Thunderbird extension
+  separately (step 1 above). Node.js 22 or later must be on the `PATH`.
+- Updates: Claude Code does not update a third-party marketplace on its own unless you turn it on (`/plugin` >
+  Marketplaces > Enable auto-update). Otherwise run `/plugin marketplace update commonpost` (or `claude plugin update
+  commonpost-mcp@commonpost`), then `/reload-plugins`. Each release raises the plugin's version, so an update follows
+  every release, whether or not the bridge changed; the bridge in the plugin is always the one of the release.
+- Tool names carry the plugin and server names: `mcp__plugin_commonpost-mcp_commonpost-mail__searchMessages`, for
+  example. Permission rules written for a server added by file (`mcp__commonpost-mail__*`) do not match them. The
+  options page of the add-on (section Bridge) lists this bridge as a `mcp-bridge.cjs` file.
+- The plugin is fetched from this repository with git (`main`, or the commit you pin with `claude plugin marketplace add
+  commonpost/thunderbird-mcp#vX.Y.Z`); it is not signed. The bridge inside it is the file `mcp-bridge.cjs` of that
+  commit, the same one every release attests.
 
 ### Claude Desktop (one-click bundle)
 
