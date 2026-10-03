@@ -5355,10 +5355,10 @@ function draftInfoFields(draftInfo) {
 // add-ons older than it needs); the version check keeps every threshold at or below the bridge version of the same
 // release, so the two sides never warn about the same pair. Only digits parsed here, fixed words and fixed addresses
 // reach a text; the raw header and the profile never do.
-const MIN_BRIDGE_VERSION = "0.13.0";
+const MIN_BRIDGE_VERSION = "0.17.1";
 // The bridge published with this version of the add-on. Equal to BRIDGE_VERSION in mcp-bridge.cjs (the version
 // check requires it). A bridge between MIN_BRIDGE_VERSION and this one works, and is shown as an optional update.
-const CURRENT_BRIDGE_VERSION = "0.14.0";
+const CURRENT_BRIDGE_VERSION = "0.17.1";
 const MODE_MIN_BRIDGE_VERSION = "0.12.0";
 const BRIDGE_SECURITY_FLOOR = "0.0.0";
 const BRIDGE_THRESHOLDS = Object.freeze({ minBridge: MIN_BRIDGE_VERSION, modeMin: MODE_MIN_BRIDGE_VERSION, floor: BRIDGE_SECURITY_FLOOR, current: CURRENT_BRIDGE_VERSION });
