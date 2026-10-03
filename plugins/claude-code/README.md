@@ -36,6 +36,18 @@ Thunderbird separately; see [Quick install](https://github.com/commonpost/thunde
   project's README and a release page). The bridge never fetches them, and opens no connection other than to
   `127.0.0.1`.
 
+## Examples
+
+- "How many emails did Alice Martin send me in September 2026?"
+- "Reply to Carol's most recent message about the training room budget and tell her I approve the 4,200 EUR quote.
+  Save the reply as a draft; do not send it."
+- "Create a folder named Newsletters in Local Folders and move all the Weekly Digest newsletters from my Inbox into
+  it."
+- "Add a Dentist appointment to my calendar on October 15, 2026 from 14:00 to 15:00."
+
+Privacy: nothing leaves your computer ([docs/PRIVACY.md](https://github.com/commonpost/thunderbird-mcp/blob/main/docs/PRIVACY.md)).
+Support: <https://github.com/commonpost/thunderbird-mcp/issues>. Reviewers: [docs/review-testing.md](https://github.com/commonpost/thunderbird-mcp/blob/main/docs/review-testing.md).
+
 ## Updates
 
 Each release of the add-on raises the plugin's version, so updating the plugin always gives you the bridge of the

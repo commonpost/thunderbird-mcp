@@ -24,5 +24,8 @@
         "${CLAUDE_PLUGIN_ROOT}/mcp-bridge.cjs"
       ]
     }
-  }
+  },
+  "documentationUrl": "https://github.com/commonpost/thunderbird-mcp#readme",
+  "supportUrl": "https://github.com/commonpost/thunderbird-mcp/issues",
+  "privacyPolicyUrl": "https://github.com/commonpost/thunderbird-mcp/blob/main/docs/PRIVACY.md"
 }
