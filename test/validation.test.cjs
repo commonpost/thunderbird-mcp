@@ -32,9 +32,22 @@ function getMarkedApiSnippet(startMarker, endMarker) {
   return apiSource.slice(start, end);
 }
 
+// The production isInsideProtectedDirs (with the strip helpers it uses), for
+// the attachment conversion below.
+function loadProductionProtectedDirsCheck() {
+  const sandbox = {};
+  vm.createContext(sandbox);
+  vm.runInContext(`${getMarkedApiSnippet('// BEGIN SENSITIVE ATTACHMENT PATH HELPERS', '// END SENSITIVE ATTACHMENT PATH HELPERS')}
+this.isInsideProtectedDirs = isInsideProtectedDirs;`, sandbox);
+  return sandbox.isInsideProtectedDirs;
+}
+
 function loadProductionAttachmentValidation(overrides = {}) {
   const sandbox = {
     getConfiguredGetMessagesLimit: () => 20,
+    // No profile or mail-store directory unless a test names some.
+    protectedMailDirectories: () => [],
+    isInsideProtectedDirs: loadProductionProtectedDirsCheck(),
     ...overrides,
   };
   vm.createContext(sandbox);
@@ -648,8 +661,9 @@ function makeMockLocalFile(attachmentPath, options = {}) {
   };
 }
 
-function convertProductionFileAttachments(entries, files) {
+function convertProductionFileAttachments(entries, files, protectedDirs = []) {
   const runtime = loadProductionAttachmentValidation({
+    protectedMailDirectories: () => protectedDirs,
     createLocalFile(attachmentPath) {
       const file = files.get(attachmentPath);
       if (!file) throw new Error(`missing mock file: ${attachmentPath}`);
@@ -1014,6 +1028,29 @@ describe('Validation: attachment sending', () => {
     assert.deepEqual(Array.from(result.failed), [
       'C:\\Users\\alice\\Documents\\report.pdf (a file path attachment cannot be verified on Windows through this tool; use the bridge instead, which resolves and checks the real path)',
     ]);
+  });
+
+  it('refuses a path inside a Thunderbird profile or mail store kept outside the default locations, before any file access', () => {
+    const entries = ['/data/tb-profile/Mail/Local Folders/Inbox', '/DATA/TB-Profile/prefs.js', '/data/tb-profile'];
+    const { result } = convertProductionFileAttachments(entries, new Map(), ['/data/tb-profile/']);
+    assert.equal(result.descs.length, 0);
+    assert.deepEqual(Array.from(result.failed), entries.map(e => `${e} (Thunderbird profile or mail store path blocked)`));
+  });
+
+  it('refuses a path that only normalizes into a profile or mail store (a link, or "..")', () => {
+    const entry = '/home/u/docs/shortcut/abook.sqlite';
+    const files = new Map([[entry, makeMockLocalFile(entry, { normalizedPath: '/data/tb-profile/abook.sqlite' })]]);
+    const { result } = convertProductionFileAttachments([entry], files, ['/data/tb-profile']);
+    assert.equal(result.descs.length, 0);
+    assert.deepEqual(Array.from(result.failed), [`${entry} (Thunderbird profile or mail store path blocked)`]);
+  });
+
+  it('still attaches a file next to (not inside) a profile or mail store', () => {
+    const entry = '/data/tb-profile-notes/report.txt';
+    const files = new Map([[entry, makeMockLocalFile(entry)]]);
+    const { result } = convertProductionFileAttachments([entry], files, ['/data/tb-profile']);
+    assert.deepEqual(Array.from(result.failed), []);
+    assert.equal(result.descs.length, 1);
   });
 
   it('checks ancestors only after the lexical and normalized deny-list, before the file-type check', () => {

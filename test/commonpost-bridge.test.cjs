@@ -20,6 +20,13 @@ const {
   discoverConnectionInfo,
   inlineAttachmentPaths,
   inspectAttachmentPath,
+  isInsideProtectedDirs,
+  sanitizeProtectedDirs,
+  candidatesProtectedDirs,
+  buildProtectedContext,
+  isUnderProtectedDirectory,
+  handleMessage,
+  readConnectionInfo,
   readAttachmentFromPath,
   validateAttachmentStat,
   isSensitiveFilePath,
@@ -29,6 +36,7 @@ const {
   windowsPathAmbiguity,
 } = require('../mcp-bridge.cjs');
 const vm = require('vm');
+const http = require('http');
 
 // Attachment tests need a directory outside the AppData deny-list (which
 // os.tmpdir() sits under on Windows, since %TEMP% is AppData\Local\Temp)
@@ -889,5 +897,284 @@ describe('the folder of a discovered connection file is checked (POSIX)', { skip
     fs.chmodSync(dir, 0o755);
     const result = discover({ COMMONPOST_MCP_CONNECTION_FILE: connFile });
     assert.equal(result.candidates.length, 1);
+  });
+});
+
+// A profile or local mail directory chosen outside the default locations is
+// not known to the deny-list patterns: the extension lists the real ones in
+// the connection file, and the bridge refuses anything inside them.
+describe('Thunderbird profile and mail-store directories from the connection file', () => {
+  it('isInsideProtectedDirs: the directory itself and what lies under it, not a look-alike sibling', () => {
+    const dirs = ['/data/tb-profile/', 'D:\\Thunderbird\\Profile'];
+    assert.equal(isInsideProtectedDirs('/data/tb-profile', dirs), true);
+    assert.equal(isInsideProtectedDirs('/data/tb-profile/Mail/Local Folders/Inbox', dirs), true);
+    assert.equal(isInsideProtectedDirs('/DATA/TB-Profile/prefs.js', dirs), true);
+    assert.equal(isInsideProtectedDirs('/data//tb-profile/abook.sqlite', dirs), true);
+    assert.equal(isInsideProtectedDirs('d:/thunderbird/profile/ImapMail/x', dirs), true);
+    assert.equal(isInsideProtectedDirs('D:\\Thunderbird\\Profile\\prefs.js', dirs), true);
+    assert.equal(isInsideProtectedDirs('/data/tb-profile-notes/report.txt', dirs), false);
+    assert.equal(isInsideProtectedDirs('/data/report.txt', dirs), false);
+  });
+
+  it('isInsideProtectedDirs: the macOS /System/Volumes/Data alias and decomposed accents name the same folder', () => {
+    const dirs = ['/Users/fr\u00e9d\u00e9ric/Documents/TB'];
+    assert.equal(isInsideProtectedDirs('/System/Volumes/Data/Users/fr\u00e9d\u00e9ric/Documents/TB/prefs.js', dirs), true);
+    assert.equal(isInsideProtectedDirs('/Users/fre\u0301de\u0301ric/Documents/TB/abook.sqlite', dirs), true);
+    assert.equal(isInsideProtectedDirs('/Users/frederic/Documents/TB/prefs.js', ['/System/Volumes/Data/Users/frederic/Documents/TB']), true);
+    assert.equal(isInsideProtectedDirs('/System/Volumes/Data', ['/Users']), false);
+    assert.equal(isInsideProtectedDirs('/System/Volumes/Database/Users/x', ['/Users']), false);
+  });
+
+  it('isInsideProtectedDirs: an empty or root-only entry is ignored instead of blocking every file', () => {
+    for (const dir of ['', '/', '//', 'C:', 'C:\\', 'c:/', null, 42]) {
+      assert.equal(isInsideProtectedDirs('/home/u/report.pdf', [dir]), false, String(dir));
+      assert.equal(isInsideProtectedDirs('C:\\Users\\u\\report.pdf', [dir]), false, String(dir));
+    }
+    assert.equal(isInsideProtectedDirs('/home/u/report.pdf', undefined), false);
+    assert.equal(isInsideProtectedDirs('', ['/home']), false);
+  });
+
+  it('the extension helper gives the same answers (kept in sync)', () => {
+    const api = fs.readFileSync(path.resolve(__dirname, '../extension/mcp_server/api.js'), 'utf8');
+    const block = api.slice(api.indexOf('// BEGIN SENSITIVE ATTACHMENT PATH HELPERS'), api.indexOf('// END SENSITIVE ATTACHMENT PATH HELPERS'));
+    const sandbox = {};
+    vm.createContext(sandbox);
+    vm.runInContext(`${block}\nthis.isInsideProtectedDirs = isInsideProtectedDirs;`, sandbox);
+    const dirs = ['/data/tb-profile/', 'D:\\Thunderbird\\Profile', '', '/', 'C:\\'];
+    for (const p of ['/data/tb-profile', '/data/tb-profile/x', '/DATA/TB-PROFILE/x', '/data/tb-profile-notes/x',
+      'D:\\Thunderbird\\Profile\\x', 'd:/thunderbird/profile', 'C:\\x', '/x', '/data//tb-profile/x']) {
+      assert.equal(sandbox.isInsideProtectedDirs(p, dirs), isInsideProtectedDirs(p, dirs), p);
+    }
+  });
+
+  it('sanitizeProtectedDirs keeps absolute paths of at most 4096 characters, and every one a connection file can hold', () => {
+    assert.deepEqual(sanitizeProtectedDirs(undefined), []);
+    assert.deepEqual(sanitizeProtectedDirs('/data/tb-profile'), []);
+    assert.deepEqual(sanitizeProtectedDirs(['/data/tb-profile', 'relative/dir', '', 7, null, `/${'x'.repeat(4096)}`]),
+      ['/data/tb-profile']);
+    assert.equal(sanitizeProtectedDirs(Array.from({ length: 1500 }, (_, i) => `/d/${i}`)).length, 1500);
+  });
+});
+
+describe('attachments from a profile or mail store outside the default locations are refused (POSIX)', { skip: process.platform === 'win32' }, () => {
+  let root;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-prof-'));
+    fs.mkdirSync(path.join(root, 'tb-profile', 'Mail'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'tb-profile', 'Mail', 'Inbox'), 'From x\n');
+    fs.writeFileSync(path.join(root, 'tb-profile', 'abook.sqlite'), 'db');
+    fs.mkdirSync(path.join(root, 'tb-profile-notes'));
+    fs.writeFileSync(path.join(root, 'tb-profile-notes', 'report.txt'), 'ok');
+  });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('a file inside the profile is refused before it is read', async () => {
+    const protectedDirs = [path.join(root, 'tb-profile')];
+    await assert.rejects(inlineAttachmentPaths({ attachments: [path.join(root, 'tb-profile', 'Mail', 'Inbox')] }, { protectedDirs }),
+      /Attachment path blocked: files of a Thunderbird profile or mail store can't be attached: .*Inbox$/);
+    await assert.rejects(inlineAttachmentPaths({ attachments: [path.join(root, 'tb-profile-notes', '..', 'tb-profile', 'abook.sqlite')] }, { protectedDirs }),
+      /profile or mail store/);
+  });
+
+  it('a file reached through a symlinked parent directory is refused on its real path', async () => {
+    fs.symlinkSync(path.join(root, 'tb-profile'), path.join(root, 'shortcut'));
+    const lexical = path.join(root, 'shortcut', 'abook.sqlite');
+    await assert.rejects(inlineAttachmentPaths({ attachments: [lexical] }, { protectedDirs: [path.join(root, 'tb-profile')] }),
+      /profile or mail store can't be attached: .*shortcut.*abook\.sqlite \(resolves to .*tb-profile.*abook\.sqlite\)/);
+  });
+
+  it('a profile listed under a symlinked name is the same profile', async () => {
+    fs.symlinkSync(path.join(root, 'tb-profile'), path.join(root, 'profile-link'));
+    await assert.rejects(inlineAttachmentPaths({ attachments: [path.join(root, 'tb-profile', 'abook.sqlite')] },
+      { protectedDirs: [path.join(root, 'profile-link')] }), /profile or mail store/);
+  });
+
+  it('a drive or file-system root listed as a directory refuses nothing (not by path, not by identity)', async () => {
+    const context = await buildProtectedContext(['/']);
+    assert.deepEqual([context.realDirs, context.ids.size], [[], 0]);
+    const args = { attachments: [path.join(root, 'tb-profile-notes', 'report.txt')] };
+    await inlineAttachmentPaths(args, { protectedDirs: ['/', '//'] });
+    assert.equal(args.attachments[0].name, 'report.txt');
+  });
+
+  it('a directory is also recognised by its identity (device and inode), whatever path reaches it', async () => {
+    const context = await buildProtectedContext([path.join(root, 'tb-profile')]);
+    const unknownName = { dirs: [], realDirs: [], ids: context.ids };
+    assert.equal(await isUnderProtectedDirectory(path.join(root, 'tb-profile', 'Mail', 'Inbox'), unknownName), true);
+    assert.equal(await isUnderProtectedDirectory(path.join(root, 'tb-profile-notes', 'report.txt'), unknownName), false);
+  });
+
+  it('a file next to the profile is still attached, and nothing is refused without listed directories', async () => {
+    const protectedDirs = [path.join(root, 'tb-profile')];
+    const args = { attachments: [path.join(root, 'tb-profile-notes', 'report.txt')] };
+    await inlineAttachmentPaths(args, { protectedDirs });
+    assert.equal(args.attachments[0].name, 'report.txt');
+    const older = { attachments: [path.join(root, 'tb-profile', 'abook.sqlite')] };
+    await inlineAttachmentPaths(older, { protectedDirs: [] });
+    assert.equal(older.attachments[0].name, 'abook.sqlite');
+  });
+});
+
+// What the extension writes into connection.json (its own writer, run with the
+// deny-list helpers), for a profile and mail servers at the given paths.
+function extensionConnectionJson({ port, token, profD, servers = [] }) {
+  const api = fs.readFileSync(path.resolve(__dirname, '../extension/mcp_server/api.js'), 'utf8');
+  const helpers = api.slice(api.indexOf('// BEGIN SENSITIVE ATTACHMENT PATH HELPERS'), api.indexOf('// END SENSITIVE ATTACHMENT PATH HELPERS'));
+  const writer = api.slice(api.indexOf('// BEGIN CONNECTION INFO WRITER'), api.indexOf('// END CONNECTION INFO WRITER'));
+  const written = [];
+  const tmpDir = { append() {}, exists: () => true, isSymlink: () => false, permissions: 0o700, clone() { return { append() {}, exists: () => false, path: 'x' }; } };
+  const sandbox = {
+    Services: {
+      dirsvc: { get: (key) => (key === 'TmpD' ? tmpDir : key === 'ProfD' ? { path: profD } : (() => { throw new Error(key); })()) },
+      appinfo: { OS: 'Linux', processID: 4242 },
+    },
+    Ci: { nsIFile: { DIRECTORY_TYPE: 1 }, nsIToolkitProfileService: {} },
+    Cc: {
+      '@mozilla.org/network/file-output-stream;1': { createInstance: () => ({ init() {} }) },
+      '@mozilla.org/intl/converter-output-stream;1': { createInstance: () => ({ init() {}, writeString(d) { written.push(d); }, close() {} }) },
+      '@mozilla.org/toolkit/profile-service;1': { getService: () => ({ profiles: [] }) },
+    },
+    MailServices: { accounts: { allServers: servers.map((p) => ({ localPath: { path: p } })) } },
+    console: { warn() {} },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(`${helpers}\n${writer}\nthis.writeConnectionInfo = writeConnectionInfo;`, sandbox);
+  sandbox.writeConnectionInfo(port, token);
+  const data = JSON.parse(written[0]);
+  delete data.pid; // no process to check in a test
+  return JSON.stringify(data);
+}
+
+function saveDraftCall(id, attachments) {
+  return JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call',
+    params: { name: 'saveDraft', arguments: { to: 'a@example.com', subject: 's', body: 'b', attachments } } });
+}
+
+function toolError(res) {
+  return res && res.result && res.result.isError ? JSON.parse(res.result.content[0].text).error : null;
+}
+
+describe('the bridge refuses profile and mail-store files named in the real connection file (end to end, POSIX)', { skip: process.platform === 'win32' }, () => {
+  let root;
+  let conn;
+  let savedEnv;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-e2e-'));
+    fs.mkdirSync(path.join(root, 'tb-profile', 'Mail'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'tb-profile', 'abook.sqlite'), 'db');
+    fs.mkdirSync(path.join(root, 'mail-store'));
+    fs.writeFileSync(path.join(root, 'mail-store', 'Inbox'), 'From x\n');
+    fs.mkdirSync(path.join(root, 'conn'), { mode: 0o700 });
+    conn = path.join(root, 'conn', 'connection.json');
+    savedEnv = process.env.COMMONPOST_MCP_CONNECTION_FILE;
+    process.env.COMMONPOST_MCP_CONNECTION_FILE = conn;
+    clearConnectionCache();
+  });
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env.COMMONPOST_MCP_CONNECTION_FILE;
+    else process.env.COMMONPOST_MCP_CONNECTION_FILE = savedEnv;
+    clearConnectionCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  function writeConn(json) {
+    const tmp = `${conn}.tmp`;
+    fs.writeFileSync(tmp, json, { mode: 0o600 });
+    fs.renameSync(tmp, conn);
+  }
+
+  it('the profile and a server directory listed by the extension writer are refused through handleMessage', async () => {
+    writeConn(extensionConnectionJson({ port: 1, token: 'a'.repeat(64), profD: path.join(root, 'tb-profile'), servers: [path.join(root, 'mail-store')] }));
+    for (const file of [path.join(root, 'tb-profile', 'abook.sqlite'), path.join(root, 'mail-store', 'Inbox')]) {
+      const res = await handleMessage(saveDraftCall(1, [file]));
+      assert.match(toolError(res) || '', /files of a Thunderbird profile or mail store can't be attached/, file);
+    }
+  });
+
+  it('a connection file that appears after the call started still decides (the bridge waits for Thunderbird first)', async () => {
+    const json = extensionConnectionJson({ port: 1, token: 'b'.repeat(64), profD: path.join(root, 'tb-profile') });
+    const timer = setTimeout(() => writeConn(json), 1500);
+    try {
+      const res = await handleMessage(saveDraftCall(2, [path.join(root, 'tb-profile', 'abook.sqlite')]));
+      assert.match(toolError(res) || '', /profile or mail store/);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
+  it('a request that ends up going to another Thunderbird is checked again against its directories', async () => {
+    // First instance: an older extension (no list) that answers 403; while it
+    // answers, the connection file is replaced by another instance that lists
+    // the profile. The bridge moves on to it and must refuse before sending.
+    let served = 0;
+    const server = http.createServer((req, res) => {
+      served++;
+      writeConn(extensionConnectionJson({ port: 2, token: 'd'.repeat(64), profD: path.join(root, 'tb-profile') }));
+      res.writeHead(403);
+      res.end();
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      writeConn(JSON.stringify({ port: server.address().port, token: 'c'.repeat(64) }));
+      const res = await handleMessage(saveDraftCall(3, [path.join(root, 'tb-profile', 'abook.sqlite')]));
+      const text = toolError(res) || (res && res.error && res.error.message) || '';
+      assert.ok(served >= 1, 'the first instance was tried');
+      assert.match(text, /profile or mail store/);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('a profile whose folder is a link to another disk is refused at its real place (path under ~/.thunderbird)', async () => {
+    fs.mkdirSync(path.join(root, 'data-tb', 'abc.default'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'data-tb', 'abc.default', 'prefs.js'), 'user_pref("x", 1);');
+    fs.symlinkSync(path.join(root, 'data-tb'), path.join(root, '.thunderbird'));
+    writeConn(extensionConnectionJson({ port: 1, token: 'a'.repeat(64), profD: path.join(root, '.thunderbird', 'abc.default') }));
+    const res = await handleMessage(saveDraftCall(4, [path.join(root, 'data-tb', 'abc.default', 'prefs.js')]));
+    assert.match(toolError(res) || '', /profile or mail store/);
+  });
+
+  it('a server folder linked out of the profile to another disk is refused at its real place', async () => {
+    fs.mkdirSync(path.join(root, 'bigdisk', 'imap', 'imap.example.com'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'bigdisk', 'imap', 'imap.example.com', 'INBOX'), 'From x\n');
+    fs.symlinkSync(path.join(root, 'bigdisk', 'imap'), path.join(root, 'tb-profile', 'ImapMail'));
+    writeConn(extensionConnectionJson({ port: 1, token: 'a'.repeat(64), profD: path.join(root, 'tb-profile'),
+      servers: [path.join(root, 'tb-profile', 'ImapMail', 'imap.example.com')] }));
+    const res = await handleMessage(saveDraftCall(5, [path.join(root, 'bigdisk', 'imap', 'imap.example.com', 'INBOX')]));
+    assert.match(toolError(res) || '', /profile or mail store/);
+  });
+
+  it('without Thunderbird a path attachment is refused before the file is touched', async () => {
+    const file = path.join(root, 'tb-profile', 'abook.sqlite');
+    const touched = [];
+    const { lstat, open, realpath } = fs.promises;
+    fs.promises.lstat = async (p, ...rest) => { touched.push(String(p)); return lstat(p, ...rest); };
+    fs.promises.open = async (p, ...rest) => { touched.push(String(p)); return open(p, ...rest); };
+    fs.promises.realpath = async (p, ...rest) => { touched.push(String(p)); return realpath(p, ...rest); };
+    try {
+      const res = await handleMessage(saveDraftCall(6, [file]));
+      assert.match(toolError(res) || '', /Connection discovery failed/);
+      assert.deepEqual(touched.filter((p) => p.includes('abook')), []);
+    } finally {
+      Object.assign(fs.promises, { lstat, open, realpath });
+    }
+  });
+
+  it('candidatesProtectedDirs is the union over every Thunderbird found', () => {
+    const tmp = path.join(root, 'tmp');
+    const run = path.join(root, 'run');
+    fs.mkdirSync(path.join(tmp, 'commonpost-mcp'), { recursive: true, mode: 0o700 });
+    fs.mkdirSync(path.join(run, 'app', 'org.mozilla.thunderbird', 'commonpost-mcp'), { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.join(tmp, 'commonpost-mcp'), 0o700);
+    fs.chmodSync(path.join(run, 'app', 'org.mozilla.thunderbird', 'commonpost-mcp'), 0o700);
+    fs.writeFileSync(path.join(tmp, 'commonpost-mcp', 'connection.json'), JSON.stringify({ port: 1, token: 'e'.repeat(64) }), { mode: 0o600 });
+    fs.writeFileSync(path.join(run, 'app', 'org.mozilla.thunderbird', 'commonpost-mcp', 'connection.json'),
+      extensionConnectionJson({ port: 2, token: 'f'.repeat(64), profD: path.join(root, 'tb-profile') }), { mode: 0o600 });
+    clearConnectionCache();
+    const first = readConnectionInfo({ env: {}, platform: 'linux', osImpl: { tmpdir: () => tmp, homedir: () => root }, homeDir: root, runtimeDir: run });
+    assert.ok(first, 'a Thunderbird was found');
+    const { protectedDirs, checkedKeys } = candidatesProtectedDirs();
+    assert.deepEqual(protectedDirs, [path.join(root, 'tb-profile')]);
+    assert.equal(checkedKeys.size, 2);
   });
 });

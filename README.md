@@ -368,6 +368,12 @@ just that attachment:
   stores, ...);
 - system directories (`/etc`, `/proc`, `C:\Windows\System32`, ...) and each mail client's own profile
   (Thunderbird's, other mail clients' saved credentials);
+- the folders of every Thunderbird profile and the local folder of every mail account, **wherever they are** (another
+  drive, a portable install, a folder you chose): the add-on lists them in the connection file, and the bridge
+  refuses anything under them by path, by real path and by folder identity, so a link to them or a second mount of
+  the same folder is refused too. This needs the add-on and the bridge of 0.17.1 or later. Not covered: the account
+  folders of profiles other than the running one, a mail store at the root of a drive, a folder the bridge sees
+  under another path (a bridge under WSL or in a container), and copies made outside these folders;
 - on macOS, anything under the signed-in user's `Library` folder (Mail, Messages, Keychains, Application Support,
   ...), including its APFS Data-volume real-path form;
 - on Windows, AppData and its compatibility-junction aliases (`Local Settings`, `Application Data`, `Cookies`,
