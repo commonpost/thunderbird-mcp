@@ -4,7 +4,16 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## [Unreleased]
+## [0.17.0] - 2026-10-02
+
+- **New:** a Claude Code plugin. Add this repository as a plugin marketplace (`claude plugin marketplace add
+  commonpost/thunderbird-mcp`, or "Add marketplace" in Customize > Plugins of your Claude account) and install
+  `commonpost-mcp`: the plugin carries the bridge of the release, so there is no `mcp-bridge.cjs` to download or to
+  replace by hand, and updating the plugin updates the bridge. It works in Claude Code and Cowork; the chat of
+  Claude Desktop still needs the `.mcpb` bundle.
+- **The bridge does not change in this release:** nothing to update in your MCP clients if their bridge is 0.14.0. A
+  bridge 0.13 keeps working; updating it is optional.
+- No call that worked stops working. Updating is not urgent.
 
 ### Added
 
