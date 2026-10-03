@@ -84,6 +84,7 @@ function ensureFreshConnectionInfo({
   port,
   token,
   expectedPid,
+  protectedDirs,
   readConnectionInfo,
   writeConnectionInfo,
   onCheckError,
@@ -95,7 +96,10 @@ function ensureFreshConnectionInfo({
       data &&
       data.port === port &&
       data.token === token &&
-      data.pid === expectedPid
+      data.pid === expectedPid &&
+      // A profile or mail server added since the file was written: rewrite it
+      // so that the bridge refuses attachments from the new directory too.
+      (protectedDirs === undefined || JSON.stringify(data.protectedDirs || []) === JSON.stringify(protectedDirs))
     ) {
       return current.path;
     }
@@ -1363,6 +1367,39 @@ function isUncOrDevicePath(attachmentPath) {
   if (typeof attachmentPath !== "string" || !attachmentPath) return false;
   const normalized = attachmentPath.replace(/\\/g, "/");
   return normalized.startsWith("//") || normalized.startsWith("/??/");
+}
+// Thunderbird profile and message-store directories, wherever they are: the
+// extension reads them from Thunderbird itself (every profile the profile
+// service knows, the running one, and the local directory of every mail
+// server) and writes them into the connection file for the bridge. The
+// patterns above only know the default profile locations; a profile or a
+// local mail directory chosen elsewhere (another drive, a portable install)
+// is caught here. A path that is one of these directories or lies under one
+// is refused. Both sides are compared like the deny-list (forward slashes,
+// lower case); an empty or root-only entry is ignored rather than blocking
+// every file. Keep in sync with mcp-bridge.cjs isInsideProtectedDirs.
+// One spelling per directory: forward slashes, single slashes, lower case,
+// Unicode NFC (macOS file names can come back decomposed), and without the
+// macOS APFS firmlink prefix /System/Volumes/Data, which reaches the same
+// /Users/... folder under another name.
+function protectedDirKey(p) {
+  const normalized = p.normalize("NFC").replace(/\\/g, "/").replace(/\/{2,}/g, "/").toLowerCase();
+  return normalized.startsWith("/system/volumes/data/") ? normalized.slice("/system/volumes/data".length) : normalized;
+}
+
+function normalizeProtectedDir(dir) {
+  if (typeof dir !== "string") return "";
+  const normalized = stripTrailing(protectedDirKey(dir), "/");
+  return /^(?:[a-z]:)?$/.test(normalized) ? "" : normalized;
+}
+
+function isInsideProtectedDirs(attachmentPath, dirs) {
+  if (typeof attachmentPath !== "string" || !attachmentPath || !Array.isArray(dirs)) return false;
+  const normalized = protectedDirKey(attachmentPath);
+  return dirs.some((dir) => {
+    const base = normalizeProtectedDir(dir);
+    return base !== "" && (normalized === base || normalized.startsWith(base + "/"));
+  });
 }
 // END SENSITIVE ATTACHMENT PATH HELPERS
 
@@ -6745,7 +6782,79 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * so the bridge can discover how to connect.
              * File: <TmpD>/commonpost-mcp/connection.json
              */
-            function writeConnectionInfo(port, token) {
+            // BEGIN PROTECTED MAIL DIRECTORIES
+            // The places that hold the user's mail store, address books and
+            // settings, wherever the user put them: the running profile and the
+            // local directory of each of its mail servers first, then every other
+            // profile the profile service knows (root and local directories).
+            // Written into the connection file so that the bridge refuses
+            // attachments from them (isInsideProtectedDirs). Paths as Thunderbird
+            // stores them, without file-system access (this runs on every refresh
+            // tick): the bridge resolves them itself. The list is capped by the
+            // size of its JSON so that the connection file stays well under the
+            // bridge's MAX_CONNECTION_FILE_BYTES (64 KiB).
+            const PROTECTED_DIRS_MAX_JSON = 32 * 1024;
+            const protectedDirsWarnings = new Set();
+            function warnProtectedDirsOnce(kind, ...args) {
+              if (protectedDirsWarnings.has(kind)) return;
+              protectedDirsWarnings.add(kind);
+              console.warn(...args);
+            }
+
+            function protectedMailDirectories() {
+              const dirs = [];
+              let size = 2;
+              let dropped = 0;
+              const add = (file) => {
+                try {
+                  const p = file && file.path;
+                  // Every directory is listed, even one the deny-list or a listed
+                  // directory seems to cover by its path: it may be (or lead
+                  // through) a link or junction to another disk, which only the
+                  // bridge resolves.
+                  if (!p || dirs.includes(p)) return;
+                  const cost = asciiJson(p).length + 1;
+                  if (size + cost > PROTECTED_DIRS_MAX_JSON) {
+                    dropped++;
+                    return;
+                  }
+                  dirs.push(p);
+                  size += cost;
+                } catch { /* skip this one */ }
+              };
+              for (const key of ["ProfD", "ProfLD"]) {
+                try { add(Services.dirsvc.get(key, Ci.nsIFile)); } catch { /* not defined */ }
+              }
+              try {
+                for (const server of MailServices.accounts.allServers) add(server.localPath);
+              } catch (e) {
+                warnProtectedDirsOnce("servers", "commonpost-mcp: could not list the mail servers' local directories:", e);
+              }
+              try {
+                const profileService = Cc["@mozilla.org/toolkit/profile-service;1"].getService(Ci.nsIToolkitProfileService);
+                for (const profile of profileService.profiles) {
+                  add(profile.rootDir);
+                  add(profile.localDir);
+                }
+              } catch (e) {
+                warnProtectedDirsOnce("profiles", "commonpost-mcp: could not list the Thunderbird profiles:", e);
+              }
+              if (dropped > 0) {
+                warnProtectedDirsOnce("dropped", `commonpost-mcp: ${dropped} profile or mail directories are not listed in the connection file (size limit); the bridge does not refuse attachments from them`);
+              }
+              return dirs;
+            }
+
+            // JSON with every non-ASCII character escaped (\uXXXX): the file is
+            // read back byte by byte (readConnectionInfo), so an accented path in
+            // UTF-8 would never compare equal and the file would be rewritten on
+            // every refresh tick.
+            function asciiJson(value) {
+              return JSON.stringify(value).replace(/[\u007f-\uffff]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+            }
+            // END PROTECTED MAIL DIRECTORIES
+
+            function writeConnectionInfo(port, token, protectedDirs = protectedMailDirectories()) {
               const tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
               tmpDir.append("commonpost-mcp");
               if (!tmpDir.exists()) {
@@ -6785,7 +6894,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               if (connFile.exists()) {
                 connFile.remove(false);
               }
-              const data = JSON.stringify({ port, token, pid: Services.appinfo.processID });
+              const data = asciiJson({ port, token, pid: Services.appinfo.processID, protectedDirs });
               const ostream = Cc["@mozilla.org/network/file-output-stream;1"]
                 .createInstance(Ci.nsIFileOutputStream);
               // 0x02 = O_WRONLY, 0x08 = O_CREAT, 0x80 = O_EXCL
@@ -6800,12 +6909,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // END CONNECTION INFO WRITER
 
             function ensureConnectionInfo(port, token) {
+              const protectedDirs = protectedMailDirectories();
               return ensureFreshConnectionInfo({
                 port,
                 token,
                 expectedPid: Services.appinfo.processID,
+                protectedDirs,
                 readConnectionInfo,
-                writeConnectionInfo,
+                writeConnectionInfo: (p, t) => writeConnectionInfo(p, t, protectedDirs),
                 onCheckError: (e) => {
                   console.warn("commonpost-mcp: connection info check failed; rewriting:", e);
                 },
@@ -7615,6 +7726,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return null;
             }
 
+            // The directories' real paths (nsIFile.normalize resolves links on
+            // Linux and macOS); a directory that cannot be resolved is left out.
+            function realDirectoryPaths(dirs) {
+              const out = [];
+              for (const dir of dirs) {
+                try {
+                  const file = createLocalFile(dir);
+                  file.normalize();
+                  out.push(file.path);
+                } catch { /* missing or unreadable: the given path is still checked */ }
+              }
+              return out;
+            }
+
             function filePathsToAttachDescs(filePaths) {
               const descs = [];
               const failed = [];
@@ -7633,6 +7758,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 attachmentEntries = filePaths.slice(0, MAX_ATTACHMENTS_PER_MESSAGE);
               }
               let totalAttachmentBytes = 0;
+              let protectedDirs = null;
+              let realProtectedDirs = null;
               for (const entry of attachmentEntries) {
                 try {
                   if (typeof entry === "string") {
@@ -7659,6 +7786,16 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     // and we never want that to succeed regardless of skipReview.
                     if (isSensitiveFilePath(entry)) {
                       failed.push(`${entry} (${sensitiveAttachmentNote(entry)})`);
+                      continue;
+                    }
+                    if (protectedDirs === null) {
+                      // Once per call, and only for a path attachment: resolving
+                      // the directories touches the file system.
+                      protectedDirs = protectedMailDirectories();
+                      realProtectedDirs = realDirectoryPaths(protectedDirs);
+                    }
+                    if (isInsideProtectedDirs(entry, protectedDirs)) {
+                      failed.push(`${entry} (Thunderbird profile or mail store path blocked)`);
                       continue;
                     }
                     const file = createLocalFile(entry);
@@ -7689,6 +7826,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     }
                     if (isSensitiveFilePath(file.path)) {
                       failed.push(`${entry} (${sensitiveAttachmentNote(file.path)})`);
+                      continue;
+                    }
+                    // Normalized (real path on Linux and macOS): a link or ".." that
+                    // leads into a profile or mail store is caught here.
+                    if (isInsideProtectedDirs(file.path, protectedDirs) || isInsideProtectedDirs(file.path, realProtectedDirs)) {
+                      failed.push(`${entry} (Thunderbird profile or mail store path blocked)`);
                       continue;
                     }
                     let symlinkAncestor;

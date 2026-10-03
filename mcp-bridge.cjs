@@ -1099,6 +1099,40 @@ function matchesSensitivePattern(attachmentPath) {
     || isHomeLibraryPath(normalized);
 }
 
+// Thunderbird profile and message-store directories, wherever they are: the
+// extension reads them from Thunderbird itself (every profile the profile
+// service knows, the running one, and the local directory of every mail
+// server) and writes them into the connection file for the bridge. The
+// patterns above only know the default profile locations; a profile or a
+// local mail directory chosen elsewhere (another drive, a portable install)
+// is caught here. A path that is one of these directories or lies under one
+// is refused. Both sides are compared like the deny-list (forward slashes,
+// lower case); an empty or root-only entry is ignored rather than blocking
+// every file. Keep in sync with extension/mcp_server/api.js isInsideProtectedDirs.
+// One spelling per directory: forward slashes, single slashes, lower case,
+// Unicode NFC (macOS file names can come back decomposed), and without the
+// macOS APFS firmlink prefix /System/Volumes/Data, which reaches the same
+// /Users/... folder under another name.
+function protectedDirKey(p) {
+  const normalized = p.normalize('NFC').replace(/\\/g, '/').replace(/\/{2,}/g, '/').toLowerCase();
+  return normalized.startsWith('/system/volumes/data/') ? normalized.slice('/system/volumes/data'.length) : normalized;
+}
+
+function normalizeProtectedDir(dir) {
+  if (typeof dir !== 'string') return '';
+  const normalized = stripTrailing(protectedDirKey(dir), '/');
+  return /^(?:[a-z]:)?$/.test(normalized) ? '' : normalized;
+}
+
+function isInsideProtectedDirs(attachmentPath, dirs) {
+  if (typeof attachmentPath !== 'string' || !attachmentPath || !Array.isArray(dirs)) return false;
+  const normalized = protectedDirKey(attachmentPath);
+  return dirs.some((dir) => {
+    const base = normalizeProtectedDir(dir);
+    return base !== '' && (normalized === base || normalized.startsWith(base + '/'));
+  });
+}
+
 // The generic "blocked" message doesn't say why -- fine for a dotfile or a
 // credential filename, but on Windows the appdata rule also catches every
 // ordinary file under %TEMP% (os.tmpdir(), since it sits under
@@ -1222,12 +1256,41 @@ function validateAttachmentStat(filePath, stat) {
   }
 }
 
-async function inspectAttachmentPath(filePath) {
+// The Thunderbird profile and mail-store directories the extension listed in
+// its connection file (see isInsideProtectedDirs); none from an older
+// extension, or before the bridge has found Thunderbird.
+function connectionProtectedDirs() {
+  try {
+    readConnectionInfo();
+  } catch {
+    return [];
+  }
+  return candidatesProtectedDirs().protectedDirs;
+}
+
+// Absolute paths only, of at most 4096 characters; anything else in the
+// file is ignored. No count limit below what a connection file can hold
+// (MAX_CONNECTION_FILE_BYTES): 4096 entries is more than a 64 KiB file of
+// real paths, even for the union over several Thunderbird instances.
+function sanitizeProtectedDirs(dirs) {
+  if (!Array.isArray(dirs)) return [];
+  return dirs.filter((dir) => typeof dir === 'string' && dir.length > 0 && dir.length <= 4096 && path.isAbsolute(dir))
+    .slice(0, 4096);
+}
+
+function protectedDirMessage(displayPath, suffix = '') {
+  return `Attachment path blocked: files of a Thunderbird profile or mail store can't be attached: ${displayPath}${suffix}`;
+}
+
+// The checks that read only the path string: no file-system access, no
+// Thunderbird needed, so they run before the bridge looks for Thunderbird
+// (preflightAttachmentPathStrings). Throws on a refused path; returns its
+// lexically resolved form.
+function checkAttachmentPathString(filePath) {
   if (typeof filePath !== 'string' || !filePath) {
     throw new Error('Attachment path must be a non-empty string');
   }
   const windows = process.platform === 'win32';
-  // Before ANY filesystem access.
   // The resolved form too: a relative path under a UNC working directory.
   const resolved = path.resolve(filePath);
   if (isUncOrDevicePath(filePath) || isUncOrDevicePath(resolved)) {
@@ -1239,11 +1302,51 @@ async function inspectAttachmentPath(filePath) {
       throw new Error(`Attachment path ${ambiguity}, not allowed: ${filePath}`);
     }
   }
-  // Check both the supplied path and its lexical normalization before any
-  // filesystem access. The latter catches paths such as /tmp/../etc/passwd.
+  // Check both the supplied path and its lexical normalization. The latter
+  // catches paths such as /tmp/../etc/passwd.
   if (isSensitiveFilePath(filePath, windows) || isSensitiveFilePath(resolved, windows)) {
     const reasonPath = matchesSensitivePattern(filePath) ? filePath : resolved;
     throw new Error(sensitiveAttachmentMessage(filePath, reasonPath));
+  }
+  return resolved;
+}
+
+// The string checks above on every path attachment of a call, before the
+// bridge waits for Thunderbird; returns how many path attachments there are.
+function preflightAttachmentPathStrings(args) {
+  let list = args && args.attachments;
+  if (typeof list === 'string') {
+    try {
+      list = JSON.parse(list);
+    } catch {
+      return 0;
+    }
+  }
+  if (!Array.isArray(list)) return 0;
+  if (list.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+    throw new Error(
+      `Attachment count ${list.length} exceeds the ` +
+      `${MAX_ATTACHMENTS_PER_MESSAGE} attachment limit`
+    );
+  }
+  let count = 0;
+  for (const entry of list) {
+    if (typeof entry !== 'string') continue;
+    checkAttachmentPathString(entry);
+    count++;
+  }
+  return count;
+}
+
+// `options.protectedContext` (from buildProtectedContext) or
+// `options.protectedDirs`: the profile and mail-store directories to refuse
+// (default: those of the connection file found so far).
+async function inspectAttachmentPath(filePath, options = {}) {
+  const resolved = checkAttachmentPathString(filePath);
+  const context = options.protectedContext
+    || await buildProtectedContext(Array.isArray(options.protectedDirs) ? options.protectedDirs : connectionProtectedDirs());
+  if (isInProtectedContext([filePath, resolved], context)) {
+    throw new Error(protectedDirMessage(filePath));
   }
 
   let stat;
@@ -1274,7 +1377,69 @@ async function inspectAttachmentPath(filePath) {
   if (matchesSensitivePattern(realPath)) {
     throw new Error(sensitiveAttachmentMessage(filePath, realPath, ` (resolves to ${realPath})`));
   }
-  return { filePath, stat, realPath };
+  // The directories' own real paths too: a profile reached through a link
+  // (or, on Windows, a junction or an 8.3 name) is the same profile.
+  if (isInProtectedContext([realPath], context) || await isUnderProtectedDirectory(realPath, context)) {
+    throw new Error(protectedDirMessage(filePath, ` (resolves to ${realPath})`));
+  }
+  return { filePath, resolved, stat, realPath };
+}
+
+// What it takes to recognise the protected directories under another name,
+// computed once per tool call: their real paths (a link, a junction, an 8.3
+// name), and the device and inode of each (a bind mount, or a second mount of
+// the same share, reaches the same directory under a path that realpath does
+// not map back). A directory that does not exist here (the bridge may run
+// elsewhere) only keeps its lexical check.
+async function buildProtectedContext(dirs) {
+  const list = sanitizeProtectedDirs(dirs);
+  const realDirs = [];
+  const ids = new Set();
+  for (const dir of list) {
+    // A drive or file-system root is never a protected directory (it would
+    // refuse every attachment): ignored here as in isInsideProtectedDirs.
+    if (normalizeProtectedDir(dir) === '') continue;
+    let real;
+    try {
+      real = await fs.promises.realpath(dir);
+    } catch {
+      continue;
+    }
+    if (normalizeProtectedDir(real) === '') continue;
+    realDirs.push(real);
+    try {
+      const st = await fs.promises.stat(dir, { bigint: true });
+      // inode 0: a file system without file ids (some network shares), where
+      // it would match every folder.
+      if (st.isDirectory() && st.ino !== 0n) ids.add(`${st.dev}:${st.ino}`);
+    } catch {
+      // the real path is still checked
+    }
+  }
+  return { dirs: list, realDirs, ids };
+}
+
+// Whether a directory containing realPath is one of the protected ones by
+// identity (device and inode), whatever its path.
+async function isUnderProtectedDirectory(realPath, context) {
+  if (!context.ids.size) return false;
+  let current = path.dirname(realPath);
+  for (let depth = 0; depth < 256; depth++) {
+    try {
+      const st = await fs.promises.stat(current, { bigint: true });
+      if (context.ids.has(`${st.dev}:${st.ino}`)) return true;
+    } catch {
+      // an unreadable ancestor: keep walking up
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return false;
+}
+
+function isInProtectedContext(paths, context) {
+  return paths.some((p) => isInsideProtectedDirs(p, context.dirs) || isInsideProtectedDirs(p, context.realDirs));
 }
 
 function sameFile(left, right) {
@@ -1307,9 +1472,9 @@ async function readFileHandleExactly(handle, filePath, size) {
 // with O_NOFOLLOW where available and comparing the opened file to the lstat
 // snapshot prevents a path swap from redirecting the read to a symlink/other
 // inode between policy validation and I/O.
-async function readAttachmentFromPath(fileInfo) {
+async function readAttachmentFromPath(fileInfo, options = {}) {
   const { filePath, stat: preflightStat } = fileInfo;
-  const freshInfo = await inspectAttachmentPath(filePath);
+  const freshInfo = await inspectAttachmentPath(filePath, options);
   if (!sameFile(preflightStat, freshInfo.stat) || preflightStat.size !== freshInfo.stat.size) {
     throw new Error(`Attachment changed after validation: ${filePath}`);
   }
@@ -1358,7 +1523,12 @@ async function readAttachmentFromPath(fileInfo) {
 // Inline objects pass through unchanged. All paths and message-wide limits are
 // preflighted before the first read, then files are read sequentially so a
 // caller cannot force many large buffers to be resident at once.
-async function inlineAttachmentPaths(args) {
+// `options.protectedDirs`: as for inspectAttachmentPath (default: the
+// connection file found so far), resolved once for the whole call. Returns the
+// path attachments it accepted ({ filePath, resolved, realPath }), so that the
+// call can be checked again if it ends up going to another Thunderbird
+// (recheckPathAttachments).
+async function inlineAttachmentPaths(args, options = {}) {
   if (!args || args.attachments === undefined || args.attachments === null) return;
 
   // Some MCP clients (and the extension's own coerceToolArgs) accept
@@ -1387,12 +1557,16 @@ async function inlineAttachmentPaths(args) {
   }
 
   const fileInfoByIndex = new Map();
+  const hasPath = args.attachments.some((entry) => typeof entry === 'string');
+  const inspectOptions = hasPath
+    ? { protectedContext: await buildProtectedContext(Array.isArray(options.protectedDirs) ? options.protectedDirs : connectionProtectedDirs()) }
+    : {};
   let totalAttachmentBytes = 0;
   for (let index = 0; index < args.attachments.length; index++) {
     const entry = args.attachments[index];
     if (typeof entry !== 'string') continue;
 
-    const fileInfo = await inspectAttachmentPath(entry);
+    const fileInfo = await inspectAttachmentPath(entry, inspectOptions);
     if (fileInfo.stat.size > MAX_TOTAL_ATTACHMENT_BYTES - totalAttachmentBytes) {
       throw new Error(
         `Attachment aggregate too large at ${entry}: exceeds the ` +
@@ -1408,11 +1582,69 @@ async function inlineAttachmentPaths(args) {
     const entry = args.attachments[index];
     resolved.push(
       typeof entry === 'string'
-        ? await readAttachmentFromPath(fileInfoByIndex.get(index))
+        ? await readAttachmentFromPath(fileInfoByIndex.get(index), inspectOptions)
         : entry
     );
   }
   args.attachments = resolved;
+  return [...fileInfoByIndex.values()].map((info) => ({ filePath: info.filePath, resolved: info.resolved, realPath: info.realPath }));
+}
+
+// Thunderbird instances are told apart by port and token.
+function candidateKey(info) {
+  return info ? `${info.port}:${info.token}` : '';
+}
+
+// The protected directories of every Thunderbird the bridge found (it may
+// forward to any of them: forwardToThunderbird moves on to the next one when
+// the first does not answer), and which instances that covers.
+function candidatesProtectedDirs() {
+  const candidates = cachedCandidateList.length
+    ? cachedCandidateList.map((candidate) => candidate.data)
+    : (cachedConnectionInfo ? [cachedConnectionInfo] : []);
+  const protectedDirs = [];
+  const checkedKeys = new Set();
+  for (const data of candidates) {
+    checkedKeys.add(candidateKey(data));
+    for (const dir of sanitizeProtectedDirs(data && data.protectedDirs)) {
+      if (!protectedDirs.includes(dir)) protectedDirs.push(dir);
+    }
+  }
+  return { protectedDirs, checkedKeys };
+}
+
+// Path attachments accepted for a request, and the Thunderbird instances
+// whose directories they were checked against (see forwardToThunderbird).
+const pathAttachmentChecks = new WeakMap();
+
+// Before a request with path attachments goes to a Thunderbird whose
+// directories they were not checked against (found by a rediscovery after the
+// check), check them again: refused if inside that instance's directories.
+async function recheckPathAttachments(message, connInfo) {
+  const record = pathAttachmentChecks.get(message);
+  if (!record || record.checkedKeys.has(candidateKey(connInfo))) return;
+  const context = await buildProtectedContext(connInfo.protectedDirs);
+  for (const entry of record.entries) {
+    if (isInProtectedContext([entry.filePath, entry.resolved, entry.realPath], context)
+        || await isUnderProtectedDirectory(entry.realPath, context)) {
+      throw new Error(protectedDirMessage(entry.filePath, ` (resolves to ${entry.realPath})`));
+    }
+  }
+  record.checkedKeys.add(candidateKey(connInfo));
+}
+
+// The connection info, waiting a few seconds for Thunderbird to start;
+// throws when none is found. Never forward requests without authentication.
+async function awaitConnectionInfo() {
+  let connInfo = readConnectionInfo();
+  for (let attempt = 0; !connInfo && attempt < CONNECTION_MAX_RETRIES; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, CONNECTION_RETRY_DELAY_MS));
+    connInfo = readConnectionInfo();
+  }
+  if (!connInfo) {
+    throw new Error(buildConnectionDiscoveryErrorMessage());
+  }
+  return connInfo;
 }
 
 /**
@@ -1563,7 +1795,19 @@ async function handleMessage(line) {
       && message.params
       && ATTACHMENT_TOOLS.has(message.params.name)) {
     try {
-      await inlineAttachmentPaths(message.params.arguments);
+      const args = message.params.arguments;
+      if (preflightAttachmentPathStrings(args) > 0) {
+        // Then find Thunderbird: its connection file lists the profile and
+        // mail-store directories that attachments must not come from. No
+        // Thunderbird, no path attachment (the request could not go anywhere
+        // anyway).
+        await awaitConnectionInfo();
+        const { protectedDirs, checkedKeys } = candidatesProtectedDirs();
+        const entries = await inlineAttachmentPaths(args, { protectedDirs });
+        if (entries && entries.length) pathAttachmentChecks.set(message, { entries, checkedKeys });
+      } else {
+        await inlineAttachmentPaths(args);
+      }
     } catch (e) {
       return toolErrorResponse(message.id, e.message);
     }
@@ -1947,21 +2191,8 @@ async function forwardToThunderbird(message) {
 
   // Read connection info (port + auth token) from the file written by the extension.
   // Fail-closed: if no connection file exists, retry a few times (Thunderbird may
-  // still be starting), then fail with an error. Never forward requests without
-  // authentication.
-  let connInfo = readConnectionInfo();
-  if (!connInfo) {
-    for (let attempt = 0; attempt < CONNECTION_MAX_RETRIES; attempt++) {
-      await new Promise((resolve) => setTimeout(resolve, CONNECTION_RETRY_DELAY_MS));
-      connInfo = readConnectionInfo();
-      if (connInfo) {
-        break;
-      }
-    }
-    if (!connInfo) {
-      throw new Error(buildConnectionDiscoveryErrorMessage());
-    }
-  }
+  // still be starting), then fail with an error.
+  let connInfo = await awaitConnectionInfo();
 
   // Walk through the cached candidate list on retryable failures so a stale
   // connection.json can't permanently mask a live one further down the list.
@@ -1979,6 +2210,7 @@ async function forwardToThunderbird(message) {
       throw new Error('Invalid connection file: token must be 64 lowercase hex characters');
     }
 
+    await recheckPathAttachments(message, connInfo);
     try {
       const response = await tryAllHosts(THUNDERBIRD_HOSTS, postData, connInfo.port, connInfo.token, requestOptions);
       lastServed = { port: connInfo.port, token: connInfo.token, pid: connInfo.pid };
@@ -2156,6 +2388,11 @@ module.exports = {
   forwardFailureResponse,
   handleMessage,
   inlineAttachmentPaths,
+  isInsideProtectedDirs,
+  sanitizeProtectedDirs,
+  candidatesProtectedDirs,
+  buildProtectedContext,
+  isUnderProtectedDirectory,
   inspectAttachmentPath,
   readAttachmentFromPath,
   validateAttachmentStat,

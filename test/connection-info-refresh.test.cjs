@@ -56,6 +56,28 @@ describe("connection info refresh decision", () => {
     assert.equal(result, "/tmp/commonpost-mcp/connection.json");
   });
 
+  it("rewrites when the profile and mail-store directories changed (a server added since), not when they did not", () => {
+    const dirs = ["/data/tb-profile", "/mnt/mail/imap"];
+    const unchanged = ensureFreshConnectionInfo(makeOptions({
+      protectedDirs: dirs,
+      readConnectionInfo: () => ({ path: "/tmp/commonpost-mcp/connection.json", data: { port: 8780, token: "token", pid: 1234, protectedDirs: [...dirs] } }),
+      writeConnectionInfo() {
+        throw new Error("writeConnectionInfo should not be called");
+      },
+    }));
+    assert.equal(unchanged, "/tmp/commonpost-mcp/connection.json");
+
+    for (const written of [undefined, ["/data/tb-profile"], ["/mnt/mail/imap", "/data/tb-profile"]]) {
+      const writes = [];
+      ensureFreshConnectionInfo(makeOptions({
+        protectedDirs: dirs,
+        readConnectionInfo: () => ({ path: "/tmp/commonpost-mcp/connection.json", data: { port: 8780, token: "token", pid: 1234, protectedDirs: written } }),
+        writeConnectionInfo: (port, token) => { writes.push([port, token]); return "/tmp/commonpost-mcp/connection.json"; },
+      }));
+      assert.deepEqual(writes, [[8780, "token"]], JSON.stringify(written));
+    }
+  });
+
   it("rewrites when connection.json is missing", () => {
     const writes = [];
     const result = ensureFreshConnectionInfo(makeOptions({
