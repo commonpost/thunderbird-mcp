@@ -4,6 +4,30 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [0.17.1] - 2026-10-03
+
+Security release: update both the add-on and the bridge. Files of a Thunderbird profile, or of an account's local
+mail folder, kept outside the default locations could be attached to a message; they are now refused. A bridge
+older than 0.17.1 does not apply this check: the add-on now recommends updating it (Claude Code plugin: update the
+plugin; Claude Desktop: install the new `.mcpb`; elsewhere: replace `mcp-bridge.cjs`). No call that worked stops
+working, except attaching files from those folders.
+
+### Security
+
+- Attachments: the add-on lists the folders of the running Thunderbird profile, of every other profile Thunderbird
+  knows and of every account's local mail folder, wherever they are, in the connection file; the bridge refuses a
+  path attachment under any of them (by the path given, its real path, and the folder's identity, so a link or a
+  second mount of the same folder is refused too). The bridge now finds Thunderbird before it accepts a path
+  attachment, and checks again if a request ends up going to another Thunderbird than the one it was checked
+  against. The add-on applies a similar check, by path and real path, to path attachments it receives directly. Not covered: the account
+  folders of profiles other than the running one, a mail store at the root of a drive, and a folder the bridge
+  sees under another path (a bridge under WSL or in a container). See "Attachments refused" in the README.
+
+### Changed
+
+- Bridge 0.17.1. The add-on recommends it (`MIN_BRIDGE_VERSION` 0.17.1); older bridges keep working.
+- The connection file is written in ASCII (non-ASCII characters escaped), so a path with accents reads back the same.
+
 ## [0.17.0] - 2026-10-02
 
 - **New:** a Claude Code plugin. Add this repository as a plugin marketplace (`claude plugin marketplace add

@@ -539,16 +539,18 @@ describe('shipped constants', () => {
       { minBridge: x.MIN_BRIDGE_VERSION, modeMin: x.MODE_MIN_BRIDGE_VERSION, floor: x.BRIDGE_SECURITY_FLOOR, current: x.CURRENT_BRIDGE_VERSION });
   });
 
-  it('recommend the first bridge that waits for saveDraft, and keep the modes at the first bridge that waits for them', () => {
-    // 0.13.0 is the first bridge whose isDraftCall counts saveDraft (the long wait); a bridge 0.12 gives up after 30 s
-    // while Thunderbird may still save. It gets the notice; nothing is refused.
-    assert.equal(x.MIN_BRIDGE_VERSION, '0.13.0');
+  it('recommend the first bridge that refuses attachments from profile and mail folders kept anywhere, and keep the modes at the first bridge that waits for them', () => {
+    // 0.17.1 is the first bridge that reads the profile and mail-store directories from the connection file and
+    // refuses attachments under them; an older bridge does not, so it gets the notice (nothing is refused). It also
+    // still waits for saveDraft (0.13.0 was the first to).
+    assert.equal(x.MIN_BRIDGE_VERSION, '0.17.1');
     assert.equal(x.MODE_MIN_BRIDGE_VERSION, '0.12.0');
     const bridge = require('../mcp-bridge.cjs');
     const saveDraft = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'saveDraft', arguments: {} } };
     assert.equal(bridge.requestOptionsFor(saveDraft).timeoutMs, 180000);
-    assert.equal(x.bridgeCompatDecision(info('0.12.0'), '0.13.0', x.BRIDGE_THRESHOLDS), 'warn');
-    assert.equal(x.bridgeCompatDecision(info('0.13.0'), '0.13.0', x.BRIDGE_THRESHOLDS), 'ok');
+    assert.equal(typeof bridge.candidatesProtectedDirs, 'function');
+    assert.equal(x.bridgeCompatDecision(info('0.14.0'), '0.17.1', x.BRIDGE_THRESHOLDS), 'warn');
+    assert.equal(x.bridgeCompatDecision(info('0.17.1'), '0.17.1', x.BRIDGE_THRESHOLDS), 'ok');
     assert.equal(x.bridgeModeRefusal('replyToMessage', { mode: 'draft' }, info('0.12.0'), '0.13.0', x.BRIDGE_THRESHOLDS,
       { skipReviewBlocked: true, saveDraftEnabled: true }), null);
   });
