@@ -23,6 +23,19 @@ Thunderbird separately; see [Quick install](https://github.com/commonpost/thunde
   `userConfig`; the bridge reads the file, checks that it belongs to you (owner and permissions), and uses the token
   for `127.0.0.1` only.
 
+## For a reviewer: what the bridge reads, and what it never sends
+
+- **Credentials.** The bridge reads no API key and no token from environment variables: the only `COMMONPOST_MCP_*`
+  variables it reads are `COMMONPOST_MCP_CONNECTION_FILE` (a path), `COMMONPOST_MCP_PACKAGING`, `COMMONPOST_MCP_PROFILE`
+  and `COMMONPOST_MCP_DEBUG`. The one secret it handles is the session token in the add-on's connection file
+  (`commonpost-mcp/connection.json` in the temporary directory), which it sends to `127.0.0.1` only.
+- **Other processes' environment.** On Linux, when Thunderbird runs as a Snap, the bridge reads `/proc/<pid>/environ`
+  of processes whose executable is under `/snap/thunderbird/`, only to find their `TMPDIR` (the Snap keeps its
+  temporary directory, and the connection file, under `~/snap/thunderbird/`). Nothing read there is kept or sent.
+- **Remote hosts.** The two `github.com` addresses in the file are links printed in messages to the user (the
+  project's README and a release page). The bridge never fetches them, and opens no connection other than to
+  `127.0.0.1`.
+
 ## Updates
 
 Each release of the add-on raises the plugin's version, so updating the plugin always gives you the bridge of the
