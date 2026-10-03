@@ -47,6 +47,13 @@ describe("Claude Code plugin", () => {
     const readme = fs.readFileSync(path.join(root, "plugins/claude-code/README.md"), "utf8");
     const words = readme.replace(/```[\s\S]*?```/g, "").split(/\s+/).filter(Boolean).length;
     assert.ok(words >= 40, `${words} words`);
+    // Listing icon: a square PNG, 512 to 2048 px, under 2 MB, at the default path the directory reads.
+    const icon = fs.readFileSync(path.join(root, "plugins/claude-code/.claude-plugin/icon.png"));
+    assert.ok(icon.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), "PNG signature");
+    const w = icon.readUInt32BE(16), h = icon.readUInt32BE(20);
+    assert.equal(w, h, "square");
+    assert.ok(w >= 512 && w <= 2048, `${w} px`);
+    assert.ok(icon.length < 2 * 1024 * 1024);
     assert.ok(readme.includes("127.0.0.1") && readme.includes("connection.json"), "the README says where the bridge connects");
     assert.equal(fs.readFileSync(path.join(root, "plugins/claude-code/LICENSE"), "utf8"), fs.readFileSync(path.join(root, "LICENSE"), "utf8"));
     for (const f of fs.readdirSync(path.join(root, "plugins/claude-code"))) {

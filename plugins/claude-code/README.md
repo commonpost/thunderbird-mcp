@@ -18,6 +18,10 @@ Thunderbird separately; see [Quick install](https://github.com/commonpost/thunde
 - Your mail, contacts and calendar stay in Thunderbird; the bridge relays each tool call to the add-on and the answer
   back to Claude. Attachments are read and written only where the add-on allows (see the README of the project).
 - Nothing runs when Thunderbird or the add-on is not running: the bridge then reports that it found no connection.
+- The session token in that file is not a credential of yours: the add-on creates a new one each time Thunderbird
+  starts and writes it there for the bridge to read. There is nothing to ask you for, so the plugin declares no
+  `userConfig`; the bridge reads the file, checks that it belongs to you (owner and permissions), and uses the token
+  for `127.0.0.1` only.
 
 ## Updates
 
