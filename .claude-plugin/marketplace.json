@@ -8,10 +8,15 @@
   "plugins": [
     {
       "name": "commonpost-mcp",
-      "source": ".",
+      "source": "./plugins/claude-code",
       "description": "Thunderbird mail, contacts, calendars and filters as MCP tools (needs the Commonpost MCP add-on in Thunderbird).",
       "category": "productivity",
-      "tags": ["thunderbird", "email", "calendar", "contacts"]
+      "tags": [
+        "thunderbird",
+        "email",
+        "calendar",
+        "contacts"
+      ]
     }
   ]
 }

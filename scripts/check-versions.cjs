@@ -5,8 +5,8 @@
  *   node scripts/check-versions.cjs                       # pull requests and main
  *   node scripts/check-versions.cjs --release-tag vX.Y.Z  # release workflow
  *
- * - package.json, package-lock.json (twice), extension/manifest.json and .claude-plugin/plugin.json (the Claude Code
- *   plugin) carry the product version (= the tag).
+ * - package.json, package-lock.json (twice), extension/manifest.json and plugins/claude-code/.claude-plugin/plugin.json
+ *   (the Claude Code plugin, whose mcp-bridge.cjs is a copy of the repository's) carry the product version (= the tag).
  * - BRIDGE_VERSION in mcp-bridge.cjs is the release in which the bridge bundle last changed; mcpb/manifest.json
  *   carries it; it is never newer than the product version.
  * - The bridge bundle is mcp-bridge.cjs and the other files of the .mcpb, plus the scripts that build it
@@ -98,12 +98,16 @@ function main(argv) {
   const addon = JSON.parse(readText('extension/manifest.json')).version;
   if (addon !== version) fail(`extension/manifest.json version ${addon} must equal package.json ${version}`);
   if (releaseTag !== null && releaseTag !== `v${version}`) fail(`tag ${releaseTag} must be v${version} (package.json)`);
-  // The Claude Code plugin (.claude-plugin/plugin.json) is the repository itself; its version is the product's, so
-  // that a release reaches plugin users (a plugin whose version does not change is never updated).
-  const pluginManifest = path.join(root, '.claude-plugin/plugin.json');
-  if (fs.existsSync(pluginManifest)) {
-    const plugin = JSON.parse(readText('.claude-plugin/plugin.json')).version;
-    if (plugin !== version) fail(`.claude-plugin/plugin.json version ${plugin} must equal package.json ${version}`);
+  // The Claude Code plugin (plugins/claude-code) carries its own copy of the bridge, which must be the bridge of the
+  // repository byte for byte, and the product's version, so that a release reaches plugin users (a plugin whose
+  // version does not change is never updated).
+  const pluginManifest = 'plugins/claude-code/.claude-plugin/plugin.json';
+  if (fs.existsSync(path.join(root, pluginManifest))) {
+    const plugin = JSON.parse(readText(pluginManifest)).version;
+    if (plugin !== version) fail(`${pluginManifest} version ${plugin} must equal package.json ${version}`);
+    if (!read('plugins/claude-code/mcp-bridge.cjs').equals(read('mcp-bridge.cjs'))) {
+      fail('plugins/claude-code/mcp-bridge.cjs must be a byte-for-byte copy of mcp-bridge.cjs (cp mcp-bridge.cjs plugins/claude-code/)');
+    }
   }
 
   // Bridge version and thresholds

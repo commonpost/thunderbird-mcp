@@ -207,15 +207,20 @@ describe("check-versions.cjs", () => {
     assert.equal(previousReleaseTag(tags, "v0.11.0"), "v0.10.1");
   });
 
-  it("plugin: .claude-plugin/plugin.json must carry the product version when it exists", () => {
+  it("plugin: plugins/claude-code must carry the product version and a copy of the bridge when it exists", () => {
     const dir = makeRepo(PREV, ["v0.11.0"], PREV);
-    fs.mkdirSync(path.join(dir, ".claude-plugin"), { recursive: true });
-    fs.writeFileSync(path.join(dir, ".claude-plugin/plugin.json"), JSON.stringify({ name: "x", version: "0.10.0" }));
+    fs.mkdirSync(path.join(dir, "plugins/claude-code/.claude-plugin"), { recursive: true });
+    fs.copyFileSync(path.join(dir, "mcp-bridge.cjs"), path.join(dir, "plugins/claude-code/mcp-bridge.cjs"));
+    fs.writeFileSync(path.join(dir, "plugins/claude-code/.claude-plugin/plugin.json"), JSON.stringify({ name: "x", version: "0.10.0" }));
     let r = run(dir);
     assert.equal(r.status, 1);
     assert.match(r.out, /plugin\.json version 0\.10\.0 must equal package\.json 0\.11\.0/);
-    fs.writeFileSync(path.join(dir, ".claude-plugin/plugin.json"), JSON.stringify({ name: "x", version: "0.11.0" }));
+    fs.writeFileSync(path.join(dir, "plugins/claude-code/.claude-plugin/plugin.json"), JSON.stringify({ name: "x", version: "0.11.0" }));
     r = run(dir);
     assert.equal(r.status, 0, r.out);
+    fs.appendFileSync(path.join(dir, "plugins/claude-code/mcp-bridge.cjs"), "// drift\n");
+    r = run(dir);
+    assert.equal(r.status, 1);
+    assert.match(r.out, /byte-for-byte copy of mcp-bridge\.cjs/);
   });
 });

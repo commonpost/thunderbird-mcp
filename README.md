@@ -217,8 +217,9 @@ claude plugin marketplace add commonpost/thunderbird-mcp
 claude plugin install commonpost-mcp@commonpost
 ```
 
-- The plugin contains **only the bridge** and the files of this repository; install the Thunderbird extension
-  separately (step 1 above). Node.js 22 or later must be on the `PATH`.
+- The plugin (`plugins/claude-code/`) contains **only the bridge**, a copy of this repository's `mcp-bridge.cjs` that
+  the version check keeps identical; install the Thunderbird extension separately (step 1 above). Node.js 22 or later
+  must be on the `PATH`.
 - Updates: Claude Code does not update a third-party marketplace on its own unless you turn it on (`/plugin` >
   Marketplaces > Enable auto-update). Otherwise run `/plugin marketplace update commonpost` (or `claude plugin update
   commonpost-mcp@commonpost`), then `/reload-plugins`. Each release raises the plugin's version, so an update follows
@@ -226,9 +227,9 @@ claude plugin install commonpost-mcp@commonpost
 - Tool names carry the plugin and server names: `mcp__plugin_commonpost-mcp_commonpost-mail__searchMessages`, for
   example. Permission rules written for a server added by file (`mcp__commonpost-mail__*`) do not match them. The
   options page of the add-on (section Bridge) lists this bridge as a `mcp-bridge.cjs` file.
-- The plugin is fetched from this repository with git (`main`, or the commit you pin with `claude plugin marketplace add
-  commonpost/thunderbird-mcp#vX.Y.Z`); it is not signed. The bridge inside it is the file `mcp-bridge.cjs` of that
-  commit, the same one every release attests.
+- The plugin is fetched from this repository with git (`main`, or a release tag you pin with `claude plugin marketplace
+  add commonpost/thunderbird-mcp#vX.Y.Z`, from v0.17.0 on); it is not signed. The bridge inside it is the
+  `mcp-bridge.cjs` of that commit, the same file every release attests.
 
 ### Claude Desktop (one-click bundle)
 

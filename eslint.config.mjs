@@ -50,6 +50,7 @@ export default [
       "dist/",
       "extension/buildinfo.json",
       "extension/httpd.sys.mjs",  // vendored Mozilla httpd, not ours
+      "plugins/claude-code/mcp-bridge.cjs",  // byte-for-byte copy of mcp-bridge.cjs (scripts/check-versions.cjs)
       ".claude/",
       ".cache/",                // bench Thunderbird + profile (scripts/tb-bench.sh)
       "test/bench/user.js",     // prefs file, not JS

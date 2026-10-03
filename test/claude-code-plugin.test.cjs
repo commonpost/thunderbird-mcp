@@ -11,7 +11,7 @@ const root = path.resolve(__dirname, "..");
 const read = (p) => JSON.parse(fs.readFileSync(path.join(root, p), "utf8"));
 
 describe("Claude Code plugin", () => {
-  const plugin = read(".claude-plugin/plugin.json");
+  const plugin = read("plugins/claude-code/.claude-plugin/plugin.json");
   const marketplace = read(".claude-plugin/marketplace.json");
   const product = read("package.json").version;
 
@@ -24,20 +24,23 @@ describe("Claude Code plugin", () => {
     const server = plugin.mcpServers["commonpost-mail"];
     assert.equal(server.command, "node");
     assert.deepEqual(server.args, ["${CLAUDE_PLUGIN_ROOT}/mcp-bridge.cjs"]);
-    assert.ok(fs.existsSync(path.join(root, "mcp-bridge.cjs")));
+    assert.ok(fs.readFileSync(path.join(root, "plugins/claude-code/mcp-bridge.cjs")).equals(fs.readFileSync(path.join(root, "mcp-bridge.cjs"))),
+      "the plugin's bridge is a copy of the repository's");
   });
 
-  it("is listed by the marketplace under the same name, from the repository root", () => {
+  it("is listed by the marketplace under the same name, from its own directory (no package.json there: Claude Code would install the repository's npm packages)", () => {
     assert.equal(marketplace.name, "commonpost");
     assert.equal(marketplace.plugins.length, 1);
     assert.equal(marketplace.plugins[0].name, plugin.name);
-    assert.equal(marketplace.plugins[0].source, ".");
+    assert.equal(marketplace.plugins[0].source, "./plugins/claude-code");
+    assert.ok(!fs.existsSync(path.join(root, "plugins/claude-code/package.json")));
+    assert.ok(!fs.existsSync(path.join(root, "plugins/claude-code/package-lock.json")));
     assert.equal(marketplace.plugins[0].version, undefined, "the version lives in plugin.json only");
   });
 
-  it("has no bin/ directory and no CLAUDE.md at the root (plugin layout rules)", () => {
-    assert.ok(!fs.existsSync(path.join(root, "bin")));
-    assert.ok(!fs.existsSync(path.join(root, "CLAUDE.md")));
+  it("has no bin/ directory and no CLAUDE.md in the plugin (plugin layout rules)", () => {
+    assert.ok(!fs.existsSync(path.join(root, "plugins/claude-code/bin")));
+    assert.ok(!fs.existsSync(path.join(root, "plugins/claude-code/CLAUDE.md")));
   });
 
   it("is named in the README and in the release page", () => {
