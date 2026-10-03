@@ -43,6 +43,19 @@ describe("Claude Code plugin", () => {
     assert.ok(!fs.existsSync(path.join(root, "plugins/claude-code/CLAUDE.md")));
   });
 
+  it("has what Anthropic's directory requires in the plugin folder: a README of 40 words or more and the license", () => {
+    const readme = fs.readFileSync(path.join(root, "plugins/claude-code/README.md"), "utf8");
+    const words = readme.replace(/```[\s\S]*?```/g, "").split(/\s+/).filter(Boolean).length;
+    assert.ok(words >= 40, `${words} words`);
+    assert.ok(readme.includes("127.0.0.1") && readme.includes("connection.json"), "the README says where the bridge connects");
+    assert.equal(fs.readFileSync(path.join(root, "plugins/claude-code/LICENSE"), "utf8"), fs.readFileSync(path.join(root, "LICENSE"), "utf8"));
+    for (const f of fs.readdirSync(path.join(root, "plugins/claude-code"))) {
+      const st = fs.statSync(path.join(root, "plugins/claude-code", f));
+      assert.ok(!st.isSymbolicLink(), `${f} is a symbolic link`);
+      if (st.isFile()) assert.ok(st.size < 256 * 1024, `${f} is ${st.size} bytes, over 256 KiB`);
+    }
+  });
+
   it("is named in the README and in the release page", () => {
     const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
     assert.ok(readme.includes("claude plugin install commonpost-mcp@commonpost"));

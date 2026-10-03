@@ -14,6 +14,7 @@ project is kept in this repository.
   users have no `mcp-bridge.cjs` to download or to replace by hand: updating the plugin updates the bridge. Its version
   is the product's and its bridge a byte-for-byte copy of the repository's (the version check requires both), so every
   release reaches plugin users.
+  The plugin folder carries its own README and LICENSE, as Anthropic's plugin directory requires.
 
 ## [0.16.0] - 2026-10-02
 
