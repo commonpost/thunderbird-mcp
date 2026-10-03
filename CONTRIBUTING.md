@@ -57,6 +57,15 @@ privileged JavaScript inside it; never run it against a real profile. Its synthe
 server or SMTP, but Thunderbird itself still reaches Mozilla services over the network (e.g. Remote
 Settings) -- it is not offline.
 
+### End-to-end lab
+
+Every pull request and every push to `main` also runs the
+[thunderbird-mcp lab](https://github.com/commonpost/thunderbird-mcp-lab) (`.github/workflows/e2e-lab.yml`): the
+extension and `mcp-bridge.cjs` of the tree run in a real Thunderbird inside an offline, disposable container, and the
+lab checks what Thunderbird wrote (drafts, filter rules, `prefs.js`, messages delivered to a local SMTP sink). Only
+the summary table is published; to see the logs, run the lab locally against your checkout, as its README explains.
+A behaviour change that a lab scenario encodes needs a matching change in the lab repository.
+
 To try the extension in Thunderbird, install the XPI from a release (Tools > Add-ons > Install Add-on From File).
 
 ## Reporting bugs and requesting features
