@@ -1,0 +1,101 @@
+name: E2E lab
+
+# Runs the public end-to-end scenarios of commonpost/thunderbird-mcp-lab against this tree: the real extension and the
+# real mcp-bridge.cjs inside a real Thunderbird, driven over MCP, then checks of what Thunderbird wrote (drafts, filter
+# rules, messages delivered to a local SMTP sink). See https://github.com/commonpost/thunderbird-mcp-lab.
+#
+# The lab is checked out at the pinned commit LAB_SHA; Dependabot does not track it, so bump it by hand when the lab
+# changes. The tree under test (possibly a pull request from a fork) is never executed on the runner: run-lab.sh only
+# reads it with tar and streams it into a container started with --network none, --read-only, --cap-drop ALL and an
+# unprivileged user. No secret is used and no cache: the lab image is rebuilt on every run.
+#
+# Only the summary table is published (job summary and a small artifact): the logs and result JSON are output of the
+# code under test and stay on the runner. Run the lab locally to get them.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-lab-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LAB_REPO: commonpost/thunderbird-mcp-lab
+  LAB_SHA: 5e111dc85f713e780558c0a971115ed61e6cc645
+
+jobs:
+  lab:
+    name: E2E lab
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out the tree under test (never executed on the runner)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tree
+          persist-credentials: false
+
+      - name: Check out the lab
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.LAB_REPO }}
+          ref: ${{ env.LAB_SHA }}
+          path: lab
+          persist-credentials: false
+
+      - name: Verify the lab commit
+        run: |
+          set -euo pipefail
+          test "$(git -C lab rev-parse HEAD)" = "$LAB_SHA"
+          echo "lab at $LAB_SHA"
+
+      - name: Build the lab image
+        run: docker build -t thunderbird-mcp-lab:ci lab/harness
+
+      - name: Run the public scenarios
+        working-directory: lab
+        run: ./run-lab.sh --image thunderbird-mcp-lab:ci --out ../lab-results ../tree scenarios/*.json
+
+      - name: Isolation self-test
+        if: always()
+        working-directory: lab
+        run: selftest/run.sh --image thunderbird-mcp-lab:ci ../tree
+
+      - name: Job summary
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "### E2E lab (\`$LAB_SHA\`)"
+            echo
+            echo "| scenario | result | pass | fail | xfail | xpass | errors |"
+            echo "|---|---|---|---|---|---|---|"
+            shopt -s nullglob
+            for f in lab-results/run-*/summary.tsv; do
+              # Only well-formed rows are rendered (scenario file names, fixed words and integers).
+              tail -n +2 "$f" | while IFS=$'\t' read -r name result pass fail xfail xpass errors _; do
+                [[ "$name" =~ ^[A-Za-z0-9._-]{1,80}$ && "$result" =~ ^(PASS|FAIL|UNUSABLE)$ ]] || continue
+                for n in "$pass" "$fail" "$xfail" "$xpass" "$errors"; do [[ "$n" =~ ^[0-9]{0,6}$ ]] || continue 2; done
+                echo "| $name | $result | $pass | $fail | $xfail | $xpass | $errors |"
+              done
+            done
+            echo
+            echo "Results are data produced next to the code under test, not proof. Logs and result JSON are not"
+            echo "published: run the lab locally to get them."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the summary table
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-lab-summary
+          path: lab-results/run-*/summary.tsv
+          retention-days: 14
+          if-no-files-found: warn
