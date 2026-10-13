@@ -20,7 +20,8 @@ this.api = { resolveComposeMode, composeModeRefusal, DIRECT_SEND_BLOCKED_ERROR, 
   mergeDraftFields, draftPriorityName, draftInfoFields, forEachHtmlTag, trailingSeparatorLength,
   buildCitePrefix, divWrappedHtml, citeText, removePlaintextTag, stripDocumentTags, plainTextToForwardHtml, forwardHeaderRows,
   forwardHeaderTableHtml, forwardPlainText, joinFlowedLines, replaceFileURLs, frameSignature, frameImageSignature,
-  userBodyHtml, wrapHtmlDocument, layoutComposeHtml, layoutComposeText, splitDraftBody, removeQueryPart, tagEmbeddedObjects, markEmbeddedElements, neutralizeEmbedMarks, serializerMetaCharset, plainEditorHtml };`, sandbox);
+  userBodyHtml, wrapHtmlDocument, layoutComposeHtml, layoutComposeText, splitDraftBody, removeQueryPart, tagEmbeddedObjects, markEmbeddedElements, neutralizeEmbedMarks, serializerMetaCharset, plainEditorHtml,
+  serializedTextReferences };`, sandbox);
 const api = sandbox.api;
 const plain = v => JSON.parse(JSON.stringify(v));
 
@@ -134,7 +135,7 @@ describe('neutralizeEmbedMarks', () => {
     assert.equal(api.userBodyHtml('<p>x</p><img src="http://192.168.0.1/" moz-do-not-send="false">', true, true),
       '<p>x</p><img src="http://192.168.0.1/" moz&#45;do-not-send="false">');
     // plain text is escaped, the words stay
-    assert.equal(api.userBodyHtml('moz-do-not-send="false"', false, false), 'moz-do-not-send=&quot;false&quot;');
+    assert.equal(api.userBodyHtml('moz-do-not-send="false"', false, false), 'moz-do-not-send="false"');
   });
 });
 
@@ -916,5 +917,132 @@ describe('body of a draft: same result as the regular expressions, in linear tim
       assert.equal(parts.head + parts.user + parts.tail, body);
       assert.ok(ms < 3000, `case ${index} took ${Math.round(ms)} ms`);
     }
+  });
+});
+
+describe('serializedTextReferences (text as the editor serializes it, before scanHTML)', () => {
+  // The references the HTML parser decodes in these tests; the extension decodes with Thunderbird's parser
+  const NAMED = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', eacute: 'é', lpar: '(', rpar: ')' };
+  const decodeText = text => text.replace(/&(?:#[xX]([0-9a-fA-F]+)|#(\d+)|([A-Za-z]+));?/g, (m, hex, dec, name) => {
+    if (hex || dec) return String.fromCodePoint(parseInt(hex || dec, hex ? 16 : 10));
+    return Object.hasOwn(NAMED, name.toLowerCase()) ? NAMED[name.toLowerCase()] : m;
+  });
+  const decodeTexts = runs => runs.map(decodeText);
+  const serialized = html => api.serializedTextReferences(html, decodeTexts);
+
+  // What scanHTML does to text between tags (mozTXTToHTMLConv.cpp ScanHTML, UnescapeStr, then ScanTXT without
+  // URLs): &lt; &gt; &amp; &quot; read back (a reference cut by the end of the text included), then & < > escaped.
+  const unescapeStr = text => {
+    let out = '';
+    for (let i = 0; i < text.length;) {
+      const rest = text.length - i;
+      const match = ['&lt;', '&gt;', '&amp;', '&quot;'].find(ref => text[i] === '&' && text.startsWith(ref.slice(0, Math.min(ref.length, rest)), i));
+      if (match) {
+        out += { '&lt;': '<', '&gt;': '>', '&amp;': '&', '&quot;': '"' }[match];
+        i += match.length;
+      } else {
+        out += text[i++];
+      }
+    }
+    return out;
+  };
+  const scanText = html => html.replace(/(^|>)([^<]+)/g, (m, close, text) => close + unescapeStr(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'));
+  // What the recipient reads in the text
+  const shown = html => decodeText(html.replace(/<[^>]*>/g, ''));
+
+  it('a plain body is escaped as the serializer escapes text: scanHTML keeps its apostrophes', () => {
+    const typed = 'Plain: j\'ai le "droit" & <b>pas gras</b>.\nit\'s fine.';
+    const html = api.userBodyHtml(typed, false, true);
+    assert.equal(html, '<p>Plain: j\'ai le "droit" &amp; &lt;b&gt;pas gras&lt;/b&gt;.<br>it\'s fine.</p>');
+    assert.equal(serialized(html), html);
+    assert.equal(scanText(html), html);
+    assert.equal(shown(scanText(html)), typed.replace('\n', ''));
+    // As escapeHtml (nsAppendEscapedHTML) wrote it, scanHTML escaped the & of &#39;
+    assert.equal(scanText('<p>j&#39;ai</p>'), '<p>j&amp;#39;ai</p>');
+    assert.equal(scanText(serialized('<p>j&#39;ai</p>')), "<p>j'ai</p>");
+  });
+
+  it('text the add-on escapes itself has no reference scanHTML would escape', () => {
+    const text = 'Ann "A" O\'Neil <ann@example.com> & co';
+    const pieces = [
+      api.userBodyHtml(text, false, false),
+      api.divWrappedHtml(text, 'moz-cite-prefix'),
+      api.forwardHeaderTableHtml([['From', text]]),
+      api.plainTextToForwardHtml(text),
+    ];
+    for (const html of pieces) {
+      assert.equal(serialized(html), html, html);
+      assert.equal(scanText(html), html, html);
+      assert.ok(shown(html).includes(text), html);
+    }
+  });
+
+  it('decodes the references of an HTML body that scanHTML does not read back', () => {
+    const html = '<p>l&#39;eau &#x27;x&#X27; &apos;y&apos; &lpar;z&rpar; caf&eacute;&nbsp;! &quot;q&quot;</p>';
+    assert.equal(serialized(html), '<p>l\'eau \'x\' \'y\' (z) café ! "q"</p>');
+    assert.equal(scanText(serialized(html)), serialized(html));
+  });
+
+  it('a reference to <, > or & stays text', () => {
+    assert.equal(serialized('<p>&#60;i&#62;not a tag&#60;/i&#62; &#38;amp; &#39;</p>'), '<p>&lt;i&gt;not a tag&lt;/i&gt; &amp;amp; \'</p>');
+  });
+
+  it('leaves text that scanHTML reads back as it is', () => {
+    const html = '<p>a &lt;b&gt; &amp; &quot;c&quot; déjà</p><p>plain</p>';
+    let calls = 0;
+    assert.equal(api.serializedTextReferences(html, runs => { calls++; return runs; }), html);
+    assert.equal(calls, 0);
+  });
+
+  it('a bare & is escaped, not read as the start of &lt; at the end of a text run', () => {
+    assert.equal(unescapeStr('R&'), 'R<', 'scanHTML reads a cut "&" as "&lt;"');
+    assert.equal(serialized('<p>R&<b>D</b> AT&T it&#39;s</p>'), "<p>R&amp;<b>D</b> AT&amp;T it's</p>");
+    assert.equal(serialized('x &LT;y'), 'x &lt;y');
+  });
+
+  it('copies tags, comments and a, style, script and head elements, as scanHTML skips them', () => {
+    const kept = [
+      '<p title="l&#39;x" data-x=\'&apos;\'>',
+      '<a href="https://example.com/?a=1&amp;b=&#39;">l&#39;offre</a>',
+      '<A\nHREF="x">&#39;</A>',
+      '<!-- &#39; -->',
+      '<style>p::after { content: "&#39;"; }</style>',
+      '<script type="text/plain">&#39;</script>',
+      '<head><title>&#39;</title></head>',
+    ];
+    for (const html of kept) assert.equal(serialized(html), html, html);
+    assert.equal(serialized('<abbr>&#39;</abbr><header>&#39;</header><styles>&#39;</styles>'), "<abbr>'</abbr><header>'</header><styles>'</styles>");
+    assert.equal(serialized('<p>&#39;<a href="x">&#39;</a>&#39;</p>'), '<p>\'<a href="x">&#39;</a>\'</p>');
+    // An element that is never closed takes the rest, as in ScanHTML
+    assert.equal(serialized('<a href="x">&#39; and on'), '<a href="x">&#39; and on');
+    assert.equal(serialized('x &#39; <p'), "x ' <p");
+  });
+
+  it('decodes all runs in one call, in order', () => {
+    const seen = [];
+    const out = api.serializedTextReferences('a&#39;<b>b</b>c&nbsp;<i>d&lpar;</i>', runs => { seen.push([...runs]); return runs.map(decodeText); });
+    assert.deepEqual(seen, [['a&#39;', 'c&nbsp;', 'd&lpar;']]);
+    assert.equal(out, "a'<b>b</b>c\u00a0<i>d(</i>");
+  });
+
+  it('reads the character after "<a" and after a name by its low byte, as ScanHTML does', () => {
+    // U+0161 and U+0441 end in 0x61 and 0x41 ("a", "A"), U+0120 in 0x20 (space), U+013E in 0x3E (">")
+    assert.equal(serialized('<\u0161\u0120x>&#39;</a>&#39;'), '<\u0161\u0120x>&#39;</a>\'');
+    assert.equal(serialized('<\u0441\u013e&#39;</a>&#39;'), '<\u0441\u013e&#39;</a>\'');
+    assert.equal(serialized('<style\u013e&#39;</style>&#39;'), '<style\u013e&#39;</style>\'');
+    // A name is compared as UTF-16: "\u0173tyle" is not "style"
+    assert.equal(serialized('<\u0173tyle x>&#39;'), "<\u0173tyle x>'");
+    assert.equal(serialized('<ab>&#39;</ab>'), "<ab>'</ab>");
+  });
+
+  it('cuts at the same place after characters whose lower case is longer', () => {
+    assert.equal(serialized('İİ<a href="x">&#39;</a>&#39;'), 'İİ<a href="x">&#39;</a>\'');
+  });
+
+  it('runs in linear time', () => {
+    const big = '<p>it&#39;s</p>'.repeat(20000) + '<a '.repeat(5000) + '<!--'.repeat(5000);
+    const t0 = process.hrtime.bigint();
+    serialized(big);
+    assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 2000);
   });
 });

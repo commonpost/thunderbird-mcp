@@ -4,6 +4,19 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Fixed
+
+- An apostrophe reached the recipient as `&#39;` (`j&#39;ai` for "j'ai") in an HTML message built without a compose
+  window: `saveDraft`, a direct `sendMail`, and the text of a reply or forward sent directly or saved as a draft, when
+  the identity composes in HTML. The same happened to any character reference in an HTML body (`&#39;`, `&nbsp;`,
+  `&eacute;`...), and in an HTML signature or quoted message that has one. Thunderbird's send path escapes the `&` of
+  every reference but `&lt;`, `&gt;`, `&amp;` and `&quot;`, which are the only ones its editor writes; these bodies
+  now reach it with the other references decoded, as the editor would have written them. A body in which this would
+  change more than the text (an HTML body with a `>` inside a quoted attribute value) goes as before. Messages composed
+  in a window were not affected.
+
 ## [0.17.1] - 2026-10-03
 
 Security release: update both the add-on and the bridge. Files of a Thunderbird profile, or of an account's local
