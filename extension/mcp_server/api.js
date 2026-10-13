@@ -4584,6 +4584,65 @@ function escapeHtml(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+// Text as the editor's serializer writes it (nsHTMLContentSerializer without OutputEncodeBasicEntities): what a body
+// built without the editor puts between tags, since scanHTML reads back no reference but &lt;, &gt;, &amp; and &quot;.
+function escapeSerializedText(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * HTML as MessageSend._getBodyFromEditor hands it to scanHTML. scanHTML reads back only &lt;, &gt;, &amp; and &quot;
+ * in text (mozTXTToHTMLConv::UnescapeStr) and escapes the "&" of any other character reference: "&#39;" became
+ * "&amp;#39;", which the recipient reads as "&#39;". The editor's serializer writes no other reference; in a body built
+ * without the editor (an HTML body, signature or quote may have them), text that has one is decoded and escaped as the
+ * serializer escapes it. decodeTexts gets all such runs of text at once and returns them decoded, in order.
+ * The text is cut where ScanHTML cuts it: tags, comments and a, style, script and head elements are copied, as scanHTML
+ * copies them. Like ScanHTML, the check of the character after "<a" and of the one after a name reads only the low byte
+ * of a UTF-16 code unit (nsCRT::ToLower and nsCString::FindChar take a char).
+ * composeHtmlOutput keeps the result only when the parser finds the same elements and attributes in it.
+ */
+function serializedTextReferences(html, decodeTexts) {
+  const input = String(html || "");
+  // ASCII case only, as LowerCaseEqualsASCII and LowerCaseFindASCII: the indexes stay those of input
+  const lower = input.replace(/[A-Z]+/g, s => s.toLowerCase());
+  const byteAt = i => input.charCodeAt(i) & 0xff;
+  // " \f\n\r\t>"
+  const canFollow = i => i < input.length && [0x20, 0x0c, 0x0a, 0x0d, 0x09, 0x3e].includes(byteAt(i));
+  const named = (i, name) => lower.startsWith(name, i + 1) && canFollow(i + name.length + 1);
+  const parts = [];
+  const runs = [];
+  let i = 0;
+  while (i < input.length) {
+    const start = i;
+    if (input[i] === "<") {
+      const skipPast = end => {
+        const at = lower.indexOf(end, i);
+        i = at < 0 ? input.length : at + end.length;
+      };
+      if ((byteAt(i + 1) | 0x20) === 0x61 && canFollow(i + 2)) skipPast("</a>");
+      else if (lower.startsWith("!--", i + 1)) skipPast("-->");
+      else if (named(i, "style")) skipPast("</style>");
+      else if (named(i, "script")) skipPast("</script>");
+      else if (named(i, "head")) skipPast("</head>");
+      else skipPast(">");
+      parts.push(input.slice(start, i));
+    } else {
+      const at = input.indexOf("<", i);
+      i = at < 0 ? input.length : at;
+      const text = input.slice(start, i);
+      if (/&(?!(?:lt|gt|amp|quot);)/.test(text)) {
+        parts.push(runs.length);
+        runs.push(text);
+      } else {
+        parts.push(text);
+      }
+    }
+  }
+  if (!runs.length) return input;
+  const decoded = decodeTexts(runs);
+  return parts.map(part => typeof part === "number" ? escapeSerializedText(decoded[part]) : part).join("");
+}
+
 /**
  * Cite line, as the QuotingOutputStreamListener constructor builds it (nsMsgCompose.cpp):
  * template by mailnews.reply_header_type, then the first #2 (date), #3 (time), #1 (author) replaced.
@@ -4614,7 +4673,7 @@ function buildCitePrefix(type, strings, parts) {
 function divWrappedHtml(text, className) {
   const lines = String(text).split("\n");
   if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
-  return `<div class="${className}">${lines.map(line => `${escapeHtml(line)}<br>`).join("")}</div>`;
+  return `<div class="${className}">${lines.map(line => `${escapeSerializedText(line)}<br>`).join("")}</div>`;
 }
 
 // InternetCiter::GetCiteString: ">" before every line, plus a space unless the line is already quoted.
@@ -4654,7 +4713,7 @@ function stripDocumentTags(html) {
 
 // mimedrft.cpp convert_plaintext_body_to_html: escaped text, ">" levels as cite blockquotes, "-- " opens the signature.
 function plainTextToForwardHtml(text) {
-  const escaped = escapeHtml(text || "");
+  const escaped = escapeSerializedText(text || "");
   const isFlowed = [...escaped.matchAll(/ (?=[\r\n])/g)].some(({ index: i }) =>
     !(escaped.slice(i - 2, i) === "--" && (i === 2 || /[\r\n]/.test(escaped[i - 3] || ""))));
   const lines = escaped.split(/\r\n|\r|\n/);
@@ -4716,7 +4775,7 @@ function forwardHeaderRows(values, labels, micro) {
 
 // MIME_HEADER_TABLE / HEADER_*_JUNK (mimedrft.cpp)
 function forwardHeaderTableHtml(rows) {
-  const cells = rows.map(([label, value]) => `<TR><TH VALIGN=BASELINE ALIGN=RIGHT NOWRAP>${label}: </TH><TD>${escapeHtml(value)}</TD></TR>`).join("");
+  const cells = rows.map(([label, value]) => `<TR><TH VALIGN=BASELINE ALIGN=RIGHT NOWRAP>${label}: </TH><TD>${escapeSerializedText(value)}</TD></TR>`).join("");
   return `<TABLE CELLPADDING=0 CELLSPACING=0 BORDER=0 class="moz-email-headers-table">${cells}</TABLE>`;
 }
 
@@ -4949,7 +5008,7 @@ function neutralizeEmbedMarks(html) {
 function userBodyHtml(body, isHtml, paragraphMode) {
   if (isHtml) return neutralizeEmbedMarks(stripDocumentTags(body));
   const text = String(body || "");
-  const html = escapeHtml(text).replace(/\r\n|\r|\n/g, "<br>");
+  const html = escapeSerializedText(text).replace(/\r\n|\r|\n/g, "<br>");
   if (!paragraphMode) return html;
   return `<p>${html || "<br>"}</p>`;
 }
@@ -8876,11 +8935,56 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               });
             }
 
-            // What MessageSend._getBodyFromEditor makes of the editor's HTML: meta charset, then URLs linked (scanHTML).
+            // What an HTML text does, apart from what it says: its elements and their attributes as Thunderbird's parser
+            // reads them, template contents included (text and comments are left out). Linear in the size of the text.
+            function markupOutline(html) {
+              const outline = [];
+              const roots = [new DOMParser().parseFromString(html, "text/html")];
+              while (roots.length) {
+                for (const el of roots.pop().querySelectorAll("*")) {
+                  outline.push(el.namespaceURI, el.localName, el.attributes.length);
+                  for (const attr of el.attributes) outline.push(attr.namespaceURI, attr.name, attr.value);
+                  if (el.localName === "template" && el.content) roots.push(el.content);
+                }
+              }
+              return JSON.stringify(outline);
+            }
+
+            // Runs of text without "<", decoded by one parse in an inert template: <wbr> ends a character reference as the
+            // end of the text does, and keeps the runs apart.
+            function decodeTextRuns(runs) {
+              const template = new DOMParser().parseFromString("", "text/html").createElement("template");
+              template.innerHTML = runs.join("<wbr>");
+              const texts = [""];
+              for (const node of template.content.childNodes) {
+                if (node.nodeType === node.TEXT_NODE) texts[texts.length - 1] += node.data;
+                else texts.push("");
+              }
+              if (texts.length !== runs.length) throw new Error(`${runs.length} runs of text decoded as ${texts.length}`);
+              return texts;
+            }
+
+            // What MessageSend._getBodyFromEditor makes of the editor's HTML: meta charset and text as the serializer
+            // writes them, then URLs linked (scanHTML).
             function composeHtmlOutput(html) {
               let flags = Ci.mozITXTToHTMLConv.kURLs;
               if (Services.prefs.getBoolPref("mail.send_struct", false)) flags |= Ci.mozITXTToHTMLConv.kStructPhrase;
-              return Cc["@mozilla.org/txttohtmlconv;1"].getService(Ci.mozITXTToHTMLConv).scanHTML(serializerMetaCharset(html), flags);
+              const conv = Cc["@mozilla.org/txttohtmlconv;1"].getService(Ci.mozITXTToHTMLConv);
+              const input = serializerMetaCharset(html);
+              const scanned = conv.scanHTML(input, flags);
+              try {
+                const serialized = serializedTextReferences(input, decodeTextRuns);
+                if (serialized === input) return scanned;
+                // Only the text may change. scanHTML cuts a tag at a ">" inside a quoted value, where the parser does not:
+                // what follows is text for it and for serializedTextReferences, and decoding it could change an attribute
+                // (turn a neutralized moz&#45;do-not-send back into moz-do-not-send). If any element or attribute differs
+                // (a link scanHTML makes differently included), the body goes as it did before.
+                const fixed = conv.scanHTML(serialized, flags);
+                return markupOutline(fixed) === markupOutline(scanned) ? fixed : scanned;
+              } catch (e) {
+                console.warn("commonpost-mcp: character references of the body left as they were:", e);
+                return scanned;
+              }
             }
 
             // ConvertBufToPlainText (nsMsgUtils.cpp)
@@ -8990,7 +9094,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (type.startsWith("image/")) return composeHtml ? frameImageSignature(fileDataURL(file), frame) : "";
                   htmlSig = type === "text/html";
                   const text = readSignatureFile(file, composeHtml);
-                  if (composeHtml && !htmlSig) data = escapeHtml(text);
+                  if (composeHtml && !htmlSig) data = escapeSerializedText(text);
                   else if (!composeHtml && htmlSig) data = htmlToPlainText(text, false, true, true);
                   else data = replaceFileURLs(text, fileURLToDataURL);
                 } else {
@@ -8998,7 +9102,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (!text) return "";
                   htmlSig = !!identity.htmlSigFormat;
                   if (!composeHtml) data = htmlSig ? htmlToPlainText(text, false, true, true) : text;
-                  else data = htmlSig ? replaceFileURLs(text, fileURLToDataURL) : escapeHtml(text);
+                  else data = htmlSig ? replaceFileURLs(text, fileURLToDataURL) : escapeSerializedText(text);
                 }
                 return frameSignature({ data, htmlSig }, frame);
               } catch (e) {
@@ -9108,7 +9212,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 const html = mayQuoteOriginal(mimeMsg, isEncryptedContentAllowed()) ? await quoteMessageHtml(msgURI, msgHdr) : null;
                 if (html === null) {
                   const text = extractPlainTextBody(mimeMsg);
-                  parts.quote = useHtml ? (text ? `<pre wrap class="moz-quote-pre">${escapeHtml(text)}</pre>` : "") : text;
+                  parts.quote = useHtml ? (text ? `<pre wrap class="moz-quote-pre">${escapeSerializedText(text)}</pre>` : "") : text;
                 } else if (useHtml) {
                   parts.quote = tagQuotedObjects(removePlaintextTag(stripDocumentTags(html)), embeddedObjectFilter(msgURI));
                 } else {
