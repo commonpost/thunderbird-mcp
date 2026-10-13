@@ -4,7 +4,14 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## [Unreleased]
+## [0.17.2] - 2026-10-13
+
+- **Fixed:** with an identity that writes in HTML, an apostrophe reached the recipient as `&#39;` ("j&#39;ai" for
+  "j'ai") in a draft, a direct send, or a reply or forward made by an assistant without a compose window. Non-breaking
+  spaces and other special characters of an HTML body, an HTML signature or a quoted message showed the same way.
+  Messages written in a compose window were not affected.
+- **The bridge does not change in this release:** nothing to update in your MCP clients if their bridge is 0.17.1.
+- No call that worked stops working. Updating is recommended, not urgent.
 
 ### Fixed
 
