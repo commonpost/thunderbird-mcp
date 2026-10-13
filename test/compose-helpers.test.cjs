@@ -947,8 +947,17 @@ describe('serializedTextReferences (text as the editor serializes it, before sca
     return out;
   };
   const scanText = html => html.replace(/(^|>)([^<]+)/g, (m, close, text) => close + unescapeStr(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'));
-  // What the recipient reads in the text
-  const shown = html => decodeText(html.replace(/<[^>]*>/g, ''));
+  // What the recipient reads in the text: the characters outside tags, references decoded
+  const shown = html => {
+    let text = '';
+    let inTag = false;
+    for (const c of html) {
+      if (c === '<') inTag = true;
+      else if (c === '>' && inTag) inTag = false;
+      else if (!inTag) text += c;
+    }
+    return decodeText(text);
+  };
 
   it('a plain body is escaped as the serializer escapes text: scanHTML keeps its apostrophes', () => {
     const typed = 'Plain: j\'ai le "droit" & <b>pas gras</b>.\nit\'s fine.';
