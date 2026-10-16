@@ -4,6 +4,17 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Fixed
+
+- A reply or forward built without a compose window (a draft, or a direct send) could let the end of a quoted message
+  run into what follows it: a tag, attribute value, comment or `<textarea>` left open at the very end of the quote
+  took in the caller's text or the signature after it, so markup the quote checks never saw could come out as an
+  element. The quote is now replaced by Thunderbird's parsed reading of it, which ends where the quote ends, whenever
+  markup put after it would not be read as markup of its own. With Thunderbird's default settings the quote of a
+  reply or forward is already parsed before it gets here; messages composed in a window were not affected.
+
 ## [0.17.2] - 2026-10-13
 
 - **Fixed:** with an identity that writes in HTML, an apostrophe reached the recipient as `&#39;` ("j&#39;ai" for
