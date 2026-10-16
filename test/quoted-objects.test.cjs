@@ -28,9 +28,19 @@ const el = (localName, attrs) => ({
 // As a serializer writes an element: lower-case name, every value in double quotes
 const serialized = e => `<${e.localName}${Object.entries(e.attrs).map(([name, value]) => ` ${name}="${value}"`).join("")}>`;
 
-// elementsOf(html): the <img> and <a> elements the stand-in parser "finds" in that text
-function load(elementsOf) {
+const PROBE = '<b data-commonpost-quote-end=""></b>';
+const probeElement = () => ({
+  localName: "b",
+  attributes: { length: 1 },
+  hasAttribute: name => name === "data-commonpost-quote-end",
+  hasChildNodes: () => false,
+});
+
+// elementsOf(html): the <img> and <a> elements the stand-in parser "finds" in that text; closed(quote): whether
+// markup after that quote stays markup of its own
+function load(elementsOf, closed = () => true) {
   const parsed = [];
+  const probes = [];
   const sandbox = {
     DOMParser: class {
       parseFromString(text, type) {
@@ -40,9 +50,20 @@ function load(elementsOf) {
           createElement(name) {
             assert.equal(name, "template");
             const template = {
-              set innerHTML(html) { template.html = html; template.elements = elementsOf(html); parsed.push(html); },
+              set innerHTML(html) {
+                template.html = html;
+                if (html.endsWith(PROBE)) {
+                  // quoteIsClosed: the probe <b> is the last element unless the quote is open (closed(quote) false)
+                  const quote = html.slice(0, -PROBE.length);
+                  probes.push(quote);
+                  template.all = closed(quote) ? [el("p", {}), probeElement()] : [el("img", { alt: `${PROBE.slice(0, 10)}` })];
+                  return;
+                }
+                template.elements = elementsOf(html);
+                parsed.push(html);
+              },
               get innerHTML() { return template.elements.map(serialized).join(""); },
-              content: { querySelectorAll: () => template.elements },
+              content: { querySelectorAll: sel => (sel === "*" ? template.all : template.elements) },
             };
             return template;
           },
@@ -54,7 +75,7 @@ function load(elementsOf) {
   vm.runInContext(`${slice("// BEGIN COMPOSE HELPERS", "// END COMPOSE HELPERS")}
 ${slice("// BEGIN QUOTED OBJECTS", "// END QUOTED OBJECTS")}
 this.tagQuotedObjects = tagQuotedObjects;`, sandbox);
-  return { tag: sandbox.tagQuotedObjects, parsed };
+  return { tag: sandbox.tagQuotedObjects, parsed, probes };
 }
 
 const safe = url => url.startsWith("mailbox:");
@@ -91,6 +112,25 @@ describe("tagQuotedObjects", () => {
     const sandbox = load(() => [el("img", { src: "http://x.test/", title: "moz-do-not-send=false" })]);
     assert.equal(sandbox.tag('<img src="http://x.test/" x"y="" title="moz-do-not-send=false">', safe),
       '<img src="http://x.test/" title="moz&#45;do-not-send=false" moz-do-not-send="true">');
+  });
+
+  it("takes the parsed quote when the quote does not end where it ends", () => {
+    // <img src=... alt=" at the end of a forwarded message: alone, the parser drops it (end of input in the tag) and
+    // the text has no end for it either, so neither marks it; followed by the signature, it would be an element
+    const html = '<p>P</p><img src="nntp://192.0.2.1/a@b" alt="';
+    assert.equal(tagEmbeddedObjectsOf(html), html);
+    const { tag, probes } = load(() => [], () => false);
+    assert.equal(tag(html, safe), "");
+    assert.deepEqual(probes, [html]);
+  });
+
+  it("checks the closure of the quote as it is marked, and only when the parser found nothing more", () => {
+    const { tag, probes } = load(() => [el("img", { src: "https://x.test/i.png", "moz-do-not-send": "true" })]);
+    tag('<img src="https://x.test/i.png">', safe);
+    assert.deepEqual(probes, ['<img src="https://x.test/i.png" moz-do-not-send="true">']);
+    const found = load(() => [el("img", { src: "http://192.168.0.1/", 'x"y': "" })], () => assert.fail("not probed"));
+    found.tag('<img src="http://192.168.0.1/" x"y="">', safe);
+    assert.deepEqual(found.probes, []);
   });
 
   it("uses the URL the parser gives, not the one the text shows", () => {
