@@ -4,7 +4,14 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## [Unreleased]
+## [0.17.3] - 2026-10-16
+
+- **Fixed:** a reply or forward made by an assistant without a compose window (a draft, or a direct send) could let
+  the end of a quoted message run into the text and signature after it. With Thunderbird's default settings the quote
+  was already cleaned up before this point; it mattered mostly with an advanced setting changed by hand. Messages
+  written in a compose window were not affected.
+- **The bridge does not change in this release:** nothing to update in your MCP clients if their bridge is 0.17.1.
+- No call that worked stops working. Updating is recommended, not urgent.
 
 ### Fixed
 
@@ -14,6 +21,10 @@ project is kept in this repository.
   element. The quote is now replaced by Thunderbird's parsed reading of it, which ends where the quote ends, whenever
   markup put after it would not be read as markup of its own. With Thunderbird's default settings the quote of a
   reply or forward is already parsed before it gets here; messages composed in a window were not affected.
+
+### Changed
+
+- The Claude Code plugin manifest lists a terms of service link (the MIT license), for the Claude plugin directory.
 
 ## [0.17.2] - 2026-10-13
 
