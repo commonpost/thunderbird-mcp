@@ -8872,14 +8872,36 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             /**
              * HTML of the original message for a reply or a forward: tagEmbeddedObjects on the text, then the same
              * rule on the elements Thunderbird's parser finds in it (markEmbeddedElements), in a document that
-             * loads and runs nothing. The text is kept as it is unless the parser found an element the text missed;
-             * the quote is then the parsed one, serialized. No moz-do-not-send of the message is left either way.
+             * loads and runs nothing. The text is kept as it is unless the parser found an element the text missed,
+             * or the text does not end where it ends (quoteIsClosed); the quote is then the parsed one, serialized.
+             * No moz-do-not-send of the message is left either way.
              */
             function tagQuotedObjects(html, isSafe) {
               const tagged = neutralizeEmbedMarks(tagEmbeddedObjects(html, isSafe));
-              const template = new DOMParser().parseFromString("", "text/html").createElement("template");
+              const doc = new DOMParser().parseFromString("", "text/html");
+              const template = doc.createElement("template");
               template.innerHTML = tagged;
-              return markEmbeddedElements(template.content, isSafe) ? neutralizeEmbedMarks(template.innerHTML) : tagged;
+              const marked = markEmbeddedElements(template.content, isSafe);
+              return marked || !quoteIsClosed(doc, tagged) ? neutralizeEmbedMarks(template.innerHTML) : tagged;
+            }
+
+            /**
+             * Whether markup put after the quote is read as markup of its own. The quote goes into the body as text,
+             * between the cite line or the forward headers and the caller's text and the signature; a tag or an
+             * attribute value it leaves open, a comment or a <textarea> it does not end would take in what follows
+             * (<img src="..." alt=" up to the first quote character of the signature), where neither tagEmbeddedObjects
+             * nor markEmbeddedElements, which read the quote alone, looked. Thunderbird's own window parses the quote
+             * alone, so it cannot. A <b> with only this attribute, added after the quote, must come out as the last
+             * element.
+             */
+            const QUOTE_END_ATTRIBUTE = "data-commonpost-quote-end";
+            function quoteIsClosed(doc, html) {
+              const probe = doc.createElement("template");
+              probe.innerHTML = `${html}<b ${QUOTE_END_ATTRIBUTE}=""></b>`;
+              const all = probe.content.querySelectorAll("*");
+              const last = all[all.length - 1];
+              return !!last && last.localName === "b" && last.attributes.length === 1 &&
+                last.hasAttribute(QUOTE_END_ATTRIBUTE) && !last.hasChildNodes();
             }
             // END QUOTED OBJECTS
 
