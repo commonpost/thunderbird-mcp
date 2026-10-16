@@ -25,6 +25,7 @@
       ]
     }
   },
+  "icon": "./.claude-plugin/icon.png",
   "documentationUrl": "https://github.com/commonpost/thunderbird-mcp#readme",
   "supportUrl": "https://github.com/commonpost/thunderbird-mcp/issues",
   "privacyPolicyUrl": "https://github.com/commonpost/thunderbird-mcp/blob/main/docs/PRIVACY.md",

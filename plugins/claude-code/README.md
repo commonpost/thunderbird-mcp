@@ -36,6 +36,18 @@ Thunderbird separately; see [Quick install](https://github.com/commonpost/thunde
   project's README and a release page). The bridge never fetches them, and opens no connection other than to
   `127.0.0.1`.
 
+## Install
+
+In Claude Code 2.1.275 or later, one step:
+
+```
+/plugin install commonpost-mcp --marketplace commonpost/thunderbird-mcp
+```
+
+On an earlier version, add the marketplace first, then install the plugin:
+`/plugin marketplace add commonpost/thunderbird-mcp`, then `/plugin install commonpost-mcp@commonpost`. The add-on must
+also be installed in Thunderbird; see [Quick install](https://github.com/commonpost/thunderbird-mcp#quick-install-about-3-minutes).
+
 ## Examples
 
 - "How many emails did Alice Martin send me in September 2026?"
