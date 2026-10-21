@@ -6002,7 +6002,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             calendarId: { type: "string", description: "Target calendar ID (from listCalendars, defaults to first writable calendar)" },
             allDay: { type: "boolean", description: "Create an all-day event (default: false)" },
             status: { type: "string", enum: ["tentative", "confirmed", "cancelled"], description: "VEVENT STATUS (default confirmed)" },
-            showAs: { type: "string", enum: ["busy", "free"], description: "How the event appears in the calendar: 'busy' (solid block, TRANSP:OPAQUE + STATUS:CONFIRMED) or 'free' (hatched, TRANSP:TRANSPARENT + STATUS:TENTATIVE). Defaults to 'busy'. Overridden per-property by explicit status parameter." },
+            showAs: { type: "string", enum: ["busy", "free"], description: "Whether the event blocks time: 'busy' (TRANSP:OPAQUE, the default) or 'free' (TRANSP:TRANSPARENT, the time stays available). Does not change status: pass status 'tentative' for a provisional event." },
             categories: { type: "array", items: { type: "string" }, description: "Category labels (optional). Category names are case-sensitive; use listCategories to get exact existing names before setting." },
             onlineMeeting: { type: "boolean", description: "If true, generates a Microsoft Teams meeting link via Exchange (OWL/Office 365 accounts only). After creation, OWL embeds the join URL in the event description and exposes it via listEvents (onlineMeetingURL). No-op on non-OWL backends." },
             skipReview: { type: "boolean", description: "Request direct creation without a review dialog. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)." },
@@ -6043,7 +6043,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             location: { type: "string", description: "New event location (optional)" },
             description: { type: "string", description: "New event description (optional)" },
             status: { type: "string", description: "New VEVENT STATUS: 'tentative', 'confirmed', or 'cancelled' (optional)" },
-            showAs: { type: "string", enum: ["busy", "free"], description: "How the event appears in the calendar: 'busy' (solid, TRANSP:OPAQUE + STATUS:CONFIRMED) or 'free' (hatched, TRANSP:TRANSPARENT + STATUS:TENTATIVE). Pass null to clear TRANSP only. Explicit status parameter overrides the STATUS coupling." },
+            showAs: { type: "string", enum: ["busy", "free"], description: "Whether the event blocks time: 'busy' (TRANSP:OPAQUE) or 'free' (TRANSP:TRANSPARENT, the time stays available). Pass null to clear TRANSP. Does not change status." },
             categories: { type: "array", items: { type: "string" }, description: "Category labels (optional). Category names are case-sensitive; pass an empty array to clear all categories. Use listCategories to get exact existing names before setting." },
             onlineMeeting: { type: "boolean", description: "If true, generates a Microsoft Teams meeting link via Exchange (OWL/Office 365 accounts only). Pass false to remove an existing Teams link." },
           },
@@ -10802,10 +10802,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (showAs !== undefined && showAs !== null && showAs !== "busy" && showAs !== "free") {
                   return { error: `Invalid showAs: "${showAs}". Expected "busy" or "free".` };
                 }
-                // STATUS: explicit param wins; otherwise derive from showAs so Thunderbird renders busy=solid, free=hatched
+                // STATUS and TRANSP are independent: showAs only says whether the time is
+                // blocked, so a free event is not made tentative. STATUS defaults to confirmed.
                 const effectiveStatus = (status !== undefined && status !== null && status !== "")
                   ? status
-                  : (showAs === "free" ? "tentative" : "confirmed");
+                  : "confirmed";
                 const normalizedStatus = normalizeEventStatus(effectiveStatus);
                 if (!normalizedStatus) {
                   return { error: `Invalid status: "${effectiveStatus}". Expected tentative, confirmed, or cancelled.` };
@@ -11331,12 +11332,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     newItem.deleteProperty("TRANSP");
                   } else if (showAs === "free") {
                     newItem.setProperty("TRANSP", "TRANSPARENT");
-                    // Also set STATUS:TENTATIVE for Thunderbird visual display unless caller overrides
-                    if (status === undefined) { newItem.setProperty("STATUS", "TENTATIVE"); changes.push("status"); }
                   } else if (showAs === "busy") {
                     newItem.setProperty("TRANSP", "OPAQUE");
-                    // Also set STATUS:CONFIRMED for Thunderbird visual display unless caller overrides
-                    if (status === undefined) { newItem.setProperty("STATUS", "CONFIRMED"); changes.push("status"); }
                   } else {
                     return { error: `Invalid showAs: "${showAs}". Expected "busy" or "free".` };
                   }

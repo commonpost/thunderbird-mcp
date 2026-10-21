@@ -4,6 +4,17 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Changed
+
+- `createEvent` and `updateEvent`: `showAs` now sets only whether the event blocks time (`TRANSP`), and no longer
+  changes its status. Before, `showAs: "free"` also made the event tentative, so an event meant only to leave the time
+  available showed as "Tentative" in Thunderbird, and `showAs: "busy"` in `updateEvent` reset the status to confirmed.
+  A new event is confirmed unless `status` is given; `updateEvent` keeps the status unless `status` is given. To get
+  the previous result, pass `status: "tentative"` with `showAs: "free"`. In Thunderbird, a free event is no longer
+  drawn hatched, since Thunderbird hatches tentative events.
+
 ## [0.17.3] - 2026-10-16
 
 - **Fixed:** a reply or forward made by an assistant without a compose window (a draft, or a direct send) could let

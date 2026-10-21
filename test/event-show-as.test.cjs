@@ -3,7 +3,7 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
-// Mirrors createEvent's showAs/status decision logic. XPCOM is unavailable in
+// Mirrors createEvent's showAs/status decision logic: showAs sets only TRANSP. XPCOM is unavailable in
 // node:test, so this covers only the input validation and derivation rules.
 function validateAndDeriveCreate(status, showAs) {
   if (showAs !== undefined && showAs !== null && showAs !== "busy" && showAs !== "free") {
@@ -11,7 +11,7 @@ function validateAndDeriveCreate(status, showAs) {
   }
   const effectiveStatus = (status !== undefined && status !== null && status !== "")
     ? status
-    : (showAs === "free" ? "tentative" : "confirmed");
+    : "confirmed";
   const transp = showAs === "free" ? "TRANSPARENT" : "OPAQUE";
   return { effectiveStatus, transp };
 }
@@ -36,9 +36,9 @@ describe("createEvent showAs validation and derivation", () => {
       { effectiveStatus: "confirmed", transp: "OPAQUE" });
   });
 
-  it("derives tentative+TRANSPARENT for showAs=free", () => {
+  it("showAs=free gives TRANSPARENT and keeps the default confirmed status", () => {
     assert.deepStrictEqual(validateAndDeriveCreate(undefined, "free"),
-      { effectiveStatus: "tentative", transp: "TRANSPARENT" });
+      { effectiveStatus: "confirmed", transp: "TRANSPARENT" });
   });
 
   it("derives confirmed+OPAQUE for showAs=busy", () => {
@@ -46,16 +46,18 @@ describe("createEvent showAs validation and derivation", () => {
       { effectiveStatus: "confirmed", transp: "OPAQUE" });
   });
 
-  it("explicit status overrides showAs-derived status (TRANSP still follows showAs)", () => {
+  it("explicit status is kept as given (TRANSP follows showAs)", () => {
     assert.deepStrictEqual(validateAndDeriveCreate("cancelled", "free"),
       { effectiveStatus: "cancelled", transp: "TRANSPARENT" });
+    assert.deepStrictEqual(validateAndDeriveCreate("tentative", "free"),
+      { effectiveStatus: "tentative", transp: "TRANSPARENT" });
     assert.deepStrictEqual(validateAndDeriveCreate("confirmed", "free"),
       { effectiveStatus: "confirmed", transp: "TRANSPARENT" });
   });
 
-  it("empty-string status falls back to showAs-derived", () => {
+  it("empty-string status falls back to confirmed", () => {
     assert.deepStrictEqual(validateAndDeriveCreate("", "free"),
-      { effectiveStatus: "tentative", transp: "TRANSPARENT" });
+      { effectiveStatus: "confirmed", transp: "TRANSPARENT" });
   });
 });
 

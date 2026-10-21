@@ -625,7 +625,7 @@
               "busy",
               "free"
             ],
-            "description": "How the event appears in the calendar: 'busy' (solid block, TRANSP:OPAQUE + STATUS:CONFIRMED) or 'free' (hatched, TRANSP:TRANSPARENT + STATUS:TENTATIVE). Defaults to 'busy'. Overridden per-property by explicit status parameter."
+            "description": "Whether the event blocks time: 'busy' (TRANSP:OPAQUE, the default) or 'free' (TRANSP:TRANSPARENT, the time stays available). Does not change status: pass status 'tentative' for a provisional event."
           },
           "categories": {
             "type": "array",
@@ -744,7 +744,7 @@
               "busy",
               "free"
             ],
-            "description": "How the event appears in the calendar: 'busy' (solid, TRANSP:OPAQUE + STATUS:CONFIRMED) or 'free' (hatched, TRANSP:TRANSPARENT + STATUS:TENTATIVE). Pass null to clear TRANSP only. Explicit status parameter overrides the STATUS coupling."
+            "description": "Whether the event blocks time: 'busy' (TRANSP:OPAQUE) or 'free' (TRANSP:TRANSPARENT, the time stays available). Pass null to clear TRANSP. Does not change status."
           },
           "categories": {
             "type": "array",
