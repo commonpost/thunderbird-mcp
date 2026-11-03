@@ -63,7 +63,7 @@ project is kept in this repository.
   subject and preview may be decrypted ones): it is in no count and takes none of the limits; `encrypted` then
   counts only messages with an encrypted part inside a plain envelope. Thunderbird sets its attachment flag from a
   message's top-level structure, so a signed message (`multipart/signed`), a `multipart/related` one or a
-  single-part attachment is usually not found; `attachmentSearch.note` says so. The attachment options cannot be
+  single-part attachment is usually not found; `attachmentSearch.coverage` says so. The attachment options cannot be
   combined with `searchBody`, `threadOf` or `format: "legacy"`.
 
 ### Changed

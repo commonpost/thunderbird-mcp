@@ -370,7 +370,7 @@ describe("attachmentCandidateCollector", () => {
 
 describe("attachmentSearchSummary", () => {
   const scan = { checked: 4, skipped: { encrypted: 2, tooLarge: 1, limitReached: 3 }, limitReached: true };
-  const note = { note: "Only messages Thunderbird flags as having attachments are read; signed (multipart/signed), multipart/related and single-part messages are usually not flagged." };
+  const note = { coverage: "Only messages Thunderbird flags as having attachments are read; signed (multipart/signed), multipart/related and single-part messages are usually not flagged." };
   it("reports the counts, the limit and the messages never read", () => {
     assert.deepEqual(plain(attachmentSearchSummary(scan, { collectionCapped: false })),
       { checked: 4, skipped: { encrypted: 2, tooLarge: 1, limitReached: 3 }, limitReached: true, ...note });
@@ -387,6 +387,11 @@ describe("attachmentSearchSummary", () => {
 });
 
 describe("attachmentSearch wiring", () => {
+  it("names its own text with a key the untrusted-content markers do not wrap", () => {
+    const wrapped = source.match(/const UNTRUSTED_WRAPPED_KEYS = new Set\(\[([^\]]*)\]\)/)[1];
+    for (const key of ["checked", "skipped", "limitReached", "coverage"]) assert.equal(wrapped.includes(`"${key}"`), false, key);
+  });
+
   it("leaves out encrypted envelopes at collection when the query has words and encryption is not allowed", () => {
     const body = source.slice(source.indexOf("async function attachmentSearch("), source.indexOf("function headerMatchesTerms("));
     assert.match(body, /dropEncrypted: !encryptedAllowed && terms\.length > 0/);
