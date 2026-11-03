@@ -10163,7 +10163,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // once, so the row carries the wire-level subject, no preview and encrypted: true, as in 0.10.x.
             function buildSearchRow(msgHdr, folder, legacy, encrypted) {
               const subject = encrypted
-                ? outerWireSubject(msgHdr, msgHdr.mime2DecodedSubject || msgHdr.subject)
+                ? outerWireSubject(msgHdr, "")
                 : displaySubject(msgHdr);
               const row = {
                 id: msgHdr.messageId,
@@ -12111,23 +12111,54 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // sit at the very start of a message, comfortably within this
             // even with many Received: lines. Returns null if the stream, or
             // the message itself, cannot be read.
-            const RAW_MIME_HEADER_PEEK_BYTES = 32 * 1024;
+            const RAW_MIME_HEADER_PEEK_BYTES = 256 * 1024;
             function readRawMimeOuterEntity(msgHdr) {
               let stream = null;
               try {
                 const folder = msgHdr.folder;
                 if (!folder) return null;
                 stream = folder.getMsgInputStream(msgHdr, {});
-                const raw = readMessageStreamFully(stream, RAW_MIME_HEADER_PEEK_BYTES);
-                if (!raw) return null;
+                // Only the header block is read, so the message size does not matter
+                const block = readRawOuterHeaderBlock(stream, RAW_MIME_HEADER_PEEK_BYTES);
+                if (block === RAW_HEADER_BLOCK_TOO_LARGE) return RAW_HEADER_BLOCK_TOO_LARGE;
+                if (block === null) return null;
                 // maxDepth 0: never descends into a multipart body, only the
                 // outer entity's own headers and Content-Type are needed here.
-                return parseRawMimeEntity(raw, { maxDepth: 0 });
+                return parseRawMimeEntity(`${block}\r\n\r\n`, { maxDepth: 0 });
               } catch {
                 return null;
               } finally {
                 if (stream) try { stream.close(); } catch { /* ignore */ }
               }
+            }
+
+            // Returned instead of the outer entity when the header block does
+            // not end within RAW_MIME_HEADER_PEEK_BYTES: unknown, not unreadable.
+            const RAW_HEADER_BLOCK_TOO_LARGE = Object.freeze({ tooLarge: true });
+            const RAW_HEADER_READ_STEP_BYTES = 16 * 1024;
+
+            // The raw header block of a message stream, up to the blank line
+            // that ends it (as findRawMimeHeaderBodySplit finds it), reading at
+            // most `maxBytes` plus that line. RAW_HEADER_BLOCK_TOO_LARGE past
+            // the limit; null when the stream ends first.
+            function readRawOuterHeaderBlock(stream, maxBytes) {
+              let raw = "";
+              while (raw.length < maxBytes + 4) {
+                let available;
+                try {
+                  available = stream.available();
+                } catch (e) {
+                  if (e === Cr.NS_BASE_STREAM_CLOSED || e?.result === Cr.NS_BASE_STREAM_CLOSED) break;
+                  throw e;
+                }
+                if (available <= 0) break;
+                const chunk = NetUtil.readInputStreamToString(stream, Math.min(available, RAW_HEADER_READ_STEP_BYTES, maxBytes + 4 - raw.length));
+                if (!chunk) break;
+                raw += chunk;
+                const split = findRawMimeHeaderBodySplit(raw);
+                if (split && split.header.length <= maxBytes) return split.header;
+              }
+              return raw.length >= maxBytes ? RAW_HEADER_BLOCK_TOO_LARGE : null;
             }
 
             // The Subject header exactly as it arrived over the wire: for a
@@ -12144,6 +12175,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // mime2DecodedSubject would have made it.
             function outerWireSubject(msgHdr, fallback) {
               const root = readRawMimeOuterEntity(msgHdr);
+              // Headers too long to read: unknown, so never the database's subject
+              if (root === RAW_HEADER_BLOCK_TOO_LARGE) return "";
               if (!root) return fallback;
               const raw = getRawMimeHeader(root.headers, "subject");
               return raw ? raw : fallback;
@@ -12162,7 +12195,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // check, which does fail closed, still applies whenever the
             // actual body is fetched).
             function isRawMimeEnvelopeEncrypted(msgHdr) {
-              return isEncryptedMimeMessage(readRawMimeOuterEntity(msgHdr));
+              const root = readRawMimeOuterEntity(msgHdr);
+              // Headers too long to read: treated as encrypted (unknown)
+              if (root === RAW_HEADER_BLOCK_TOO_LARGE) return true;
+              return isEncryptedMimeMessage(root);
             }
 
             function parseAttachmentPartsFromRawMime(rawBytes, options = {}) {
@@ -12300,8 +12336,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                         // protected-header ("memory hole") message has been
                         // opened, which is exactly the content this branch exists
                         // to withhold. The wire-level Subject is read fresh from
-                        // the raw message instead, every time.
-                        subject: outerWireSubject(msgHdr, msgHdr.mime2DecodedSubject || msgHdr.subject),
+                        // the raw message instead, every time, and is empty when
+                        // it cannot be read.
+                        subject: outerWireSubject(msgHdr, ""),
                         author: msgHdr.mime2DecodedAuthor || msgHdr.author,
                         recipients: msgHdr.mime2DecodedRecipients || msgHdr.recipients,
                         ccList: decodeHeaderValue(msgHdr.ccList),
