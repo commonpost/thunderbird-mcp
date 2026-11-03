@@ -1066,6 +1066,7 @@ describe('Production contact schemas and dispatch', () => {
   const toolsByName = new Map(productionContacts.tools.map(tool => [tool.name, tool]));
   const contactFields = [
     'email',
+    'emails',
     'displayName',
     'firstName',
     'lastName',
@@ -1112,6 +1113,12 @@ describe('Production contact schemas and dispatch', () => {
       assert.deepEqual(Array.from(addressItems.properties.type.enum), ['home', 'work']);
       assert.deepEqual(Array.from(addressItems.required), ['type']);
       assert.equal(addressItems.additionalProperties, false);
+
+      const emailItems = schema.properties.emails.items;
+      assert.deepEqual(Object.keys(emailItems.properties), ['address', 'type', 'primary']);
+      assert.deepEqual(Array.from(emailItems.properties.type.enum), ['work', 'home', 'other']);
+      assert.deepEqual(Array.from(emailItems.required), ['address']);
+      assert.equal(emailItems.additionalProperties, false);
     }
   });
 
@@ -1165,6 +1172,21 @@ describe('Validation: contact write operations', () => {
       addresses: [{ type: 'home', city: 'Warsaw', label: 'private' }],
     });
     assert.ok(addressErrors.some(error => /Unknown parameter: addresses\[0\]\.label/.test(error)));
+  });
+
+  it('createContact and updateContact deep-validate emails items (production schema)', () => {
+    for (const [name, base] of [['createContact', {}], ['updateContact', { contactId: 'uid-1' }]]) {
+      assert.deepEqual(validateProductionToolArgs(name, {
+        ...base,
+        emails: [{ address: 'a@example.com', type: 'work', primary: true }, { address: 'b@example.com' }],
+      }), []);
+      assert.ok(validateProductionToolArgs(name, { ...base, emails: [{ address: 'a@example.com', label: 'x' }] })
+        .some(error => /Unknown parameter: emails\[0\]\.label/.test(error)));
+      assert.ok(validateProductionToolArgs(name, { ...base, emails: [{ type: 'home' }] })
+        .some(error => /emails\.address|emails\[0\]\.address/.test(error)));
+      assert.ok(validateProductionToolArgs(name, { ...base, emails: [{ address: 'a@example.com', type: 'cell' }] })
+        .some(error => /must be one of/.test(error)));
+    }
   });
 
   it('getContact requires a contactId', () => {

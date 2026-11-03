@@ -1000,7 +1000,7 @@
     {
       "name": "searchContacts",
       "title": "Search Contacts",
-      "description": "Search contacts in all address books by email, name or organization. Empty fields are omitted.",
+      "description": "Search contacts in all address books by any email, name or organization. Empty fields are omitted.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1038,7 +1038,7 @@
     {
       "name": "getContact",
       "title": "Get Contact",
-      "description": "Read one contact by id (from searchContacts): email, name, phones, addresses, organization, title, note, birthday",
+      "description": "Read one contact by id (from searchContacts): emails, name, phones, addresses, organization, title, note, birthday",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1067,7 +1067,35 @@
         "properties": {
           "email": {
             "type": "string",
-            "description": "Primary email address. May be omitted for phone-only contacts."
+            "description": "Primary email address"
+          },
+          "emails": {
+            "type": "array",
+            "maxItems": 10,
+            "description": "All addresses, replacing the list; primary: the flagged one or the first",
+            "items": {
+              "type": "object",
+              "properties": {
+                "address": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "work",
+                    "home",
+                    "other"
+                  ]
+                },
+                "primary": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "address"
+              ],
+              "additionalProperties": false
+            }
           },
           "displayName": {
             "type": "string",
@@ -1083,7 +1111,7 @@
           },
           "phones": {
             "type": "array",
-            "description": "Phone numbers. On update, replaces the phone collection; use [] to clear it.",
+            "description": "Phone numbers; replaces the list, [] clears it",
             "items": {
               "type": "object",
               "properties": {
@@ -1095,12 +1123,10 @@
                     "mobile",
                     "fax",
                     "pager"
-                  ],
-                  "description": "Phone type"
+                  ]
                 },
                 "number": {
-                  "type": "string",
-                  "description": "Phone number"
+                  "type": "string"
                 }
               },
               "required": [
@@ -1112,7 +1138,7 @@
           },
           "addresses": {
             "type": "array",
-            "description": "Postal addresses. On update, replaces the address collection; use [] to clear it.",
+            "description": "Postal addresses; replaces the list, [] clears it",
             "items": {
               "type": "object",
               "properties": {
@@ -1121,36 +1147,30 @@
                   "enum": [
                     "home",
                     "work"
-                  ],
-                  "description": "Address type"
+                  ]
                 },
                 "poBox": {
-                  "type": "string",
-                  "description": "Post office box"
+                  "type": "string"
                 },
                 "street": {
-                  "type": "string",
-                  "description": "Street address"
+                  "type": "string"
                 },
                 "street2": {
                   "type": "string",
-                  "description": "Additional street/address line"
+                  "description": "Extra address line"
                 },
                 "city": {
-                  "type": "string",
-                  "description": "City or locality"
+                  "type": "string"
                 },
                 "region": {
                   "type": "string",
                   "description": "State, province, or region"
                 },
                 "postalCode": {
-                  "type": "string",
-                  "description": "Postal or ZIP code"
+                  "type": "string"
                 },
                 "country": {
-                  "type": "string",
-                  "description": "Country"
+                  "type": "string"
                 }
               },
               "required": [
@@ -1192,7 +1212,7 @@
     {
       "name": "updateContact",
       "title": "Update Contact",
-      "description": "Update a contact by id: only passed fields change; phones and addresses replace the whole list",
+      "description": "Update a contact by id: only passed fields change; emails, phones and addresses replace the whole list",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1202,7 +1222,35 @@
           },
           "email": {
             "type": "string",
-            "description": "Primary email address. May be omitted for phone-only contacts."
+            "description": "Primary email address"
+          },
+          "emails": {
+            "type": "array",
+            "maxItems": 10,
+            "description": "All addresses, replacing the list; primary: the flagged one or the first",
+            "items": {
+              "type": "object",
+              "properties": {
+                "address": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "work",
+                    "home",
+                    "other"
+                  ]
+                },
+                "primary": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "address"
+              ],
+              "additionalProperties": false
+            }
           },
           "displayName": {
             "type": "string",
@@ -1218,7 +1266,7 @@
           },
           "phones": {
             "type": "array",
-            "description": "Phone numbers. On update, replaces the phone collection; use [] to clear it.",
+            "description": "Phone numbers; replaces the list, [] clears it",
             "items": {
               "type": "object",
               "properties": {
@@ -1230,12 +1278,10 @@
                     "mobile",
                     "fax",
                     "pager"
-                  ],
-                  "description": "Phone type"
+                  ]
                 },
                 "number": {
-                  "type": "string",
-                  "description": "Phone number"
+                  "type": "string"
                 }
               },
               "required": [
@@ -1247,7 +1293,7 @@
           },
           "addresses": {
             "type": "array",
-            "description": "Postal addresses. On update, replaces the address collection; use [] to clear it.",
+            "description": "Postal addresses; replaces the list, [] clears it",
             "items": {
               "type": "object",
               "properties": {
@@ -1256,36 +1302,30 @@
                   "enum": [
                     "home",
                     "work"
-                  ],
-                  "description": "Address type"
+                  ]
                 },
                 "poBox": {
-                  "type": "string",
-                  "description": "Post office box"
+                  "type": "string"
                 },
                 "street": {
-                  "type": "string",
-                  "description": "Street address"
+                  "type": "string"
                 },
                 "street2": {
                   "type": "string",
-                  "description": "Additional street/address line"
+                  "description": "Extra address line"
                 },
                 "city": {
-                  "type": "string",
-                  "description": "City or locality"
+                  "type": "string"
                 },
                 "region": {
                   "type": "string",
                   "description": "State, province, or region"
                 },
                 "postalCode": {
-                  "type": "string",
-                  "description": "Postal or ZIP code"
+                  "type": "string"
                 },
                 "country": {
-                  "type": "string",
-                  "description": "Country"
+                  "type": "string"
                 }
               },
               "required": [
