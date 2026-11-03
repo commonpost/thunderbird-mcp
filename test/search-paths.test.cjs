@@ -227,6 +227,7 @@ describe("own addresses for conversation linking", () => {
 });
 
 describe("attachment search (attachmentName / attachmentType)", () => {
+  const NOTE = { note: "Only messages Thunderbird flags as having attachments are read; signed (multipart/signed), multipart/related and single-part messages are usually not flagged." };
   const pdf = name => `Content-Type: multipart/mixed; boundary="b"\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nhi\r\n`
     + `--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename="${name}"\r\n\r\n%PDF\r\n--b--\r\n`;
   const encrypted = `Content-Type: multipart/mixed; boundary="b"\r\n\r\n--b\r\nContent-Type: application/pdf\r\n`
@@ -246,19 +247,31 @@ describe("attachment search (attachmentName / attachmentType)", () => {
     const w = seed();
     const res = plain(await w.sandbox.searchMessages({ query: "", attachmentType: "application/pdf" }));
     assert.deepEqual(res.messages.map(m => [m.id, m.attachments]), [["plain@lab.test", [{ name: "merger.pdf", contentType: "application/pdf", size: 4 }]]]);
-    assert.deepEqual(res.attachmentSearch, { checked: 1, skipped: { encrypted: 1 } });
+    assert.deepEqual(res.attachmentSearch, { checked: 1, skipped: { encrypted: 1 }, ...NOTE });
     assert.equal(res.incomplete, undefined);
     assert.deepEqual(w.inbox.reads.sort(), ["plain@lab.test", "secret@lab.test"]);
   });
 
-  it("leaves an encrypted message out and, with query words, does not count it", async () => {
+  it("with query words, leaves out an encrypted envelope before reading it; counts an encrypted part the main search lists", async () => {
+    const envelope = `Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="e"\r\n\r\n`
+      + `--e\r\nContent-Type: application/pgp-encrypted\r\n\r\nVersion: 1\r\n--e\r\nContent-Type: application/octet-stream; name="annex.pdf.asc"\r\n\r\nx\r\n--e--\r\n`;
     const w = seed();
+    // Protected headers: the stored subject is the decrypted one
+    hdr(w.inbox, { id: "envelope@lab.test", subject: "Quarterly merger plan", author: "Bob <bob@acme.test>", raw: envelope, encrypted: true, daysAgo: 2 });
     const res = plain(await w.sandbox.searchMessages({ query: "merger", attachmentName: "annex" }));
     assert.deepEqual(res.messages, []);
-    assert.deepEqual(res.attachmentSearch, { checked: 1 });
+    // secret@lab.test (an encrypted part in a plain envelope) is counted; envelope@lab.test is in no count
+    assert.deepEqual(res.attachmentSearch, { checked: 1, skipped: { encrypted: 1 }, ...NOTE });
     assert.equal(JSON.stringify(res).includes("secret@lab.test"), false);
+    assert.equal(JSON.stringify(res).includes("envelope@lab.test"), false);
+    assert.equal(w.inbox.reads.includes("envelope@lab.test"), false);
+    // The search without attachment options lists the first and leaves the second out: the count tells nothing more
+    assert.deepEqual(ids(w.sandbox.searchMessages({ query: "merger" })).sort(), ["none@lab.test", "plain@lab.test", "secret@lab.test"]);
     const count = plain(await w.sandbox.searchMessages({ query: "merger", attachmentName: "pdf", countOnly: true }));
-    assert.deepEqual(count, { count: 1, attachmentSearch: { checked: 1 } });
+    assert.deepEqual(count, { count: 1, attachmentSearch: { checked: 1, skipped: { encrypted: 1 }, ...NOTE } });
+    // Without query words both are counted as encrypted, nothing in them read past the structure
+    const all = plain(await w.sandbox.searchMessages({ query: "", attachmentName: "annex" }));
+    assert.deepEqual(all.attachmentSearch, { checked: 1, skipped: { encrypted: 2 }, ...NOTE });
     // Control: with the option on, the encrypted message is checked on its structure (nothing decrypted)
     const allowed = plain(await seed({ encryptedAllowed: true }).sandbox.searchMessages({ query: "merger", attachmentName: "annex" }));
     assert.deepEqual(allowed.messages.map(m => m.id), ["secret@lab.test"]);
@@ -280,7 +293,7 @@ describe("attachment search (attachmentName / attachmentType)", () => {
     w.inbox.offlineKeys = [];
     const res = plain(await w.sandbox.searchMessages({ query: "", attachmentName: "merger" }));
     assert.deepEqual(res.messages, []);
-    assert.deepEqual(res.attachmentSearch, { checked: 0, skipped: { notOffline: 2 } });
+    assert.deepEqual(res.attachmentSearch, { checked: 0, skipped: { notOffline: 2 }, ...NOTE });
     assert.equal(res.incomplete, true);
     assert.deepEqual(w.inbox.reads, []);
   });
