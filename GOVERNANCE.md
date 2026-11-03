@@ -46,9 +46,13 @@ The project is meant to survive the loss of any one person:
 - No secret is needed to build or test. Publishing uses only GitHub's own token and attestations: no signing key or
   package registry account is held by a person.
 
-What a single maintainer cannot hand over by themselves is access to the `commonpost` organization: its repositories,
-its protected `release` environment and the update channel on GitHub Pages (`updates.json`, which installed add-ons
-check for updates). Until a second maintainer joins, this access is the gap in continuity.
+Access to the `commonpost` organization (its repositories, the protected `release` environment and the update channel
+on GitHub Pages, `updates.json`, which installed add-ons check for updates) is covered by a lockbox and a will: the
+maintainer keeps sealed instructions and the credentials needed to sign in with their will and protection mandate.
+If the maintainer dies, becomes unable to act or stops answering for a month, the person who opens them invites a
+successor as owner of the organization within a week: first a maintainer or regular contributor, then the people
+named in the instructions. If nobody accepts within 30 days, the repositories are archived, not deleted. A second
+maintainer remains the better answer and is welcome.
 
 ## Changes to this document
 
