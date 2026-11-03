@@ -6,6 +6,21 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+## [0.17.4] - 2026-11-02
+
+- **Security fix:** an attachment that is only a link to a file or web address (a detached attachment or a feed
+  enclosure) is never opened any more. Updating is recommended.
+- `createEvent` and `updateEvent`: `showAs` no longer changes the event's status (see below).
+- **The bridge does not change in this release:** nothing to update in your MCP clients if their bridge is 0.17.1.
+
+### Security
+
+- `forwardMessage` (in every mode, the compose window included) and `saveDraft` with `draftId` refuse a message that
+  has an attachment which is only a link (a detached attachment or a feed enclosure), and name it: nothing is sent,
+  saved or opened. Before, the forward or the draft could carry what the link pointed to instead. `saveDraft` with
+  `draftId` and `keepAttachments: false` still works. `getMessage` no longer opens such a link for
+  `saveAttachments` or `includeInlineImages`, and lists the attachment with `external: true`.
+
 ### Changed
 
 - `createEvent` and `updateEvent`: `showAs` now sets only whether the event blocks time (`TRANSP`), and no longer
