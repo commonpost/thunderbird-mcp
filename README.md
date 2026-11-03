@@ -393,7 +393,7 @@ refuses every string file path attachment on Windows outright; attach files thro
 
 This add-on uses a Thunderbird Experiment API (see [docs/experiment-inventory.md](docs/experiment-inventory.md)).
 Thunderbird's Add-ons team has announced plans to stop running Experiment-API add-ons on the Release channel, and to
-keep supporting them on the ESR (Extended Support Release) channel. As of September 2026 this had not happened yet.
+keep supporting them on the ESR (Extended Support Release) channel. As of November 2026 this had not happened yet.
 
 If that happens on your Thunderbird and this add-on stops working: switch to Thunderbird ESR. Downloads for every
 platform are on the [official Thunderbird site](https://www.thunderbird.net/en-US/thunderbird/all/) (look for the
@@ -445,6 +445,10 @@ A program that calls the HTTP API directly, without the bridge, sends no `X-Comm
 **Dev-only extension reload:** After changing extension source locally, remove the add-on from Thunderbird, restart, reinstall the XPI, and restart again. Thunderbird caches aggressively.
 
 Run the tests with `npm ci --ignore-scripts && npm test`; see [CONTRIBUTING.md](CONTRIBUTING.md). Everything that needs Thunderbird's full privileges is listed in [docs/experiment-inventory.md](docs/experiment-inventory.md).
+
+How the pieces fit together: [docs/architecture.md](docs/architecture.md). Why the design is believed secure, and its
+known limits: [docs/assurance-case.md](docs/assurance-case.md). Who decides and how: [GOVERNANCE.md](GOVERNANCE.md).
+What comes next: [ROADMAP.md](ROADMAP.md).
 
 ---
 
