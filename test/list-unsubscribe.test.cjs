@@ -90,6 +90,23 @@ describe("parseListUnsubscribe", () => {
     }
   });
 
+  it("rejects IPv4 literals in every form and local or private names", () => {
+    for (const host of ["127.0.0.1", "127.1", "0x7f.1", "0x7f.0x0.0.1", "1.0x7f", "10.0.0.0x1", "0177.0.0.1", "192.168.1.10",
+      "169.254.169.254", "2130706433.0", "a.1", "example.0x", "my.localhost", "LOCALHOST.example.localhost", "printer.local",
+      "db.internal", "router.lan", "nas.home.arpa", "box.localdomain", "Printer.LOCAL"]) {
+      for (const scheme of ["https", "http"]) {
+        const result = parse(`<${scheme}://${host}/u>`);
+        assert.deepEqual(result.https, [], host);
+        assert.equal(result.insecure, undefined, host);
+        assert.equal(result.ignored, 1, host);
+      }
+    }
+    // Names that only look alike are kept
+    for (const host of ["local.example.com", "localhost.example.com", "lan.example.org", "x1.example", "1.example", "a.b0x", "internal.example.net", "0x7g.example"]) {
+      assert.deepEqual(parse(`<https://${host}/u>`).https, [`https://${host}/u`], host);
+    }
+  });
+
   it("normalizes scheme and host case, keeps path, port and query", () => {
     assert.deepEqual(parse("<HTTPS://List.Example.COM:8443/U/Path?Token=AbC#frag>").https, ["https://list.example.com:8443/U/Path?Token=AbC#frag"]);
     assert.deepEqual(parse("<https://xn--bcher-kva.example/u>").https, ["https://xn--bcher-kva.example/u"]);

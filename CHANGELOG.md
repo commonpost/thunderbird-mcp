@@ -25,8 +25,9 @@ project is kept in this repository.
   `{ mailto: [{ address, subject?, body? }], https: [url], oneClick }` (RFC 2369 and RFC 8058). `oneClick` is true
   only when List-Unsubscribe-Post is exactly `List-Unsubscribe=One-Click` and an https URI is listed; the DKIM
   signature RFC 8058 also asks for is not checked. `http:` URIs come apart as `insecure`; any other scheme
-  (`javascript:`, `data:`, `file:`...), a URI with user info or a non-ASCII host, and malformed entries are only
-  counted (`ignored`). At most 5 URIs of each kind, 2,048 characters each. The header is written by the sender:
+  (`javascript:`, `data:`, `file:`...), a URI with user info or a non-ASCII host, a host that is an IP address in
+  any form (`127.0.0.1`, `127.1`, `0x7f.1`...) or a local name (`localhost`, `.local`, `.internal`, `.lan`,
+  `.home.arpa`, `.localdomain`), and malformed entries are only counted (`ignored`). At most 5 URIs of each kind, 2,048 characters each. The header is written by the sender:
   nothing is fetched, sent or opened, a mailto `body` comes between the untrusted-content markers like a message
   body, and the tool description says the user decides.
 - Event reminders: `createEvent` and `updateEvent` take `reminders`, a list of minutes before the start (up to 5,

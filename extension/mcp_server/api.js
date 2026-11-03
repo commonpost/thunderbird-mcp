@@ -4788,9 +4788,20 @@ const MAX_UNSUBSCRIBE_PER_KIND = 5;
 const MAX_UNSUBSCRIBE_URI_CHARS = 2048;
 const MAX_UNSUBSCRIBE_SUBJECT_CHARS = 200;
 const MAX_UNSUBSCRIBE_BODY_CHARS = 1000;
-// ASCII host names only (an IDN must be in its xn-- form), with a dot, no user info, no IP-v6 literal; the rest of
+// ASCII host names only (an IDN must be in its xn-- form), with a dot, no user info, no IP-v6 literal (and no IPv4
+// one, see isUnsubscribeHostAllowed); the rest of
 // the URI is printable ASCII without quotes, angle brackets, backslash, caret, backquote or braces
 const UNSUBSCRIBE_WEB_URI = /^(https?):\/\/((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?::(\d{1,5}))?([/?#][\x21\x23-\x3B\x3D\x3F-\x5B\x5D\x5F\x61-\x7A\x7E]*)?$/i;
+// Hosts that name the user's own machine or network rather than a list server: an IPv4 address in any form a URL
+// parser accepts (127.0.0.1, 127.1, 0x7f.1, 2130706433: the last label is then a number), and the special-use or
+// private names localhost, .local, .internal, .lan, .home.arpa, .localdomain.
+const UNSUBSCRIBE_LOCAL_SUFFIXES = ["localhost", "local", "internal", "lan", "home.arpa", "localdomain"];
+function isUnsubscribeHostAllowed(host) {
+  const labels = host.toLowerCase().split(".");
+  const last = labels[labels.length - 1];
+  if (!/[a-z]/.test(last) || /^0x[0-9a-f]*$/.test(last)) return false;
+  return !UNSUBSCRIBE_LOCAL_SUFFIXES.some(suffix => host.toLowerCase() === suffix || host.toLowerCase().endsWith(`.${suffix}`));
+}
 const UNSUBSCRIBE_ADDRESS = /^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
 
 // The URIs between angle brackets, outside comments; folding whitespace inside the brackets is not part of the URI.
@@ -4890,7 +4901,7 @@ function parseListUnsubscribe(value, postValue) {
       const match = UNSUBSCRIBE_WEB_URI.exec(uri);
       const port = match?.[3] === undefined ? 1 : Number(match[3]);
       const list = scheme === "https" ? https : insecure;
-      if (match && port >= 1 && port <= 65535 && list.length < MAX_UNSUBSCRIBE_PER_KIND) {
+      if (match && port >= 1 && port <= 65535 && isUnsubscribeHostAllowed(match[2]) && list.length < MAX_UNSUBSCRIBE_PER_KIND) {
         const url = `${scheme}://${match[2].toLowerCase()}${match[3] === undefined ? "" : `:${match[3]}`}${match[4] || ""}`;
         if (!list.includes(url)) list.push(url);
         kept = true;
