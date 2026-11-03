@@ -8052,6 +8052,53 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               if (!failed || failed.length === 0) return null;
               return { error: `Attachment refused, nothing was ${action}: ${failed.join(", ")}` };
             }
+
+            // Schemes that never name a part of a stored message
+            const NON_MESSAGE_PART_SCHEMES = new Set([
+              "file", "http", "https", "ftp", "data", "blob", "jar", "resource", "chrome",
+              "moz-extension", "moz-icon", "view-source", "about", "javascript",
+            ]);
+
+            /**
+             * True when an attachment of a stored message is not in that message: Thunderbird reports it external
+             * (a detached attachment, a feed enclosure) and its url is the X-Mozilla-External-Attachment-URL
+             * header, a file:// or http(s) link. The sender writes that header, so opening the url with the system
+             * principal would attach or return whatever local file or page the sender chose: the tools never open it.
+             */
+            function isExternalAttachment(att) {
+              if (att?.isExternal) return true;
+              if (att?.headers?.["x-mozilla-external-attachment-url"]?.length) return true;
+              const url = String(att?.url || "");
+              if (!url) return false;
+              try {
+                const scheme = Services.io.extractScheme(url).toLowerCase();
+                // A *-message: url names a whole stored message, never a part of this one
+                return NON_MESSAGE_PART_SCHEMES.has(scheme) || scheme.endsWith("-message");
+              } catch {
+                return true;
+              }
+            }
+
+            /**
+             * Attachment descriptors of a stored message, for a forward or a rewritten draft. An external
+             * attachment fails the call instead of being fetched (isExternalAttachment).
+             */
+            function storedAttachmentDescs(mimeMsg) {
+              const descs = [];
+              const external = [];
+              for (const att of mimeMsg?.allUserAttachments || []) {
+                try {
+                  if (isExternalAttachment(att)) {
+                    external.push(`${JSON.stringify(String(att.name || att.partName || "unnamed attachment"))} is only a link to a file or web address, not part of the message (detached attachment or feed enclosure)`);
+                    continue;
+                  }
+                  descs.push({ url: att.url, name: att.name, contentType: att.contentType });
+                } catch {
+                  // Skip unreadable attachments
+                }
+              }
+              return { descs, external };
+            }
             // END OUTBOUND ATTACHMENT CONVERSION
 
             /**
@@ -12392,9 +12439,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                           size: typeof att?.size === "number" ? att.size : null,
                           isInline: false,
                         };
+                        // An external attachment's url is a link the sender chose: it is never opened
+                        const external = isExternalAttachment(att);
+                        if (external) info.external = true;
                         const source = {
                           info,
-                          url: att?.url || "",
+                          url: external ? "" : att?.url || "",
                           size: typeof att?.size === "number" ? att.size : null
                         };
                         attachments.push(info);
@@ -12892,6 +12942,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                                         const saveOne = ({ info, url, size }, index) =>
                                           new Promise((resolve) => {
                         try {
+                          if (info.external) {
+                            info.error = "Not saved: the attachment is only a link to a file or web address, not part of the message (detached attachment or feed enclosure)";
+                            resolve();
+                            return;
+                          }
                           if (!url) {
                             info.error = "Missing attachment URL";
                             resolve();
@@ -13292,14 +13347,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 };
                 // The window shows recipients decoded; decoded names with commas stay quoted
                 const mailboxes = (name, all) => formatMailboxes(parseMailboxes(header(name, all)));
-                const attachments = [];
-                for (const att of mimeMsg.allUserAttachments || []) {
-                  try {
-                    attachments.push({ url: att.url, name: att.name, contentType: att.contentType });
-                  } catch {
-                    // Skip unreadable draft attachments
-                  }
-                }
+                const { descs: attachments, external: externalAttachments } = storedAttachmentDescs(mimeMsg);
+                // Dropping the draft's attachments (keepAttachments false) never opens them
+                const externalFailure = args.keepAttachments === false ? null : attachmentFailureResult(externalAttachments, "changed");
+                if (externalFailure) return externalFailure;
                 const merged = mergeDraftFields(args, {
                   to: mailboxes("to", true),
                   cc: mailboxes("cc", true),
@@ -13642,6 +13693,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   return identityResult;
                 }
 
+                // Also in the window: Thunderbird's own forward would attach what the link names, under the
+                // attachment's name, and nothing in the window shows where it comes from
+                const { descs: origDescs, external: externalAttachments } = storedAttachmentDescs(mimeMsg);
+                const externalFailure = attachmentFailureResult(externalAttachments,
+                  composeMode === "send" ? "sent" : composeMode === "draft" ? "saved" : "opened");
+                if (externalFailure) return externalFailure;
+
                 // ForwardInline only passes the format flag through when it is
                 // Default or OppositeOfDefault -- HTML/PlainText are ignored and
                 // the identity's compose pref always wins. resolveComposeFormat
@@ -13666,16 +13724,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
                   composeFields.body = buildForwardBody(body, isHtml, fwdUseHtml, { msgHdr, mimeMsg, identity: msgComposeParams.identity });
 
-                  const origDescs = [];
-                  if (mimeMsg && mimeMsg.allUserAttachments) {
-                    for (const att of mimeMsg.allUserAttachments) {
-                      try {
-                        origDescs.push({ url: att.url, name: att.name, contentType: att.contentType });
-                      } catch {
-                        // Skip unreadable original attachments
-                      }
-                    }
-                  }
                   const allDescs = [...origDescs, ...fileDescs];
 
                   if (composeMode === "draft") {
@@ -13724,6 +13772,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (result.success) {
                   const msg = "Forward window opened";
                   result.message = msg;
+                  if (!mimeMsg) result.warning = "The original message could not be read, so its attachments were not checked: review them in the window before sending";
                 }
                 return result;
               } catch (e) {
