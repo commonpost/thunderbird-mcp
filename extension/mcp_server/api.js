@@ -2297,6 +2297,8 @@ function legacySearchPage(rows, { offset, limit, incomplete }) {
 const DEFAULT_GET_MESSAGE_BODY_CHARS = 20000;
 const DEFAULT_GET_MESSAGES_BODY_CHARS = 4000;
 const MAX_BODY_CHARS = 200000;
+// Messages per getMessages call with headersOnly (no body is parsed)
+const MAX_HEADERS_ONLY_MESSAGES = 200;
 
 // Page body (or rawSource) of a getMessage result; error results pass through. Base64 pages start and end on
 // 4-character groups, so each page decodes on its own.
@@ -4400,6 +4402,66 @@ function withRecipientWarning(result, to, cc, bcc) {
   return { ...result, warning: result.warning ? `${result.warning} ${warning}` : warning };
 }
 
+// BEGIN DRY RUN COMPOSE
+// Bytes of a string in UTF-8, without TextEncoder (also counts a lone surrogate as the 3 bytes of U+FFFD).
+function utf8ByteLength(str) {
+  const s = String(str ?? "");
+  let bytes = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) bytes += 1;
+    else if (c < 0x800) bytes += 2;
+    else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length && (s.charCodeAt(i + 1) & 0xFC00) === 0xDC00) {
+      bytes += 4;
+      i++;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+// Size of the message on the wire, roughly: headers, the body, and each attachment in base64 lines of 76
+// characters plus CRLF, with its MIME part headers. An estimate, not what Thunderbird will produce to the byte.
+function estimateMessageBytes(headerText, bodyBytes, attachmentSizes) {
+  let total = utf8ByteLength(headerText) + 400 + Math.ceil(bodyBytes * 1.05);
+  for (const size of attachmentSizes) {
+    const encoded = Math.ceil(size / 3) * 4;
+    total += encoded + Math.ceil(encoded / 76) * 2 + 300;
+  }
+  return total;
+}
+
+// Result of sendMail with dryRun: what the call would do, or the error it would return, without the error field
+// (the dry run itself succeeded). `largeMessageBytes` is Thunderbird's mailnews.message_warning_size (0 = off).
+function dryRunComposeResult(details, largeMessageBytes = 0) {
+  if (details.error) {
+    return { dryRun: true, wouldSucceed: false, refusal: details.error, note: "Nothing was sent, saved or opened" };
+  }
+  const { bodyBytes, ...shown } = details;
+  const headerText = ["from", "to", "cc", "bcc", "replyTo", "subject"].map(k => shown[k] || "").join("\n");
+  const estimatedBytes = estimateMessageBytes(headerText, bodyBytes || 0, (shown.attachments || []).map(a => a.size || 0));
+  const result = { dryRun: true, wouldSucceed: true, ...shown, estimatedBytes };
+  for (const k of ["cc", "bcc", "replyTo"]) if (!result[k]) delete result[k];
+  if (largeMessageBytes > 0 && estimatedBytes > largeMessageBytes) {
+    result.warning = `About ${estimatedBytes} bytes: above Thunderbird's large-message size (${largeMessageBytes}); some servers refuse messages this large`;
+  }
+  result.note = "Nothing was sent, saved or opened";
+  return result;
+}
+// END DRY RUN COMPOSE
+
+// getMessages with headersOnly: the headers it returns, and the longest value kept
+const MESSAGE_HEADER_FIELDS = [
+  ["messageId", "message-id"], ["date", "date"], ["from", "from"], ["sender", "sender"], ["replyTo", "reply-to"],
+  ["to", "to"], ["cc", "cc"], ["bcc", "bcc"], ["subject", "subject"], ["inReplyTo", "in-reply-to"],
+  ["references", "references"], ["listId", "list-id"], ["listUnsubscribe", "list-unsubscribe"],
+  ["listUnsubscribePost", "list-unsubscribe-post"], ["autoSubmitted", "auto-submitted"],
+];
+const MAX_HEADER_VALUE_CHARS = 2000;
+
+function clampHeaderValue(value) {
+  return value.length > MAX_HEADER_VALUE_CHARS ? `${value.slice(0, MAX_HEADER_VALUE_CHARS)}... (truncated)` : value;
+}
+
 const DIRECT_SEND_BLOCKED_ERROR = "User preference blocks direct sending (mode \"send\" or skipReview). Use mode \"draft\" to save a draft, or \"window\" (the default) to open a review window.";
 
 const DRAFT_TOOL_DISABLED_ERROR = "mode \"draft\" saves through the saveDraft tool, which is disabled in the add-on settings. Use mode \"window\" (the default) to open a review window, or ask the user to enable saveDraft.";
@@ -5790,6 +5852,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             format: { type: "string", enum: ["objects", "table"], description: "Response format: 'objects' (default, existing array of folder objects) or 'table' ({ columns, rows } compact form)" },
             favoritesOnly: { type: "boolean", description: "If true, return only folders the user has marked as favorites in Thunderbird (default: false). Useful for finding the folders that matter without listing hundreds." },
             savedSearches: { type: "boolean", description: "If true, return only saved searches (virtual folders) with their folders and conditions" },
+            refresh: { type: "boolean", description: "With folderPath: first fetch its new mail from the server (waits up to 20 s); returns { refresh, folders }" },
           },
           required: [],
         },
@@ -5865,8 +5928,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             messages: {
               type: "array",
               minItems: 1,
-              maxItems: getMessagesLimit,
-              description: `Messages to read, max ${getMessagesLimit}. Each item is { messageId, folderPath }.`,
+              maxItems: Math.max(getMessagesLimit, MAX_HEADERS_ONLY_MESSAGES),
+              description: `Messages to read, max ${getMessagesLimit} (${MAX_HEADERS_ONLY_MESSAGES} with headersOnly). Each item is { messageId, folderPath }.`,
               items: {
                 type: "object",
                 properties: {
@@ -5882,6 +5945,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             rawSource: { type: "boolean", description: "If true, return raw RFC 2822 source (decoded text, rawCharset) for each message instead of parsed body fields" },
             rawEncoding: { type: "string", enum: ["text", "base64"], default: "text", description: "With rawSource: 'base64' returns the exact bytes instead of decoded text" },
             maxBodyChars: { type: "integer", minimum: 1, maximum: MAX_BODY_CHARS, default: DEFAULT_GET_MESSAGES_BODY_CHARS, description: "Max body characters per message; read the rest with getMessage bodyOffset" },
+            headersOnly: { type: "boolean", description: "Only headers as received (From, To, Cc, Subject, Date, Message-ID, References, List-*) and flags; no body" },
           },
           required: ["messages"],
         },
@@ -5902,6 +5966,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             isHtml: { type: "boolean", description: "Set to true if body contains HTML markup (default: false)" },
             from: { type: "string", description: "Sender identity (email address or identity ID from listAccounts)" },
             skipReview: { type: "boolean", description: "Request direct sending without a compose window. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)." },
+            dryRun: { type: "boolean", description: "Check only: report sender, recipients (with automatic Cc/Bcc), attachments and size, or the error; sends nothing" },
             attachments: {
               type: "array",
               maxItems: MAX_ATTACHMENTS_PER_MESSAGE,
@@ -7359,7 +7424,80 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * Lists all folders (optionally limited to a single account).
              * Depth is 0 for root children, increasing for subfolders.
              */
-            function listFolders(accountId, folderPath, format, favoritesOnly, savedSearches) {
+            // BEGIN FOLDER REFRESH
+            // Below the bridge's 30 s request timeout, so that the client reads the outcome rather than the bridge's error
+            const FOLDER_REFRESH_TIMEOUT_MS = 20000;
+
+            /**
+             * Asks Thunderbird to fetch new mail of `folder` from its server, as clicking the folder does, and waits
+             * up to FOLDER_REFRESH_TIMEOUT_MS. IMAP reports the end of its update; other server types (Exchange,
+             * Graph, news, feeds, add-on providers) end with FolderLoaded. Local folders have no server to ask.
+             * Resolves { status, newMessages, ms }: "done", "timeout" (still running, counts may still change),
+             * "failed" (with error), "offline" or "local".
+             */
+            function refreshFolderFromServer(folder) {
+              const started = Date.now();
+              const type = folder.server?.type || "";
+              if (type === "none" || type === "pop3") return Promise.resolve({ status: "local", newMessages: 0, ms: 0 });
+              if (Services.io.offline) return Promise.resolve({ status: "offline", newMessages: 0, ms: 0 });
+              const total = () => {
+                try {
+                  return folder.getTotalMessages(false);
+                } catch {
+                  return 0;
+                }
+              };
+              const before = total();
+              let imapFolder = null;
+              try {
+                imapFolder = folder.QueryInterface(Ci.nsIMsgImapMailFolder);
+              } catch {}
+              return new Promise((resolve) => {
+                let settled = false;
+                const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+                const listener = {
+                  QueryInterface: ChromeUtils.generateQI(["nsIFolderListener"]),
+                  onFolderEvent(item, event) {
+                    // IMAP can report the folder loaded before its update ends: its URL listener decides
+                    if (!imapFolder && event === "FolderLoaded" && item && item.URI === folder.URI) settle("done");
+                  },
+                };
+                const settle = (status, error) => {
+                  if (settled) return;
+                  settled = true;
+                  timer.cancel();
+                  try {
+                    MailServices.mailSession.RemoveFolderListener(listener);
+                  } catch (e) {
+                    console.warn("commonpost-mcp: could not remove the folder listener:", e);
+                  }
+                  const result = { status, newMessages: Math.max(0, total() - before), ms: Date.now() - started };
+                  if (error) result.error = error;
+                  resolve(result);
+                };
+                try {
+                  MailServices.mailSession.AddFolderListener(listener, Ci.nsIFolderListener.event);
+                  timer.initWithCallback({ notify: () => settle("timeout") }, FOLDER_REFRESH_TIMEOUT_MS, Ci.nsITimer.TYPE_ONE_SHOT);
+                  if (imapFolder) {
+                    imapFolder.updateFolderWithListener(null, {
+                      QueryInterface: ChromeUtils.generateQI(["nsIUrlListener"]),
+                      OnStartRunningUrl() {},
+                      OnStopRunningUrl(_url, status) {
+                        if (Components.isSuccessCode(status)) settle("done");
+                        else settle("failed", `Thunderbird could not update the folder (status 0x${(status >>> 0).toString(16)})`);
+                      },
+                    });
+                  } else {
+                    folder.updateFolder(null);
+                  }
+                } catch (e) {
+                  settle("failed", String(e && e.message || e));
+                }
+              });
+            }
+            // END FOLDER REFRESH
+
+            async function listFolders(accountId, folderPath, format, favoritesOnly, savedSearches, refresh) {
               const results = [];
               const outputFormat = format == null ? "objects" : format;
               const folderKeys = ["name", "path", "type", "accountId", "totalMessages", "unreadMessages", "depth"];
@@ -7369,6 +7507,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
 
               if (savedSearches === true) return listVirtualFolders(accountId);
+              if (refresh === true && !folderPath) {
+                return { error: "refresh needs folderPath: it updates one folder from its server (pass the folder URI from listFolders)" };
+              }
 
               function formatFolderResults() {
                 // Favorites are filtered after the walk so that a favorited
@@ -7441,8 +7582,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 const accountKey = folder.server
                   ? (MailServices.accounts.findAccountForServer(folder.server)?.key || "unknown")
                   : "unknown";
+                const refreshed = refresh === true ? await refreshFolderFromServer(folder) : null;
                 walkFolder(folder, accountKey, 0);
-                return formatFolderResults();
+                const listed = formatFolderResults();
+                return refreshed ? { refresh: refreshed, folders: listed } : listed;
               }
 
               if (accountId) {
@@ -7799,7 +7942,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return out;
             }
 
-            function filePathsToAttachDescs(filePaths) {
+            function filePathsToAttachDescs(filePaths, { dryRun = false } = {}) {
               const descs = [];
               const failed = [];
               // Decoded inline-base64 attachments this call wrote to disk
@@ -7996,6 +8139,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     }
                     if (bytes.length > MAX_TOTAL_ATTACHMENT_BYTES - totalAttachmentBytes) {
                       failed.push(`${entry.name} (exceeds ${MAX_TOTAL_ATTACHMENT_BYTES / 1024 / 1024}MB aggregate attachment limit)`);
+                      continue;
+                    }
+                    if (dryRun) {
+                      // Checked, never written: a dry run leaves nothing on disk
+                      descs.push({ name: entry.name || entry.filename, size: bytes.length, contentType: entry.contentType || "" });
+                      totalAttachmentBytes += bytes.length;
                       continue;
                     }
                     const tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
@@ -13114,6 +13263,128 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	              });
 	            }
 
+            // BEGIN MESSAGE HEADERS
+            /**
+             * getMessages with headersOnly: the outer headers of each message exactly as they arrived (never what
+             * decrypting a protected-header message wrote back into the database), RFC 2047 decoded, and its flags.
+             * No body is parsed. Without a local copy (IMAP not kept offline) the database's own fields are used.
+             */
+            async function getMessageHeaders(messages) {
+              if (typeof messages === "string") {
+                try { messages = JSON.parse(messages); } catch { /* leave as-is */ }
+              }
+              if (!Array.isArray(messages) || messages.length === 0) {
+                return { error: "messages must be a non-empty array of { messageId, folderPath } objects" };
+              }
+              if (messages.length > MAX_HEADERS_ONLY_MESSAGES) {
+                return { error: `getMessages with headersOnly accepts at most ${MAX_HEADERS_ONLY_MESSAGES} messages per call` };
+              }
+              const results = [];
+              const rebuildDeadline = Date.now() + FOLDER_SUMMARY_REBUILD_TIMEOUT_MS;
+              for (let i = 0; i < messages.length; i++) {
+                const ref = messages[i];
+                const messageId = ref && typeof ref === "object" ? ref.messageId : undefined;
+                const folderPath = ref && typeof ref === "object" ? ref.folderPath : undefined;
+                if (typeof messageId !== "string" || !messageId || typeof folderPath !== "string" || !folderPath) {
+                  results.push({ index: i, error: "Each item needs a non-empty messageId and folderPath" });
+                  continue;
+                }
+                const prepared = await prepareFolderDatabase(folderPath, rebuildDeadline);
+                if (prepared?.error) {
+                  results.push({ index: i, messageId, folderPath, error: prepared.error });
+                  continue;
+                }
+                const found = findMessage(messageId, folderPath);
+                if (found.error) {
+                  results.push({ index: i, messageId, folderPath, error: found.error });
+                  continue;
+                }
+                results.push({ index: i, messageId, folderPath, ...messageHeadersOf(found.msgHdr) });
+              }
+              const failed = results.filter(result => result.error).length;
+              return { messages: results, requested: messages.length, succeeded: results.length - failed, failed };
+            }
+
+            // The raw header block of a message: read until the blank line that ends it, at most `maxBytes`, so a
+            // large message is not read whole. Null when the message cannot be read (no local copy) or the block
+            // does not end within the limit.
+            function readRawHeaderBlock(msgHdr, maxBytes = 256 * 1024) {
+              let stream = null;
+              try {
+                if (!msgHdr.folder) return null;
+                stream = msgHdr.folder.getMsgInputStream(msgHdr, {});
+                let raw = "";
+                while (raw.length < maxBytes) {
+                  let available;
+                  try {
+                    available = stream.available();
+                  } catch {
+                    break;
+                  }
+                  if (available <= 0) break;
+                  const chunk = NetUtil.readInputStreamToString(stream, Math.min(available, MESSAGE_STREAM_READ_CHUNK_BYTES, maxBytes - raw.length));
+                  if (!chunk) break;
+                  raw += chunk;
+                  const end = raw.search(/\r?\n\r?\n/);
+                  if (end >= 0) return raw.slice(0, end);
+                }
+                // A message made only of headers
+                return raw && raw.length < maxBytes ? raw : null;
+              } catch {
+                return null;
+              } finally {
+                if (stream) try { stream.close(); } catch { /* ignore */ }
+              }
+            }
+
+            function messageHeadersOf(msgHdr) {
+              const block = readRawHeaderBlock(msgHdr);
+              const root = block === null ? null : { headers: parseRawMimeHeaders(block) };
+              const headers = {};
+              let source = "message";
+              if (root) {
+                const decodeBytes = (value) => {
+                  // Raw header bytes: UTF-8 when valid (RFC 6532), else kept as read
+                  try {
+                    return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(value, c => c.charCodeAt(0) & 0xFF));
+                  } catch {
+                    return value;
+                  }
+                };
+                for (const [key, name] of MESSAGE_HEADER_FIELDS) {
+                  const values = root.headers[name] || [];
+                  if (!values.length) continue;
+                  const joined = values.map(v => decodeHeaderValue(decodeBytes(v))).join(name === "references" ? " " : ", ");
+                  headers[key] = clampHeaderValue(joined);
+                }
+              } else {
+                // No local copy: the database's fields
+                source = "database";
+                const set = (key, value) => { if (value) headers[key] = clampHeaderValue(String(value)); };
+                set("messageId", msgHdr.messageId ? `<${msgHdr.messageId}>` : "");
+                set("date", msgHdr.date ? new Date(msgHdr.date / 1000).toISOString() : "");
+                set("from", msgHdr.mime2DecodedAuthor || msgHdr.author);
+                set("to", msgHdr.mime2DecodedRecipients || msgHdr.recipients);
+                set("cc", msgHdr.ccList);
+                set("references", msgHdr.getStringProperty("references"));
+                // As outerWireSubject falls back when the raw message cannot be read
+                set("subject", msgHdr.mime2DecodedSubject || msgHdr.subject);
+              }
+              let tags = [];
+              try {
+                tags = (msgHdr.getStringProperty("keywords") || "").split(/\s+/).filter(Boolean);
+              } catch {}
+              return {
+                headers,
+                headerSource: source,
+                read: !!msgHdr.isRead,
+                flagged: !!msgHdr.isFlagged,
+                ...(tags.length ? { tags } : {}),
+                size: msgHdr.messageSize,
+              };
+            }
+            // END MESSAGE HEADERS
+
             async function getMessages(messages, saveAttachments, bodyFormat, rawSource, maxBodyChars, rawEncoding) {
               if (typeof messages === "string") {
                 try { messages = JSON.parse(messages); } catch { /* leave as-is */ }
@@ -13184,10 +13455,19 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * 2. Encode non-ASCII as HTML entities - compose window has charset issues
              *    with emojis/unicode even with <meta charset="UTF-8">
              */
-            function composeMail(to, subject, body, cc, bcc, isHtml, from, attachments, skipReview) {
+            function composeMail(to, subject, body, cc, bcc, isHtml, from, attachments, skipReview, dryRun) {
               try {
+                // A dry run reports what this call would do, or the error it would return, and does nothing
+                const refuse = (error) => dryRun ? dryRunComposeResult({ error }) : { error };
+                const largeMessageBytes = () => {
+                  try {
+                    return Math.max(0, Services.prefs.getIntPref("mailnews.message_warning_size", 0));
+                  } catch {
+                    return 0;
+                  }
+                };
                 if (skipReview && isSkipReviewBlocked()) {
-                  return { error: "User preference blocks skipReview. Retry with skipReview: false (or omitted) to open the review window instead." };
+                  return refuse("User preference blocks skipReview. Retry with skipReview: false (or omitted) to open the review window instead.");
                 }
                 const msgComposeParams = Cc["@mozilla.org/messengercompose/composeparams;1"]
                   .createInstance(Ci.nsIMsgComposeParams);
@@ -13204,7 +13484,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 msgComposeParams.composeFields = composeFields;
 
                 const identityResult = setComposeIdentity(msgComposeParams, from, null);
-                if (identityResult && identityResult.error) return identityResult;
+                if (identityResult && identityResult.error) return refuse(identityResult.error);
 
                 // Match body shape and format to caller intent / identity pref.
                 // When the resolved mode is plain, ship a plain body -- the HTML
@@ -13221,11 +13501,32 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   composeFields.body = body || "";
                 }
 
-                const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(attachments);
+                const { descs: fileDescs, failed: failedPaths } = filePathsToAttachDescs(attachments, { dryRun: !!dryRun });
                 const attachmentFailure = attachmentFailureResult(failedPaths, "sent or opened");
-                if (attachmentFailure) return attachmentFailure;
+                if (attachmentFailure) return refuse(attachmentFailure.error);
+
+                if (dryRun) {
+                  const identity = msgComposeParams.identity;
+                  const direct = !!skipReview;
+                  // The window adds the identity's automatic Cc and Bcc, a direct send does too
+                  const fields = Cc["@mozilla.org/messengercompose/composefields;1"].createInstance(Ci.nsIMsgCompFields);
+                  setDirectSendRecipients(fields, identity, to, cc, bcc);
+                  const finalBody = newMessageBody(body, isHtml, useHtml, identity);
+                  return dryRunComposeResult({
+                    action: direct ? "send now, without a review window" : "open a review window; nothing is sent until the user sends it",
+                    from: identity?.email ? (identity.fullName ? `"${identity.fullName}" <${identity.email}>` : identity.email) : "",
+                    identityId: identity?.key || "",
+                    to: fields.to, cc: fields.cc, bcc: fields.bcc, replyTo: fields.replyTo,
+                    subject: subject || "",
+                    format: useHtml ? "html" : "plain",
+                    attachments: fileDescs.map(d => ({ name: d.name, size: d.size, ...(d.contentType ? { contentType: d.contentType } : {}) })),
+                    bodyBytes: utf8ByteLength(finalBody),
+                  }, largeMessageBytes());
+                }
 
                 if (skipReview) {
+                  // The identity's automatic Cc / Bcc / Reply-To, as in the window and in a direct reply or forward
+                  setDirectSendRecipients(composeFields, msgComposeParams.identity, to, cc, bcc);
                   // The window adds the signature itself; a direct send gets it here
                   composeFields.body = newMessageBody(body, isHtml, useHtml, msgComposeParams.identity);
                   return sendMessageDirectly(composeFields, msgComposeParams.identity, fileDescs, null, Ci.nsIMsgCompType.New, Ci.nsIMsgCompDeliverMode.Now, useHtml ? "text/html" : "text/plain").then(result => {
@@ -15785,7 +16086,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "listAccounts":
                   return listAccounts();
                 case "listFolders":
-                  return listFolders(args.accountId, args.folderPath, args.format, args.favoritesOnly, args.savedSearches);
+                  return await listFolders(args.accountId, args.folderPath, args.format, args.favoritesOnly, args.savedSearches, args.refresh);
                 case "searchMessages":
                   return await searchMessages({ ...args, query: args.query || "" });
                 case "getMessage":
@@ -15794,6 +16095,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     args.bodyOffset, args.maxBodyChars, DEFAULT_GET_MESSAGE_BODY_CHARS
                   );
                 case "getMessages":
+                  if (args.headersOnly === true) return await getMessageHeaders(args.messages);
                   return await getMessages(args.messages, args.saveAttachments, args.bodyFormat, args.rawSource, args.maxBodyChars, args.rawEncoding);
                 case "searchContacts":
                   return searchContacts(args.query || "", args.maxResults, args.format);
@@ -15824,7 +16126,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "updateTask":
                   return await updateTask(args.taskId, args.calendarId, args.title, args.dueDate, args.description, args.completed, args.percentComplete, args.priority);
                 case "sendMail":
-                  return withRecipientWarning(await composeMail(args.to, args.subject, args.body, args.cc, args.bcc, args.isHtml, args.from, args.attachments, args.skipReview), args.to, args.cc, args.bcc);
+                  return withRecipientWarning(await composeMail(args.to, args.subject, args.body, args.cc, args.bcc, args.isHtml, args.from, args.attachments, args.skipReview, args.dryRun), args.to, args.cc, args.bcc);
                 case "saveDraft":
                   if (args.draftId) return withRecipientWarning(await updateDraft(args), args.to, args.cc, args.bcc);
                   return withRecipientWarning(await saveDraft(args.to, args.subject, args.body, args.cc, args.bcc, args.isHtml, args.from, args.attachments), args.to, args.cc, args.bcc);

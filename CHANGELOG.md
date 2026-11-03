@@ -19,6 +19,25 @@ project is kept in this repository.
   encrypted, so it was listed with the subject stored in Thunderbird's database while encrypted content was not
   allowed. A header block larger than 256 KiB now counts as encrypted, and the subject of a message known to be
   encrypted is never taken from the database.
+### Added
+
+- `sendMail` with `dryRun: true` reports what the call would do (open a review window or send directly, the sender,
+  the recipients with the identity's automatic Cc and Bcc, the attachments and an estimated size) or the error it
+  would return, without sending, saving or opening anything. Decoded attachments are checked but never written. A
+  file path the bridge refuses comes back as the same error as for a real `sendMail`.
+- `listFolders` with `refresh: true` and a `folderPath` first asks the server for that folder's new mail (IMAP,
+  Exchange, news, feeds), as clicking the folder in Thunderbird does, waits up to 20 s and returns
+  `{ refresh: { status, newMessages }, folders }`. Local folders report `status: "local"`.
+- `getMessages` with `headersOnly: true` returns, for up to 200 messages, only the headers as they arrived
+  (Message-ID, Date, From, To, Cc, Subject, In-Reply-To, References, List-*), decoded, and the read/flagged/tags
+  flags. No body is parsed, and a large message is not read past its headers.
+
+### Changed
+
+- A direct `sendMail` (`skipReview`) now adds the identity's automatic Cc, Bcc and Reply-To, as the compose window,
+  and direct replies and forwards, already did.
+- The add-on's HTTP server closes a connection whose request is not fully received within 30 s. Handling a request
+  (a direct send can take minutes) is not limited.
 
 ## [0.17.4] - 2026-11-02
 
