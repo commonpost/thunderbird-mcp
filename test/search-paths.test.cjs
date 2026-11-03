@@ -21,12 +21,16 @@ function region(name) {
 
 const FLAGS = { Trash: 0x100, Junk: 0x40000000, Drafts: 0x400, Templates: 0x400000, Queue: 0x800, Inbox: 0x1000 };
 const HAS_RE = 0x10;
+const ATTACHMENT = 0x10000000;
 const DAY = 86400000;
 
 function folder(uri, flags = 0) {
   const f = {
     URI: uri, flags, hdrs: [], hasSubFolders: false, subFolders: [], localizedName: uri.split("/").pop(),
     isSpecialFolder: (mask) => (f.flags & mask) !== 0,
+    server: { type: "none" }, offlineKeys: null, reads: [],
+    hasMsgOffline: key => !f.offlineKeys || f.offlineKeys.includes(key),
+    getMsgInputStream: (h) => { f.reads.push(h.messageId); return { raw: h._raw, close() {} }; },
   };
   f.msgDatabase = {
     enumerateMessages: () => f.hdrs.values(),
@@ -37,14 +41,14 @@ function folder(uri, flags = 0) {
 
 let nextKey = 1;
 function hdr(target, { id, subject, author, to = "me@lab.test", cc = "", refs = [], daysAgo = 1, re = false, preview = "",
-  encrypted = false, wireSubject }) {
+  encrypted = false, wireSubject, raw }) {
   const h = {
     messageId: id, messageKey: nextKey++, subject, mime2DecodedSubject: subject, author, mime2DecodedAuthor: author,
     recipients: to, mime2DecodedRecipients: to, ccList: cc, bccList: "", date: (Date.now() - daysAgo * DAY) * 1000,
-    flags: re ? HAS_RE : 0, isRead: false, isFlagged: false, threadId: 1, numReferences: refs.length,
+    flags: (re ? HAS_RE : 0) | (raw ? ATTACHMENT : 0), isRead: false, isFlagged: false, threadId: 1, numReferences: refs.length,
     getStringReference: (i) => `<${refs[i]}>`,
     getStringProperty: (name) => (name === "preview" ? preview : ""),
-    folder: target, _encrypted: encrypted, _wireSubject: wireSubject,
+    folder: target, _encrypted: encrypted, _wireSubject: wireSubject, _raw: raw, messageSize: raw ? raw.length : 0,
   };
   target.hdrs.push(h);
   return h;
@@ -70,7 +74,10 @@ function world({ restricted = true, encryptedAllowed = false } = {}) {
   const accountOf = f => accounts.find(a => a.folders.includes(f));
   const byUri = uri => accounts.flatMap(a => a.folders).find(f => f.URI === uri);
   const sandbox = {
-    Ci: { nsMsgFolderFlags: FLAGS, nsMsgMessageFlags: { HasRe: HAS_RE } },
+    Ci: { nsMsgFolderFlags: FLAGS, nsMsgMessageFlags: { HasRe: HAS_RE, Attachment: ATTACHMENT } },
+    Uint8Array, TextDecoder, atob,
+    Services: { tm: { dispatchToMainThread: fn => setImmediate(fn) } },
+    readMessageStreamFully: (stream) => stream.raw,
     GlodaMsgSearcher: null,
     normalizeMessageIdForDedup: v => String(v || "").trim().replace(/^<|>$/g, ""),
     dedupeSearchMessageResults: rows => rows,
@@ -100,11 +107,14 @@ function world({ restricted = true, encryptedAllowed = false } = {}) {
   };
   vm.createContext(sandbox);
   vm.runInContext(`${region("MESSAGE SEARCH HELPERS")}
+${region("ENCRYPTED MESSAGE HELPERS")}
+${region("RAW MIME PARSING HELPERS")}
+${region("ATTACHMENT SEARCH HELPERS")}
 ${region("SEARCH MESSAGES")}
 ${region("RECENT MESSAGES")}
 this.searchMessages = searchMessages;
 this.getRecentMessages = getRecentMessages;`, sandbox);
-  return { sandbox, inbox, sent, trash, otherInbox };
+  return { sandbox, inbox, sent, trash, otherInbox, otherRoot };
 }
 
 const plain = v => JSON.parse(JSON.stringify(v));
@@ -213,5 +223,73 @@ describe("own addresses for conversation linking", () => {
     vm.createContext(sandbox);
     vm.runInContext(`${region("OWN ADDRESSES")}\nthis.getOwnEmails = getOwnEmails;`, sandbox);
     assert.deepEqual([...sandbox.getOwnEmails()], ["me@lab.test"]);
+  });
+});
+
+describe("attachment search (attachmentName / attachmentType)", () => {
+  const pdf = name => `Content-Type: multipart/mixed; boundary="b"\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nhi\r\n`
+    + `--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename="${name}"\r\n\r\n%PDF\r\n--b--\r\n`;
+  const encrypted = `Content-Type: multipart/mixed; boundary="b"\r\n\r\n--b\r\nContent-Type: application/pdf\r\n`
+    + `Content-Disposition: attachment; filename="annex.pdf"\r\n\r\n%PDF\r\n--b\r\nContent-Type: multipart/encrypted; boundary="e"\r\n\r\n`
+    + `--e\r\nContent-Type: application/pgp-encrypted\r\n\r\nVersion: 1\r\n--e--\r\n--b--\r\n`;
+  function seed(options) {
+    const w = world(options);
+    hdr(w.inbox, { id: "plain@lab.test", subject: "Quarterly merger plan", author: "Ann <ann@acme.test>", raw: pdf("merger.pdf"), daysAgo: 3 });
+    // Its stored subject is the decrypted one (OpenPGP protected headers, opened once).
+    hdr(w.inbox, { id: "secret@lab.test", subject: "Quarterly merger plan", author: "Bob <bob@acme.test>", raw: encrypted, daysAgo: 2 });
+    hdr(w.inbox, { id: "none@lab.test", subject: "Quarterly merger plan", author: "Ann <ann@acme.test>", daysAgo: 1 });
+    hdr(w.otherInbox, { id: "other@lab.test", subject: "Quarterly merger plan", author: "Ann <ann@acme.test>", raw: pdf("merger.pdf"), daysAgo: 1 });
+    return w;
+  }
+
+  it("lists the matching attachments and reads only flagged messages", async () => {
+    const w = seed();
+    const res = plain(await w.sandbox.searchMessages({ query: "", attachmentType: "application/pdf" }));
+    assert.deepEqual(res.messages.map(m => [m.id, m.attachments]), [["plain@lab.test", [{ name: "merger.pdf", contentType: "application/pdf", size: 4 }]]]);
+    assert.deepEqual(res.attachmentSearch, { checked: 1, skipped: { encrypted: 1 } });
+    assert.equal(res.incomplete, undefined);
+    assert.deepEqual(w.inbox.reads.sort(), ["plain@lab.test", "secret@lab.test"]);
+  });
+
+  it("leaves an encrypted message out and, with query words, does not count it", async () => {
+    const w = seed();
+    const res = plain(await w.sandbox.searchMessages({ query: "merger", attachmentName: "annex" }));
+    assert.deepEqual(res.messages, []);
+    assert.deepEqual(res.attachmentSearch, { checked: 1 });
+    assert.equal(JSON.stringify(res).includes("secret@lab.test"), false);
+    const count = plain(await w.sandbox.searchMessages({ query: "merger", attachmentName: "pdf", countOnly: true }));
+    assert.deepEqual(count, { count: 1, attachmentSearch: { checked: 1 } });
+    // Control: with the option on, the encrypted message is checked on its structure (nothing decrypted)
+    const allowed = plain(await seed({ encryptedAllowed: true }).sandbox.searchMessages({ query: "merger", attachmentName: "annex" }));
+    assert.deepEqual(allowed.messages.map(m => m.id), ["secret@lab.test"]);
+  });
+
+  it("never reads the restricted account and refuses its folder", async () => {
+    const w = seed();
+    const res = plain(await w.sandbox.searchMessages({ query: "", attachmentName: "merger" }));
+    assert.deepEqual(res.messages.map(m => m.id), ["plain@lab.test"]);
+    assert.deepEqual(w.otherInbox.reads, []);
+    assert.match(plain(await w.sandbox.searchMessages({ query: "", attachmentName: "x", folderPath: w.otherInbox.URI })).error, /not accessible/);
+    const open = seed({ restricted: false });
+    assert.deepEqual(ids(await open.sandbox.searchMessages({ query: "", attachmentName: "merger" })), ["other@lab.test", "plain@lab.test"]);
+  });
+
+  it("does not read a message without a local copy and reports it", async () => {
+    const w = seed();
+    w.inbox.server = { type: "imap" };
+    w.inbox.offlineKeys = [];
+    const res = plain(await w.sandbox.searchMessages({ query: "", attachmentName: "merger" }));
+    assert.deepEqual(res.messages, []);
+    assert.deepEqual(res.attachmentSearch, { checked: 0, skipped: { notOffline: 2 } });
+    assert.equal(res.incomplete, true);
+    assert.deepEqual(w.inbox.reads, []);
+  });
+
+  it("rejects bad values and combinations", () => {
+    const { sandbox } = seed();
+    assert.match(sandbox.searchMessages({ query: "", attachmentType: "*/*" }).error, /MIME type or prefix/);
+    assert.match(sandbox.searchMessages({ query: "", attachmentName: "x", threadOf: { messageId: "a", folderPath: "b" } }).error, /threadOf/);
+    assert.match(sandbox.searchMessages({ query: "x", attachmentName: "x", searchBody: true }).error, /searchBody/);
+    assert.match(sandbox.searchMessages({ query: "", attachmentName: "x", format: "legacy" }).error, /legacy/);
   });
 });

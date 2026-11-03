@@ -6,19 +6,6 @@ project is kept in this repository.
 
 ## [Unreleased]
 
-## [0.17.5] - 2026-11-03
-
-- **Security fix:** an encrypted message with a long header block is recognized as encrypted again in search results
-  and listings. Updating is recommended.
-- **The bridge does not change in this release:** nothing to update in your MCP clients if their bridge is 0.17.1.
-
-### Security
-
-- `searchMessages`, `getRecentMessages` and the other listings read only the header block of a message to tell
-  whether it is encrypted. Before, a message whose source was larger than the amount read could be counted as not
-  encrypted, so it was listed with the subject stored in Thunderbird's database while encrypted content was not
-  allowed. A header block larger than 256 KiB now counts as encrypted, and the subject of a message known to be
-  encrypted is never taken from the database.
 ### Added
 
 - `sendMail` with `dryRun: true` reports what the call would do (open a review window or send directly, the sender,
@@ -54,6 +41,14 @@ project is kept in this repository.
   addresses, type `work`, `home` or `other`, at most one `primary`, otherwise the first), which replaces the list:
   an address already on the card keeps its vCard entry and parameters, the primary gets `PREF=1`, and no other vCard
   property is touched. `email` alone still changes only the primary address.
+- `searchMessages` finds messages by attachment: `attachmentName` (part of a filename, any case) and `attachmentType`
+  (a MIME type such as `application/pdf`, or a prefix such as `image/`), combined with the query, folder, date and
+  other filters. Each row lists its matching attachments (`name`, `contentType`, `size`), attached messages and the
+  attachments inside them included. Only the messages Thunderbird marks as having attachments are read, from their
+  local copy and only for their MIME structure: nothing is downloaded from the server or decrypted, and while reading
+  encrypted messages is not allowed an encrypted message is skipped. At most 500 messages of 16 MiB each are read
+  per call; `attachmentSearch` gives how many were checked and counts the others by reason (`encrypted`, `tooLarge`,
+  `notOffline`, `unreadable`, `limitReached`), and `incomplete: true` is set when some could not be checked.
 
 ### Changed
 
@@ -70,6 +65,20 @@ project is kept in this repository.
   and direct replies and forwards, already did.
 - The add-on's HTTP server closes a connection that sends nothing of its request for 30 s, or has not sent all of
   it after 5 minutes. Handling a request (a direct send can take minutes) is not limited.
+
+## [0.17.5] - 2026-11-03
+
+- **Security fix:** an encrypted message with a long header block is recognized as encrypted again in search results
+  and listings. Updating is recommended.
+- **The bridge does not change in this release:** nothing to update in your MCP clients if their bridge is 0.17.1.
+
+### Security
+
+- `searchMessages`, `getRecentMessages` and the other listings read only the header block of a message to tell
+  whether it is encrypted. Before, a message whose source was larger than the amount read could be counted as not
+  encrypted, so it was listed with the subject stored in Thunderbird's database while encrypted content was not
+  allowed. A header block larger than 256 KiB now counts as encrypted, and the subject of a message known to be
+  encrypted is never taken from the database.
 
 ## [0.17.4] - 2026-11-02
 

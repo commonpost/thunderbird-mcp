@@ -37,11 +37,11 @@
               "objects",
               "table"
             ],
-            "description": "Response format: 'objects' (default, existing array of folder objects) or 'table' ({ columns, rows } compact form)"
+            "description": "'objects' (default) or 'table' ({ columns, rows }, compact)"
           },
           "favoritesOnly": {
             "type": "boolean",
-            "description": "If true, return only folders the user has marked as favorites in Thunderbird (default: false). Useful for finding the folders that matter without listing hundreds."
+            "description": "If true, return only folders the user has marked as favorites in Thunderbird (default: false)"
           },
           "savedSearches": {
             "type": "boolean",
@@ -141,7 +141,7 @@
           },
           "threadOf": {
             "type": "object",
-            "description": "Return the whole conversation of this message across folders (incl. Sent), oldest first. A Re: message without threading headers joins by subject the earlier message its sender took part in (linkedBy: subject). Reads at most 10,000 headers; incomplete: true when it stopped there (narrow with folderPath)",
+            "description": "Return the whole conversation of this message across folders (incl. Sent), oldest first. A Re: message without threading headers joins by subject the earlier message its sender took part in (linkedBy: subject). Reads at most 10,000 headers, else incomplete: true (narrow with folderPath)",
             "properties": {
               "messageId": {
                 "type": "string"
@@ -163,16 +163,24 @@
               "table",
               "legacy"
             ],
-            "description": "'table' returns messages as { columns, rows } (fewer tokens for long lists). 'legacy' (deprecated, to be removed in a later release): the 0.10 output, a plain array of full rows (threadId, folder, whole preview) unless offset is passed, 50 rows by default; not with groupBy"
+            "description": "'table': messages as { columns, rows }, fewer tokens. 'legacy' (deprecated, to be removed): the 0.10 output, a plain array of full rows (threadId, folder, whole preview) unless offset is passed, 50 rows by default; not with groupBy"
           },
           "searchBody": {
             "type": "boolean",
-            "description": "Full-text search of subject, body and attachment names via the Gloda index (slower). Query: words or \"quoted phrases\", all must match, no operators; terms under 3 characters are ignored; English words match other forms (stemming), other languages such as Russian only the exact word form. IMAP needs offline sync."
+            "description": "Full-text search of subject, body and attachment names via the Gloda index (slower). Query: words or \"quoted phrases\", all must match, no operators; terms under 3 characters are ignored; English words match other forms (stemming), other languages only the exact form. IMAP needs offline sync."
           },
           "dedupByMessageId": {
             "type": "boolean",
             "default": true,
             "description": "Collapse copies of one message in several folders into one row with dupLocations"
+          },
+          "attachmentName": {
+            "type": "string",
+            "description": "Only messages with an attachment whose filename contains this (any case); rows list them"
+          },
+          "attachmentType": {
+            "type": "string",
+            "description": "Same for a MIME type or prefix ('application/pdf', 'image/'). Reads local copies, 500 at most; attachmentSearch counts skipped ones"
           }
         },
         "required": [
@@ -207,7 +215,7 @@
           },
           "includeInlineImages": {
             "type": "boolean",
-            "description": "If true, append supported inline email images as MCP image content blocks after the text result (default: false; max 1 MiB base64 per image and 4 MiB total). Images referenced by the rendered body are attempted first in document order, followed by remaining inline images in MIME order. Ignored when rawSource is true."
+            "description": "If true, append supported inline images as MCP image blocks after the text (max 1 MiB base64 each, 4 MiB total): those the body shows first, in document order, then the others in MIME order. Ignored with rawSource."
           },
           "bodyFormat": {
             "type": "string",
@@ -220,7 +228,7 @@
           },
           "rawSource": {
             "type": "boolean",
-            "description": "If true, return the full raw RFC 2822 message source (all headers + MIME parts). Useful for extracting calendar invites, S/MIME data, or debugging. Decoded as UTF-8 when valid, else by the charset of the top-level Content-Type, then of the parts, else a detected one; rawCharset names it, rawMixedCharsets lists the part charsets when they differ. Other fields (body, attachments) are omitted when this is set. Note: requires local/offline message copy; IMAP messages not cached offline may fail."
+            "description": "If true, return the full raw RFC 2822 source (all headers + MIME parts), e.g. for calendar invites, S/MIME data, debugging. Decoded as UTF-8 when valid, else by the charset of the top-level Content-Type, then of the parts, else a detected one; rawCharset names it, rawMixedCharsets lists the part charsets when they differ. Other fields (body, attachments) are omitted. Needs a local copy: IMAP messages not kept offline may fail."
           },
           "rawEncoding": {
             "type": "string",
