@@ -23,11 +23,13 @@ vm.runInContext(`${[
 ].map(region).join("\n")}
 Object.assign(this, { parseAttachmentFilter, attachmentMatchesFilter, rawMimeParameter, listRawMimeAttachments,
   rawMimeDecodedSize, scanAttachmentCandidates, attachmentSearchSummary, attachmentSearchIncomplete,
-  ATTACHMENT_SEARCH_LIMITS, ATTACHMENT_SEARCH_MAX_DEPTH });`, sandbox);
+  ATTACHMENT_SEARCH_LIMITS, ATTACHMENT_SEARCH_MAX_DEPTH, ATTACHMENT_SEARCH_MAX_PARTS, parseRawMimeEntity,
+  extractBodyPartFromRawMime, parseAttachmentPartsFromRawMime, RAW_MIME_MAX_PARTS });`, sandbox);
 const {
   parseAttachmentFilter, attachmentMatchesFilter, rawMimeParameter, listRawMimeAttachments, rawMimeDecodedSize,
   scanAttachmentCandidates, attachmentSearchSummary, attachmentSearchIncomplete, ATTACHMENT_SEARCH_LIMITS,
-  ATTACHMENT_SEARCH_MAX_DEPTH,
+  ATTACHMENT_SEARCH_MAX_DEPTH, ATTACHMENT_SEARCH_MAX_PARTS, parseRawMimeEntity, extractBodyPartFromRawMime,
+  parseAttachmentPartsFromRawMime, RAW_MIME_MAX_PARTS,
 } = sandbox;
 
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -178,6 +180,65 @@ describe("listRawMimeAttachments", () => {
   it("marks the walk limited past the part limit", () => {
     const parts = Array.from({ length: 1001 }, (_, i) => `Content-Type: image/png\r\nContent-Disposition: attachment; filename="p${i}.png"\r\n\r\nx`);
     assert.equal(listRawMimeAttachments(mixed("many", parts), decodeWord).limited, true);
+  });
+});
+
+describe("parseRawMimeEntity maxParts", () => {
+  const countEntities = entity => 1 + entity.parts.reduce((n, child) => n + countEntities(child), 0);
+  const manyParts = (n, part = "X: y\r\n\r\nz") =>
+    `Content-Type: multipart/mixed; boundary=b\r\n\r\n${`--b\r\n${part}\r\n`.repeat(n)}--b--\r\n`;
+
+  it("stops splitting a huge multipart at the limit, in bounded time", () => {
+    const raw = manyParts(1300000); // about 21 MB
+    const started = Date.now();
+    const root = parseRawMimeEntity(raw, { maxParts: 1000 });
+    const elapsed = Date.now() - started;
+    assert.equal(root.partLimitReached, true);
+    assert.equal(countEntities(root), 1000);
+    // Without the limit this parse takes seconds and over a gigabyte
+    assert.ok(elapsed < 2000, `parse took ${elapsed} ms`);
+    const listStarted = Date.now();
+    assert.equal(listRawMimeAttachments(raw, decodeWord).limited, true);
+    assert.ok(Date.now() - listStarted < 2000);
+  });
+
+  it("shares the limit across nested multiparts", () => {
+    const inner = i => `Content-Type: multipart/mixed; boundary=i${i}\r\n\r\n${`--i${i}\r\nX: y\r\n\r\nz\r\n`.repeat(600)}--i${i}--`;
+    const raw = mixed("o", [inner(1), inner(2), inner(3)]);
+    const root = parseRawMimeEntity(raw, { maxParts: 1000 });
+    assert.ok(countEntities(root) <= 1000);
+    assert.equal(root.partLimitReached || root.parts.some(p => p.partLimitReached), true);
+    assert.equal(listRawMimeAttachments(raw, decodeWord).limited, true);
+  });
+
+  it("counts empty parts, which the walk alone never saw", () => {
+    const raw = `Content-Type: multipart/mixed; boundary=b\r\n\r\n${"--b\r\n\r\n".repeat(5000)}--b\r\n` +
+      `Content-Type: application/pdf\r\nContent-Disposition: attachment; filename="x.pdf"\r\n\r\nx\r\n--b--\r\n`;
+    assert.equal(listRawMimeAttachments(raw, decodeWord).limited, true);
+  });
+
+  it("counts the attached message against the same limit", () => {
+    // The root, the text and the message/rfc822 part come before the inner message's own entities
+    const raw = count => mixed("o", [text, `Content-Type: message/rfc822\r\n\r\n${manyParts(count)}`]);
+    assert.equal(listRawMimeAttachments(raw(ATTACHMENT_SEARCH_MAX_PARTS - 4), decodeWord).limited, false);
+    assert.equal(listRawMimeAttachments(raw(ATTACHMENT_SEARCH_MAX_PARTS - 3), decodeWord).limited, true);
+  });
+
+  it("is unlimited without the option, and the getMessage fallbacks get a wide limit", () => {
+    const raw = manyParts(1500);
+    const root = parseRawMimeEntity(raw);
+    assert.equal(root.partLimitReached, false);
+    assert.equal(root.parts.length, 1500);
+    assert.equal(RAW_MIME_MAX_PARTS, 10000);
+    const attachments = manyParts(RAW_MIME_MAX_PARTS + 10,
+      "Content-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"a.pdf\"\r\n\r\nx");
+    assert.equal(parseAttachmentPartsFromRawMime(attachments).length, RAW_MIME_MAX_PARTS - 1);
+    const diagnostic = {};
+    assert.equal(extractBodyPartFromRawMime(attachments, "text", diagnostic), null);
+    assert.equal(diagnostic.bodyNote, "multipart body extraction hit part cap");
+    // A body before the limit is still found
+    const withBody = mixed("w", [text, ...Array.from({ length: RAW_MIME_MAX_PARTS + 5 }, () => "X: y\r\n\r\nz")]);
+    assert.equal(extractBodyPartFromRawMime(withBody, "text").text, "hello");
   });
 });
 

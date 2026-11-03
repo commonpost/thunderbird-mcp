@@ -12648,7 +12648,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
             }
 
-            function splitRawMimeMultipartBody(body, boundary) {
+            // maxParts: stop once more than this many parts are found (the caller sees the extra one and knows
+            // the body has more).
+            function splitRawMimeMultipartBody(body, boundary, maxParts = Infinity) {
               if (!boundary) return [];
               const markerRe = new RegExp(
                 "(^|\\r\\n|\\n|\\r)--" + escapeRawMimeRegExp(boundary) +
@@ -12660,6 +12662,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               let match;
               while ((match = markerRe.exec(body)) !== null) {
                 if (partStart !== null) parts.push(body.slice(partStart, match.index));
+                if (parts.length > maxParts) return parts;
                 if (match[2]) {
                   partStart = null;
                   break;
@@ -12675,13 +12678,24 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return parts;
             }
 
+            // Entities of one parse, the root included, when the caller sets no maxParts: the getMessage
+            // fallbacks read up to 50 MiB, which can hold over a million empty parts.
+            const RAW_MIME_MAX_PARTS = 10000;
+
+            // maxParts: entities parsed at most, across the whole tree. A multipart entity whose children were
+            // cut short has partLimitReached; the walk is then incomplete.
             function parseRawMimeEntity(rawBytes, options = {}) {
               const maxDepth = Number.isInteger(options.maxDepth) && options.maxDepth >= 0
                 ? options.maxDepth
                 : 32;
+              const maxParts = Number.isInteger(options.maxParts) && options.maxParts > 0
+                ? options.maxParts
+                : Infinity;
               const raw = rawMimeToByteString(rawBytes);
+              let partCount = 0;
 
               function parseEntity(partRaw, depth, partName) {
+                partCount++;
                 const split = findRawMimeHeaderBodySplit(partRaw);
                 if (!split) return null;
                 const headers = parseRawMimeHeaders(split.header);
@@ -12699,6 +12713,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   parts: [],
                   partName,
                   depthLimitReached: false,
+                  partLimitReached: false,
                 };
 
                 if (contentType.value.startsWith("multipart/")) {
@@ -12707,11 +12722,22 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     entity.depthLimitReached = true;
                     return entity;
                   }
+                  const budget = maxParts - partCount;
                   const children = splitRawMimeMultipartBody(
                     split.body,
-                    contentType.params.boundary || ""
+                    contentType.params.boundary || "",
+                    budget
                   );
+                  if (children.length > budget) {
+                    children.length = budget;
+                    entity.partLimitReached = true;
+                  }
                   for (let index = 0; index < children.length; index++) {
+                    // The children parsed before may have used the budget up
+                    if (partCount >= maxParts) {
+                      entity.partLimitReached = true;
+                      break;
+                    }
                     const child = parseEntity(children[index], depth + 1, `${partName}.${index + 1}`);
                     if (child) entity.parts.push(child);
                   }
@@ -12761,7 +12787,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             function extractBodyPartFromRawMime(rawBytes, bodyFormat, diagnostic = null) {
               // Body extraction runs synchronously on Thunderbird's main thread.
               // Ten MIME levels covers normal nesting while bounding adversarial input.
-              const root = parseRawMimeEntity(rawBytes, { maxDepth: 10 });
+              const root = parseRawMimeEntity(rawBytes, { maxDepth: 10, maxParts: RAW_MIME_MAX_PARTS });
               if (!root) {
                 if (diagnostic) {
                   diagnostic.bodyNote = "raw MIME body extraction could not parse message";
@@ -12770,6 +12796,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
               const preferHtml = bodyFormat === "html" || bodyFormat === "markdown";
               let depthLimitReached = false;
+              let partLimitReached = false;
 
               function findBody(entity, isRoot = false) {
                 const contentType = entity.contentType.value || "text/plain";
@@ -12782,6 +12809,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     depthLimitReached = true;
                     return null;
                   }
+                  if (entity.partLimitReached) partLimitReached = true;
                   if (contentType === "multipart/alternative") {
                     let fallback = null;
                     for (const child of entity.parts) {
@@ -12832,7 +12860,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               if (!bodyPart && diagnostic) {
                 diagnostic.bodyNote = depthLimitReached
                   ? "multipart body extraction hit depth cap"
-                  : root.contentType.value.startsWith("multipart/")
+                  : partLimitReached
+                    ? "multipart body extraction hit part cap"
+                    : root.contentType.value.startsWith("multipart/")
                     ? "multipart body extraction found no suitable text part"
                     : "raw MIME body extraction found no suitable text part";
               }
@@ -13045,7 +13075,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const includeInlineImages = options.includeInlineImages === true;
               // Keep the attachment walk's historical depth allowance. Body
               // extraction uses the stricter main-thread cap in its own consumer.
-              const top = parseRawMimeEntity(rawBytes, { maxDepth: 33 });
+              const top = parseRawMimeEntity(rawBytes, { maxDepth: 33, maxParts: RAW_MIME_MAX_PARTS });
               if (!top || !top.contentType.value.startsWith("multipart/")) return [];
 
               const results = [];
@@ -13249,7 +13279,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // the walk stopped at the depth or part limit, so neither the list nor encrypted can be trusted.
             // Null when the message cannot be parsed.
             function listRawMimeAttachments(raw, decodeWord) {
-              const root = parseRawMimeEntity(raw, { maxDepth: ATTACHMENT_SEARCH_MAX_DEPTH });
+              // The part limit bounds the parse itself, not only the walk: a 14 MB message can hold a million
+              // empty parts.
+              const root = parseRawMimeEntity(raw, { maxDepth: ATTACHMENT_SEARCH_MAX_DEPTH, maxParts: ATTACHMENT_SEARCH_MAX_PARTS });
               if (!root) return null;
               const out = { attachments: [], encrypted: false, limited: false };
               let parts = 0;
@@ -13262,7 +13294,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 const ct = entity.contentType.value || "text/plain";
                 if (ENCRYPTED_CONTENT_TYPES.has(ct)) out.encrypted = true;
                 if (ct.startsWith("multipart/")) {
-                  if (entity.depthLimitReached) {
+                  if (entity.depthLimitReached || entity.partLimitReached) {
                     out.limited = true;
                     return;
                   }
@@ -13282,7 +13314,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
                 if (!isMessage) return;
                 const remaining = ATTACHMENT_SEARCH_MAX_DEPTH - depth - 1;
-                if (remaining < 0) {
+                if (remaining < 0 || parts >= ATTACHMENT_SEARCH_MAX_PARTS) {
                   out.limited = true;
                   return;
                 }
@@ -13291,7 +13323,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   const bytes = decodeRawMimeTransferBody(entity.body, transferEncoding);
                   innerRaw = bytes ? rawMimeToByteString(bytes) : "";
                 }
-                const inner = parseRawMimeEntity(innerRaw, { maxDepth: remaining });
+                const inner = parseRawMimeEntity(innerRaw, { maxDepth: remaining, maxParts: ATTACHMENT_SEARCH_MAX_PARTS - parts });
                 if (inner) walk(inner, depth + 1, true);
               };
               walk(root, 0, false);
