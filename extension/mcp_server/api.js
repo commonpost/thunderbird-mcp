@@ -12570,12 +12570,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return new Uint8Array(bytes);
             }
 
-            function decodeRawMimeExtendedParameter(value) {
+            // maxChars: of the encoded value read (the charset and language prefix apart)
+            function decodeRawMimeExtendedParameter(value, maxChars = Infinity) {
               const raw = unquoteRawMimeParameter(value);
               const match = raw.match(/^([^']*)'[^']*'(.*)$/);
-              if (!match) return raw;
+              if (!match) return raw.slice(0, maxChars);
               const charset = (match[1] || "utf-8").trim() || "utf-8";
-              const encoded = match[2] || "";
+              const encoded = (match[2] || "").slice(0, maxChars);
               try {
                 return new TextDecoder(charset, { fatal: false }).decode(decodeRawMimePercentBytes(encoded));
               } catch {
@@ -13198,6 +13199,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             const ATTACHMENT_SEARCH_ROW_ATTACHMENTS = 20;
             const ATTACHMENT_FILTER_MAX_CHARS = 256;
             const ATTACHMENT_NAME_MAX_CHARS = 255;
+            // Characters of a raw filename parameter decoded: a character percent-encoded in four UTF-8 bytes takes 12,
+            // so every name kept whole (ATTACHMENT_NAME_MAX_CHARS) fits, and a huge or repeated value costs nothing more
+            const RAW_MIME_FILENAME_MAX_CHARS = 12 * ATTACHMENT_NAME_MAX_CHARS;
 
             // null without attachment options, { error }, or { name, type, typePrefix } (lower case; null = any)
             function parseAttachmentFilter(args) {
@@ -13230,43 +13234,49 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
 
             // A parameter of a raw MIME header value, with RFC 2231 extended values (name*=utf-8''...) and
-            // continuations (name*0*=..., name*1*=...) joined and decoded. The extended form wins over the plain one.
-            // plain: the plain value as read (raw bytes), for the caller to decode.
+            // continuations (name*0*=..., name*1*=...) joined and decoded. The extended form wins over the plain one;
+            // of a parameter or segment given twice, the last is read. plain: the plain value as read (raw bytes),
+            // for the caller to decode. At most RAW_MIME_FILENAME_MAX_CHARS characters of the value are decoded.
             function rawMimeParameter(headerValue, param) {
               const pieces = splitRawMimeHeaderParameters(String(headerValue || ""));
               pieces.shift();
-              let plain = "";
-              let extended = "";
-              const segments = [];
+              let plainRaw = null;
+              let extendedRaw = null;
+              const segments = new Map();
               for (const piece of pieces) {
                 const eq = piece.indexOf("=");
                 if (eq < 0) continue;
                 const key = piece.slice(0, eq).trim().toLowerCase();
                 const value = piece.slice(eq + 1).trim();
-                if (key === param) plain = unquoteRawMimeParameter(value);
-                else if (key === `${param}*`) extended = decodeRawMimeExtendedParameter(value);
+                if (key === param) plainRaw = value;
+                else if (key === `${param}*`) extendedRaw = value;
                 else if (key.startsWith(`${param}*`)) {
                   const m = key.slice(param.length + 1).match(/^(\d{1,3})(\*?)$/);
-                  if (m) segments.push({ index: Number(m[1]), encoded: m[2] === "*", value: unquoteRawMimeParameter(value) });
+                  if (m) segments.set(Number(m[1]), { index: Number(m[1]), encoded: m[2] === "*", value });
                 }
               }
+              const extended = extendedRaw === null ? "" : decodeRawMimeExtendedParameter(extendedRaw, RAW_MIME_FILENAME_MAX_CHARS);
               if (extended) return { extended };
-              if (segments.length) {
-                segments.sort((a, b) => a.index - b.index);
+              if (segments.size) {
+                const ordered = [...segments.values()].sort((a, b) => a.index - b.index);
                 let charset = "utf-8";
+                let budget = RAW_MIME_FILENAME_MAX_CHARS;
                 const bytes = [];
-                segments.forEach((seg, i) => {
-                  let v = seg.value;
+                for (let i = 0; i < ordered.length && budget > 0; i++) {
+                  const seg = ordered[i];
+                  let v = unquoteRawMimeParameter(seg.value);
+                  if (seg.encoded && i === 0) {
+                    const m = v.match(/^([^']*)'[^']*'([\s\S]*)$/);
+                    if (m) { charset = m[1].trim() || "utf-8"; v = m[2]; }
+                  }
+                  v = v.slice(0, budget);
+                  budget -= v.length;
                   if (seg.encoded) {
-                    if (i === 0) {
-                      const m = v.match(/^([^']*)'[^']*'([\s\S]*)$/);
-                      if (m) { charset = m[1].trim() || "utf-8"; v = m[2]; }
-                    }
                     for (const b of decodeRawMimePercentBytes(v)) bytes.push(b);
                   } else {
                     for (let j = 0; j < v.length; j++) bytes.push(v.charCodeAt(j) & 0xFF);
                   }
-                });
+                }
                 const data = new Uint8Array(bytes);
                 try {
                   return { extended: new TextDecoder(charset, { fatal: false }).decode(data) };
@@ -13274,7 +13284,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   return { extended: new TextDecoder("utf-8", { fatal: false }).decode(data) };
                 }
               }
-              return { plain };
+              return { plain: plainRaw === null ? "" : unquoteRawMimeParameter(plainRaw).slice(0, RAW_MIME_FILENAME_MAX_CHARS) };
             }
 
             // The filename of a part (Content-Disposition filename, else Content-Type name). A plain value is UTF-8
