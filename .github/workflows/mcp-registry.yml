@@ -6,7 +6,8 @@ name: MCP Registry
 # the .mcpb of that release, with its SHA-256. Run by hand after a release (RELEASING.md). The registry grants the
 # io.github.commonpost namespace to this repository's GitHub OIDC token, so no secret is stored; that token could
 # publish any io.github.commonpost/* listing, so the job runs in the protected "mcp-registry" environment (required
-# reviewer, main branch only). Only GitHub's preinstalled gh and jq and the registry's signed mcp-publisher run here.
+# reviewer, main branch only). Only GitHub's preinstalled gh and jq and the registry's signed mcp-publisher (pinned
+# by hash) run here.
 on:
   workflow_dispatch:
     inputs:
@@ -34,7 +35,11 @@ jobs:
       TAG: ${{ inputs.tag }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      # mcp-publisher is signed with a plain Sigstore bundle, not a GitHub attestation. This hash was checked with
+      # cosign verify-blob --new-bundle-format against release.yml@refs/tags/v1.8.7 of modelcontextprotocol/registry;
+      # check the new archive the same way before changing the version.
       PUBLISHER_VERSION: v1.8.7
+      PUBLISHER_SHA256: 00b21004149a4ce66f0782508ae4a2bce67d1bea395a8da0bd8028159fb59579
     steps:
       - name: Write server.json for the release
         run: |
@@ -60,17 +65,15 @@ jobs:
           }' > server.json
           cat server.json
 
-      - name: Install mcp-publisher (signature verified)
+      - name: Install mcp-publisher (pinned hash)
         run: |
           set -euo pipefail
           archive=mcp-publisher_linux_amd64.tar.gz
           base="https://github.com/modelcontextprotocol/registry/releases/download/$PUBLISHER_VERSION"
           curl --fail --location --silent --show-error --output "$archive" "$base/$archive"
-          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base/$archive.sigstore.json"
-          gh attestation verify "$archive" --bundle "$archive.sigstore.json" --repo modelcontextprotocol/registry \
-            --cert-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/$PUBLISHER_VERSION"
+          echo "$PUBLISHER_SHA256  $archive" | sha256sum --check --strict
           tar xzf "$archive" mcp-publisher
-          rm -f "$archive" "$archive.sigstore.json"
+          rm -f "$archive"
 
       - name: Publish
         run: |
