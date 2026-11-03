@@ -6,6 +6,14 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Fixed
+
+- `updateContact` with `emails`: an address that `getContact` returns with `invalid: true` (a display name, a list or
+  hidden characters stored by another client) can be passed back as it was returned, flag included, and is kept
+  unchanged. Before, passing the list back was refused ("Unknown emails[n] property: invalid"). A new or changed
+  address must still be one plain address; for a flagged one, the error now says to pass it back unchanged or leave
+  it out.
+
 ## [0.18.0] - 2026-11-03
 
 - New options on existing tools (still 40 tools): check a send without sending (`sendMail` `dryRun`), ask the server

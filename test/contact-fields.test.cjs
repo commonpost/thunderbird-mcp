@@ -680,6 +680,29 @@ describe("contact email list", () => {
     for (const entry of [sharedLabel, sharedUrl, keptGrouped, keptLabel, other]) assert.ok(left.includes(entry));
   });
 
+  it("keeps an address flagged invalid only when it comes back unchanged from the card", () => {
+    const stored = ["Ada <ada@example.com>"];
+    // Passed back as getContact returned it, the flag included
+    assert.equal(helpers.validateContactEmails([
+      { address: "b@example.com", primary: true },
+      { address: "Ada <ada@example.com>", invalid: true },
+    ], stored), null);
+    assert.equal(helpers.validateContactFields({
+      emails: [{ address: " Ada <ada@example.com> ", invalid: true }],
+    }, false, stored), null);
+    // Changed, or not on this card: refused, with what to do when it was flagged
+    assert.match(helpers.validateContactEmails([{ address: "Ada <ada@example.org>", invalid: true }], stored),
+      /emails\[0\]\.address is not one plain e-mail address: pass it back unchanged/);
+    assert.match(helpers.validateContactEmails([{ address: "Ada <ada@example.com>", invalid: true }]),
+      /pass it back unchanged/);
+    assert.match(helpers.validateContactEmails([{ address: "x y@example.com" }], stored),
+      /emails\[0\]\.address must be one plain e-mail address/);
+    assert.match(helpers.validateContactEmails([{ address: "a@example.com", invalid: "yes" }]),
+      /emails\[0\]\.invalid must be a boolean/);
+    // The flag itself changes nothing for a plain address
+    assert.equal(helpers.validateContactEmails([{ address: "a@example.com", invalid: false }]), null);
+  });
+
   it("validates the emails payload", () => {
     assert.equal(helpers.validateContactEmails([
       { address: " a@example.com ", type: "work" },
