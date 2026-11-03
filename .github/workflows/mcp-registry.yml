@@ -28,8 +28,8 @@ jobs:
     timeout-minutes: 10
     environment: mcp-registry
     permissions:
-      contents: read
-      id-token: write
+      contents: read # gh release download and gh attestation verify of this repository
+      id-token: write # GitHub OIDC token for mcp-publisher login github-oidc
     env:
       TAG: ${{ inputs.tag }}
       GH_TOKEN: ${{ github.token }}
