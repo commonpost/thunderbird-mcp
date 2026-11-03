@@ -637,18 +637,28 @@
               "busy",
               "free"
             ],
-            "description": "Whether the event blocks time: 'busy' (TRANSP:OPAQUE, the default) or 'free' (TRANSP:TRANSPARENT, the time stays available). Does not change status: pass status 'tentative' for a provisional event."
+            "description": "'busy' (TRANSP:OPAQUE, default) blocks the time, 'free' (TRANSP:TRANSPARENT) leaves it available. Independent of status (use 'tentative' for a provisional event)."
           },
           "categories": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Category labels (optional). Category names are case-sensitive; use listCategories to get exact existing names before setting."
+            "description": "Category labels, case-sensitive: take exact existing names from listCategories"
           },
           "onlineMeeting": {
             "type": "boolean",
-            "description": "If true, generates a Microsoft Teams meeting link via Exchange (OWL/Office 365 accounts only). After creation, OWL embeds the join URL in the event description and exposes it via listEvents (onlineMeetingURL). No-op on non-OWL backends."
+            "description": "If true, generates a Microsoft Teams meeting link via Exchange (OWL/Office 365 accounts only; no-op elsewhere). listEvents then returns its join URL (onlineMeetingURL)."
+          },
+          "reminders": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 40320
+            },
+            "maxItems": 5,
+            "description": "Display reminders in minutes before the start, e.g. [1440, 15]"
           },
           "skipReview": {
             "type": "boolean",
@@ -728,27 +738,27 @@
           },
           "title": {
             "type": "string",
-            "description": "New event title (optional)"
+            "description": "New event title"
           },
           "startDate": {
             "type": "string",
-            "description": "New start date/time in ISO 8601 format (optional)"
+            "description": "New start date/time (ISO 8601)"
           },
           "endDate": {
             "type": "string",
-            "description": "New end date/time in ISO 8601 format (optional)"
+            "description": "New end date/time (ISO 8601)"
           },
           "location": {
             "type": "string",
-            "description": "New event location (optional)"
+            "description": "New event location"
           },
           "description": {
             "type": "string",
-            "description": "New event description (optional)"
+            "description": "New event description"
           },
           "status": {
             "type": "string",
-            "description": "New VEVENT STATUS: 'tentative', 'confirmed', or 'cancelled' (optional)"
+            "description": "New VEVENT STATUS: 'tentative', 'confirmed', or 'cancelled'"
           },
           "showAs": {
             "type": "string",
@@ -756,18 +766,28 @@
               "busy",
               "free"
             ],
-            "description": "Whether the event blocks time: 'busy' (TRANSP:OPAQUE) or 'free' (TRANSP:TRANSPARENT, the time stays available). Pass null to clear TRANSP. Does not change status."
+            "description": "'busy' (TRANSP:OPAQUE) blocks the time, 'free' (TRANSP:TRANSPARENT) leaves it available; null clears TRANSP. Independent of status."
           },
           "categories": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Category labels (optional). Category names are case-sensitive; pass an empty array to clear all categories. Use listCategories to get exact existing names before setting."
+            "description": "Category labels, case-sensitive (exact names from listCategories); [] clears them"
           },
           "onlineMeeting": {
             "type": "boolean",
             "description": "If true, generates a Microsoft Teams meeting link via Exchange (OWL/Office 365 accounts only). Pass false to remove an existing Teams link."
+          },
+          "reminders": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 40320
+            },
+            "maxItems": 5,
+            "description": "Replaces the display reminders (minutes before start); [] removes them, other alarms are kept"
           }
         },
         "required": [

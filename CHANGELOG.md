@@ -42,6 +42,12 @@ project is kept in this repository.
   counted (`ignored`). At most 5 URIs of each kind, 2,048 characters each. The header is written by the sender:
   nothing is fetched, sent or opened, a mailto `body` comes between the untrusted-content markers like a message
   body, and the tool description says the user decides.
+- Event reminders: `createEvent` and `updateEvent` take `reminders`, a list of minutes before the start (up to 5,
+  0 to 40320), saved as display alarms; the review dialog shows them. In `updateEvent` they replace the event's
+  display reminders relative to the start, `[]` removes them, and other alarms (email, audio, absolute date,
+  relative to the end) are kept. `listEvents` returns `reminders` on each event. A calendar that does not take
+  display alarms, or fewer alarms than asked (`capabilities.alarms.*`), gets an error instead of losing them; a
+  calendar whose reminders are turned off gets a warning.
 
 ### Changed
 

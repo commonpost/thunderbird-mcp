@@ -1595,6 +1595,86 @@ function eventRangeBounds(startDate, endDate, now) {
 }
 // END EVENT RANGE HELPERS
 
+// BEGIN EVENT REMINDER HELPERS
+// createEvent/updateEvent `reminders`: display alarms (VALARM ACTION:DISPLAY)
+// triggered a number of minutes before the event start. Any other alarm
+// (email, audio, absolute date, relative to the end, after the start) is not a
+// reminder here: listEvents does not report it and updateEvent keeps it.
+const MAX_EVENT_REMINDERS = 5;
+const MAX_REMINDER_MINUTES = 40320; // four weeks
+
+// Validates a `reminders` argument. Returns { minutes } (deduplicated, earliest
+// reminder first) or { error }.
+function normalizeReminderMinutes(value) {
+  if (!Array.isArray(value)) {
+    return { error: "reminders must be an array of minutes before the start" };
+  }
+  const seen = new Set();
+  for (const m of value) {
+    if (!Number.isInteger(m) || m < 0 || m > MAX_REMINDER_MINUTES) {
+      return { error: `Invalid reminder: ${JSON.stringify(m)}. Expected whole minutes before the start, 0 to ${MAX_REMINDER_MINUTES}.` };
+    }
+    seen.add(m);
+  }
+  if (seen.size > MAX_EVENT_REMINDERS) {
+    return { error: `At most ${MAX_EVENT_REMINDERS} reminders per event, got ${seen.size}` };
+  }
+  return { minutes: [...seen].sort((a, b) => b - a) };
+}
+
+// Minutes before the start of an alarm `reminders` manages, or null for any
+// other alarm. listEvents reports exactly these and updateEvent replaces
+// exactly these, so a reported list round-trips. An offset that is not a
+// whole number of minutes is left alone too.
+function reminderMinutesOfAlarm(alarm, relatedStart) {
+  if (!alarm || String(alarm.action || "").toUpperCase() !== "DISPLAY") return null;
+  if (alarm.related !== relatedStart || !alarm.offset) return null;
+  const seconds = alarm.offset.inSeconds;
+  if (!Number.isInteger(seconds) || seconds > 0 || seconds % 60 !== 0) return null;
+  return seconds === 0 ? 0 : -seconds / 60;
+}
+
+function eventReminderMinutes(alarms, relatedStart) {
+  const out = [];
+  for (const alarm of alarms || []) {
+    const m = reminderMinutesOfAlarm(alarm, relatedStart);
+    if (m !== null && !out.includes(m)) out.push(m);
+  }
+  return out.sort((a, b) => b - a);
+}
+
+// A calendar's provider can limit alarms (capabilities.alarms.actionValues,
+// capabilities.alarms.maxCount; unset means no limit). Thunderbird's event
+// dialog silently drops what the calendar cannot store, so refuse instead.
+// `keptCount` is the number of other alarms the event keeps.
+function reminderCapabilityError(calendar, count, keptCount) {
+  if (count === 0) return null;
+  let actions = null;
+  let maxCount = null;
+  try { actions = calendar.getProperty("capabilities.alarms.actionValues"); } catch {}
+  try { maxCount = calendar.getProperty("capabilities.alarms.maxCount"); } catch {}
+  if (Array.isArray(actions) && !actions.includes("DISPLAY")) {
+    return `Calendar "${calendar.name}" does not support display reminders`;
+  }
+  if (typeof maxCount === "number" && count + keptCount > maxCount) {
+    const kept = keptCount ? ` (the event keeps ${keptCount} other alarm(s))` : "";
+    return `Calendar "${calendar.name}" allows at most ${maxCount} alarm(s) per event${kept}; got ${count} reminder(s)`;
+  }
+  return null;
+}
+
+// Reminders are saved but not shown when the calendar's reminders are turned
+// off (suppressAlarms, also forced by providers without pop-up alarms).
+function reminderSuppressedWarning(calendar, count) {
+  if (count === 0) return null;
+  let suppressed = false;
+  try { suppressed = Boolean(calendar.getProperty("suppressAlarms")); } catch {}
+  return suppressed
+    ? `Reminders are turned off for calendar "${calendar.name}": they are saved but Thunderbird will not show them.`
+    : null;
+}
+// END EVENT REMINDER HELPERS
+
 // BEGIN UNTRUSTED CONTENT HELPERS
 // What these tools return is text written by third parties: a message's
 // body, but also an event's or task's title/description/location (from an
@@ -6209,9 +6289,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             calendarId: { type: "string", description: "Target calendar ID (from listCalendars, defaults to first writable calendar)" },
             allDay: { type: "boolean", description: "Create an all-day event (default: false)" },
             status: { type: "string", enum: ["tentative", "confirmed", "cancelled"], description: "VEVENT STATUS (default confirmed)" },
-            showAs: { type: "string", enum: ["busy", "free"], description: "Whether the event blocks time: 'busy' (TRANSP:OPAQUE, the default) or 'free' (TRANSP:TRANSPARENT, the time stays available). Does not change status: pass status 'tentative' for a provisional event." },
-            categories: { type: "array", items: { type: "string" }, description: "Category labels (optional). Category names are case-sensitive; use listCategories to get exact existing names before setting." },
-            onlineMeeting: { type: "boolean", description: "If true, generates a Microsoft Teams meeting link via Exchange (OWL/Office 365 accounts only). After creation, OWL embeds the join URL in the event description and exposes it via listEvents (onlineMeetingURL). No-op on non-OWL backends." },
+            showAs: { type: "string", enum: ["busy", "free"], description: "'busy' (TRANSP:OPAQUE, default) blocks the time, 'free' (TRANSP:TRANSPARENT) leaves it available. Independent of status (use 'tentative' for a provisional event)." },
+            categories: { type: "array", items: { type: "string" }, description: "Category labels, case-sensitive: take exact existing names from listCategories" },
+            onlineMeeting: { type: "boolean", description: "If true, generates a Microsoft Teams meeting link via Exchange (OWL/Office 365 accounts only; no-op elsewhere). listEvents then returns its join URL (onlineMeetingURL)." },
+            reminders: { type: "array", items: { type: "integer", minimum: 0, maximum: 40320 }, maxItems: 5, description: "Display reminders in minutes before the start, e.g. [1440, 15]" },
             skipReview: { type: "boolean", description: "Request direct creation without a review dialog. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)." },
           },
           required: ["title", "startDate"],
@@ -6244,15 +6325,16 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           properties: {
             eventId: { type: "string", description: "The event ID (from listEvents results)" },
             calendarId: { type: "string", description: "The calendar ID containing the event (from listEvents results)" },
-            title: { type: "string", description: "New event title (optional)" },
-            startDate: { type: "string", description: "New start date/time in ISO 8601 format (optional)" },
-            endDate: { type: "string", description: "New end date/time in ISO 8601 format (optional)" },
-            location: { type: "string", description: "New event location (optional)" },
-            description: { type: "string", description: "New event description (optional)" },
-            status: { type: "string", description: "New VEVENT STATUS: 'tentative', 'confirmed', or 'cancelled' (optional)" },
-            showAs: { type: "string", enum: ["busy", "free"], description: "Whether the event blocks time: 'busy' (TRANSP:OPAQUE) or 'free' (TRANSP:TRANSPARENT, the time stays available). Pass null to clear TRANSP. Does not change status." },
-            categories: { type: "array", items: { type: "string" }, description: "Category labels (optional). Category names are case-sensitive; pass an empty array to clear all categories. Use listCategories to get exact existing names before setting." },
+            title: { type: "string", description: "New event title" },
+            startDate: { type: "string", description: "New start date/time (ISO 8601)" },
+            endDate: { type: "string", description: "New end date/time (ISO 8601)" },
+            location: { type: "string", description: "New event location" },
+            description: { type: "string", description: "New event description" },
+            status: { type: "string", description: "New VEVENT STATUS: 'tentative', 'confirmed', or 'cancelled'" },
+            showAs: { type: "string", enum: ["busy", "free"], description: "'busy' (TRANSP:OPAQUE) blocks the time, 'free' (TRANSP:TRANSPARENT) leaves it available; null clears TRANSP. Independent of status." },
+            categories: { type: "array", items: { type: "string" }, description: "Category labels, case-sensitive (exact names from listCategories); [] clears them" },
             onlineMeeting: { type: "boolean", description: "If true, generates a Microsoft Teams meeting link via Exchange (OWL/Office 365 accounts only). Pass false to remove an existing Teams link." },
+            reminders: { type: "array", items: { type: "integer", minimum: 0, maximum: 40320 }, maxItems: 5, description: "Replaces the display reminders (minutes before start); [] removes them, other alarms are kept" },
           },
           required: ["eventId", "calendarId"],
         },
@@ -6958,6 +7040,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               CalTodo = CT;
             } catch {
               // Calendar not available
+            }
+            let CalAlarm = null;
+            try {
+              ({ CalAlarm } = ChromeUtils.importESModule("resource:///modules/CalAlarm.sys.mjs"));
+            } catch {
+              // Reminders not available
             }
 
             let GlodaMsgSearcher = null;
@@ -11068,7 +11156,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
-            async function createEvent(title, startDate, endDate, location, description, calendarId, allDay, skipReview, status, showAs, categories, onlineMeeting) {
+            // A display alarm `minutes` before the start (see EVENT REMINDER HELPERS).
+            function buildDisplayReminder(minutes) {
+              const alarm = new CalAlarm();
+              alarm.related = Ci.calIAlarm.ALARM_RELATED_START;
+              alarm.action = "DISPLAY";
+              const offset = cal.createDuration();
+              offset.minutes = minutes;
+              offset.normalize();
+              offset.isNegative = minutes > 0;
+              alarm.offset = offset;
+              return alarm;
+            }
+
+            async function createEvent(title, startDate, endDate, location, description, calendarId, allDay, skipReview, status, showAs, categories, onlineMeeting, reminders) {
               if (!cal || !CalEvent) {
                 return { error: "Calendar module not available" };
               }
@@ -11089,6 +11190,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 let endJs = endDate ? new Date(endDate) : null;
                 if (endDate && (!endJs || isNaN(endJs.getTime()))) {
                   return { error: `Invalid endDate: ${endDate}` };
+                }
+
+                let reminderMinutes = null;
+                if (reminders !== undefined && reminders !== null) {
+                  if (!CalAlarm) return { error: "Calendar reminders are not available" };
+                  const parsed = normalizeReminderMinutes(reminders);
+                  if (parsed.error) return { error: parsed.error };
+                  reminderMinutes = parsed.minutes;
                 }
 
                 if (endJs) {
@@ -11197,9 +11306,23 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
                 event.calendar = targetCalendar;
 
+                // The event dialog shows these alarms and saves them on OK.
+                let reminderWarning = null;
+                if (reminderMinutes) {
+                  const capError = reminderCapabilityError(targetCalendar, reminderMinutes.length, 0);
+                  if (capError) return { error: capError };
+                  for (const m of reminderMinutes) event.addAlarm(buildDisplayReminder(m));
+                  reminderWarning = reminderSuppressedWarning(targetCalendar, reminderMinutes.length);
+                }
+                const withReminders = (result) => {
+                  if (reminderMinutes) result.reminders = reminderMinutes;
+                  if (reminderWarning) result.warning = reminderWarning;
+                  return result;
+                };
+
                 if (skipReview) {
                   await targetCalendar.addItem(event);
-                  return { success: true, message: `Event "${title}" added to calendar "${targetCalendar.name}"` };
+                  return withReminders({ success: true, message: `Event "${title}" added to calendar "${targetCalendar.name}"` });
                 }
 
                 const args = {
@@ -11219,7 +11342,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   args
                 );
 
-                return { success: true, message: `Event dialog opened for "${title}" on calendar "${targetCalendar.name}"` };
+                return withReminders({ success: true, message: `Event dialog opened for "${title}" on calendar "${targetCalendar.name}"` });
               } catch (e) {
                 return { error: e.toString() };
               }
@@ -11257,6 +11380,16 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return VEVENT_STATUS_MAP[String(status).trim().toLowerCase()] || null;
             }
 
+            // Minutes before the start of the item's display reminders; an
+            // occurrence reads its series' alarms.
+            function itemReminderMinutes(item) {
+              try {
+                return eventReminderMinutes(item.getAlarms(), Ci.calIAlarm.ALARM_RELATED_START);
+              } catch {
+                return [];
+              }
+            }
+
             function formatEvent(item, calendar) {
               const allDay = item.startDate ? item.startDate.isDate : false;
               // For all-day events, iCal DTEND is exclusive. Convert to inclusive
@@ -11286,6 +11419,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 onlineMeetingURL: item.getProperty("X-MICROSOFT-SKYPETEAMSMEETINGURL") || null,
                 allDay,
                 isRecurring: !!item.recurrenceInfo,
+                reminders: itemReminderMinutes(item),
               };
               // Occurrences of recurring events share the parent's id.
               // Include recurrenceId so callers can distinguish them.
@@ -11614,7 +11748,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
-            async function updateEvent(eventId, calendarId, title, startDate, endDate, location, description, status, showAs, categories, onlineMeeting) {
+            async function updateEvent(eventId, calendarId, title, startDate, endDate, location, description, status, showAs, categories, onlineMeeting, reminders) {
               if (!cal) return { error: "Calendar not available" };
               try {
                 if (!eventId) return { error: "eventId is required" };
@@ -11712,6 +11846,37 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   }
                   changes.push("onlineMeeting");
                 }
+                // null/undefined keeps the alarms; [] removes the display reminders.
+                let reminderMinutes = null;
+                let reminderWarning = null;
+                if (reminders !== undefined && reminders !== null) {
+                  if (!CalAlarm) return { error: "Calendar reminders are not available" };
+                  const parsed = normalizeReminderMinutes(reminders);
+                  if (parsed.error) return { error: parsed.error };
+                  reminderMinutes = parsed.minutes;
+                  const relatedStart = Ci.calIAlarm.ALARM_RELATED_START;
+                  const alarms = newItem.getAlarms();
+                  const kept = alarms.filter(a => reminderMinutesOfAlarm(a, relatedStart) === null);
+                  const capError = reminderCapabilityError(calendar, reminderMinutes.length, kept.length);
+                  if (capError) return { error: capError };
+                  const before = eventReminderMinutes(alarms, relatedStart);
+                  const replaced = alarms.length - kept.length;
+                  if (replaced !== reminderMinutes.length || before.some((m, i) => m !== reminderMinutes[i])) {
+                    newItem.clearAlarms();
+                    for (const a of kept) newItem.addAlarm(a);
+                    for (const m of reminderMinutes) newItem.addAlarm(buildDisplayReminder(m));
+                    // As Thunderbird's dialog does when reminders change: a snooze or
+                    // an acknowledgement of the old ones must not hide the new ones.
+                    newItem.alarmLastAck = null;
+                    const snoozeProps = [];
+                    for (const [prop] of newItem.properties) {
+                      if (prop.startsWith("X-MOZ-SNOOZE-TIME")) snoozeProps.push(prop);
+                    }
+                    for (const prop of snoozeProps) newItem.deleteProperty(prop);
+                  }
+                  reminderWarning = reminderSuppressedWarning(calendar, reminderMinutes.length);
+                  changes.push("reminders");
+                }
 
                 if (changes.length === 0) return { error: "No changes specified" };
 
@@ -11722,9 +11887,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
                 await calendar.modifyItem(newItem, oldItem);
                 const result = { success: true, updated: changes };
+                if (reminderMinutes) result.reminders = itemReminderMinutes(newItem);
+                const warnings = [];
                 if (oldItem.recurrenceInfo) {
-                  result.warning = "This is a recurring event -- changes apply to the entire series.";
+                  warnings.push("This is a recurring event -- changes apply to the entire series.");
                 }
+                if (reminderWarning) warnings.push(reminderWarning);
+                if (warnings.length) result.warning = warnings.join(" ");
                 return result;
               } catch (e) {
                 return { error: e.toString() };
@@ -16300,11 +16469,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "listCalendars":
                   return listCalendars();
                 case "createEvent":
-                  return await createEvent(args.title, args.startDate, args.endDate, args.location, args.description, args.calendarId, args.allDay, args.skipReview, args.status, args.showAs, args.categories, args.onlineMeeting);
+                  return await createEvent(args.title, args.startDate, args.endDate, args.location, args.description, args.calendarId, args.allDay, args.skipReview, args.status, args.showAs, args.categories, args.onlineMeeting, args.reminders);
                 case "listEvents":
                   return listResultAsTable(await listEvents(args.calendarId, args.startDate, args.endDate, args.maxResults), args.format);
                 case "updateEvent":
-                  return await updateEvent(args.eventId, args.calendarId, args.title, args.startDate, args.endDate, args.location, args.description, args.status, args.showAs, args.categories, args.onlineMeeting);
+                  return await updateEvent(args.eventId, args.calendarId, args.title, args.startDate, args.endDate, args.location, args.description, args.status, args.showAs, args.categories, args.onlineMeeting, args.reminders);
                 case "deleteEvent":
                   return await deleteEvent(args.eventId, args.calendarId);
                 case "listCategories":
