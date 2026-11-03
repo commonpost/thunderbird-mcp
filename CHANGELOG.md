@@ -33,7 +33,10 @@ project is kept in this repository.
 - Event reminders: `createEvent` and `updateEvent` take `reminders`, a list of minutes before the start (up to 5,
   0 to 40320), saved as display alarms; the review dialog shows them. In `updateEvent` they replace the event's
   display reminders relative to the start, `[]` removes them, and other alarms (email, audio, absolute date,
-  relative to the end) are kept. `listEvents` returns `reminders` on each event. A calendar that does not take
+  relative to the end) are kept. A reminder whose minutes stay in the list is kept as it is (its repeat, duration,
+  description and other properties, and two at the same time stay two); only the minutes added or removed change,
+  and only then is a snooze or acknowledgement of the old reminders reset. On a recurring event the occurrences
+  changed on their own (exceptions) keep their own reminders, which the warning says. `listEvents` returns `reminders` on each event. A calendar that does not take
   display alarms, or fewer alarms than asked (`capabilities.alarms.*`), gets an error instead of losing them; a
   calendar whose reminders are turned off gets a warning.
 - Contacts with several email addresses: `getContact` and `searchContacts` return `emails`

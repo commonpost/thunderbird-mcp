@@ -13,9 +13,10 @@ assert.ok(start >= 0 && end > start, "EVENT REMINDER HELPERS markers missing");
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${source.slice(start, end)}
-this.helpers = { normalizeReminderMinutes, reminderMinutesOfAlarm, eventReminderMinutes, reminderCapabilityError, reminderSuppressedWarning };`, sandbox);
+this.helpers = { normalizeReminderMinutes, reminderMinutesOfAlarm, eventReminderMinutes, reminderCapabilityError, reminderSuppressedWarning, planReminderUpdate };`, sandbox);
 const {
   normalizeReminderMinutes, reminderMinutesOfAlarm, eventReminderMinutes, reminderCapabilityError, reminderSuppressedWarning,
+  planReminderUpdate,
 } = sandbox.helpers;
 
 // calIAlarm.ALARM_RELATED_*
@@ -94,6 +95,58 @@ describe("eventReminderMinutes", () => {
   it("returns [] without alarms", () => {
     assert.deepEqual(plain(eventReminderMinutes([], START)), []);
     assert.deepEqual(plain(eventReminderMinutes(null, START)), []);
+  });
+});
+
+describe("planReminderUpdate", () => {
+  // A managed alarm with properties of its own, as another client may have written it
+  const rich = (seconds, extra) => ({ ...alarm("DISPLAY", START, seconds), ...extra });
+
+  it("keeps the alarms whose minutes stay, as they are, and adds only the new minutes", () => {
+    const at15 = rich(-900, { repeat: 2, description: "Standup", props: { "X-CUSTOM": "1" } });
+    const at60 = rich(-3600, {});
+    const email = alarm("EMAIL", START, -900);
+    const plan = planReminderUpdate([at60, email, at15], [1440, 15], START);
+    assert.equal(plan.changed, true);
+    assert.equal(plan.kept.length, 2);
+    assert.equal(plan.kept[0], email);
+    assert.equal(plan.kept[1], at15); // the same object: REPEAT, DESCRIPTION and X- properties kept
+    assert.deepEqual(plain(plan.add), [1440]);
+    assert.equal(plan.managedCount, 2);
+    assert.equal(plan.otherCount, 1);
+  });
+
+  it("changes nothing when the list is the same, duplicates and order included", () => {
+    const a = rich(-900, {}), b = rich(-900, { description: "second" }), c = rich(0, {});
+    const plan = planReminderUpdate([c, a, b], [15, 0], START);
+    assert.equal(plan.changed, false);
+    assert.equal(plan.kept.length, 3);
+    assert.deepEqual(plain(plan.add), []);
+  });
+
+  it("keeps two alarms at one offset when other minutes change", () => {
+    const a = rich(-900, {}), b = rich(-900, {}), old = rich(-60, {});
+    const plan = planReminderUpdate([a, b, old], [15, 30], START);
+    assert.equal(plan.changed, true);
+    assert.deepEqual([...plan.kept], [a, b]);
+    assert.deepEqual(plain(plan.add), [30]);
+    assert.equal(plan.managedCount, 3);
+  });
+
+  it("removes every managed alarm for [] and keeps the others", () => {
+    const other = alarm("DISPLAY", END, -900);
+    const plan = planReminderUpdate([rich(-900, {}), other, rich(-60, {})], [], START);
+    assert.equal(plan.changed, true);
+    assert.deepEqual([...plan.kept], [other]);
+    assert.equal(plan.managedCount, 0);
+    assert.equal(planReminderUpdate([other], [], START).changed, false);
+    assert.equal(planReminderUpdate([], [], START).changed, false);
+  });
+
+  it("adds every minute to an event without reminders", () => {
+    const plan = planReminderUpdate(undefined, [60, 5], START);
+    assert.equal(plan.changed, true);
+    assert.deepEqual(plain(plan.add), [60, 5]);
   });
 });
 
