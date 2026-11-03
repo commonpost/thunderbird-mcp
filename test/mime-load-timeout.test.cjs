@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // loadMimeMessage is on the default path of replyToMessage / forwardMessage (the review window), so it is bounded:
 // a window or a draft goes on without the parsed message, a direct send fails instead of hanging.

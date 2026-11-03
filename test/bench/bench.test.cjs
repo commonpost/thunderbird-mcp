@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // H1/H2: the bench itself - isolated profile, default account, fixtures, Gloda.
 const { describe, it, after } = require("node:test");

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // saveComposeFieldsAsDraft: drafts go through a window-less nsIMsgCompose, whose state
 // listener is removed however the save ends; nsIMsgSend is the fallback. An edited draft is replaced.

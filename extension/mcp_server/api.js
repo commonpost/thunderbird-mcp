@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 // XPCOM globals (ExtensionCommon, ChromeUtils, Services, Cc, Ci) are
 // declared in eslint.config.mjs's extension/ file group. Per-file
 // /* global */ comment triggered no-redeclare.

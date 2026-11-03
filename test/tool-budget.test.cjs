@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 /**
  * Tool budget: tools/list size, descriptions, result limits, README coverage and a
  * reviewed snapshot of what clients receive. Update the snapshot with

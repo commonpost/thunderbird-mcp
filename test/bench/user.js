@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 // Test bench profile (scripts/tb-bench.sh). Synthetic accounts only.
 // Extension loading (same as tb-compat-test.yml)
 user_pref("extensions.experiments.enabled", true);

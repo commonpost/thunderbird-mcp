@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // Experiment scripts run in a sandbox without web globals such as DOMParser or TextDecoder
 // (all four imported below are undefined there in Thunderbird 156). api.js must import every one it uses, or the code

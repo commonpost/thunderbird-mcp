@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 
 // scripts/build-mcpb-reproducible.cjs: same input, same bytes; the bundle holds the bridge only and its

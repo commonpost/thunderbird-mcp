@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 // Marionette chrome script (body of an async function, `args` = { expected, timeoutMs }).
 // Parses the local mbox folders, starts the Gloda sweep and waits until the fixtures are indexed.
 const { MailServices } = ChromeUtils.importESModule("resource:///modules/MailServices.sys.mjs");

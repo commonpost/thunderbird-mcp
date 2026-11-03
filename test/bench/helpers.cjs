@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // Shared helpers for test/bench/*.test.cjs: bench state, MCP calls through mcp-bridge.cjs, Marionette, chrome-side library.
 const fs = require("node:fs");

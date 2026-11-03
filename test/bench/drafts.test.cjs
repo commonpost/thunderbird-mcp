@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // Drafts are saved through nsIMsgCompose, like Thunderbird's compose window: identity, format, reply / forward state;
 // a draft edited with draftId keeps what Thunderbird keeps when it reopens and saves a draft.

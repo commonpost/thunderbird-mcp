@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 # Build the Commonpost MCP extension
 
 set -e

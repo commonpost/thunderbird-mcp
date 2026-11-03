@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 
 // The tables #17 adds (format: "table") and its groupBy rows go through 0.10.0's handling of untrusted content

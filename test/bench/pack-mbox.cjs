@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // Packs test/fixtures/mail/<Folder>/*.eml into <mailDir>/<Folder> mbox files (bytes kept as is).
 // Usage: node test/bench/pack-mbox.cjs <fixturesDir> <mailDir>

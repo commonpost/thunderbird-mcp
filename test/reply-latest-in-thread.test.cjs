@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // replyToMessage latestInThread: the newest message of the conversation is found with the threadOf search
 // (findLatestInThread), never for a direct send, and with the folders prepared as for a search.

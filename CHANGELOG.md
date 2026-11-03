@@ -10,6 +10,10 @@ project is kept in this repository.
 
 - Each release also carries `commonpost-mcp-v<version>.intoto.jsonl`: the signed SLSA provenance of the XPI, the
   `.mcpb` and the bridge, the same statements as in the `.sigstore.json` bundles, in the form SLSA tools read.
+- Each source file now names its license and copyright holder (SPDX tags). `LICENSE` holds only the MIT license, so
+  that tools recognize it; the MPL-2.0 terms of `extension/httpd.sys.mjs` stay in `THIRD-PARTY.md`, which ships next
+  to `LICENSE` in the XPI and the `.mcpb`. CONTRIBUTING.md now documents the code review and small tasks for new
+  contributors.
 
 ### Fixed
 

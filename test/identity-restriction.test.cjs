@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // Which identity a reply or forward may use under an account restriction. Runs the real functions of api.js against
 // fake accounts; test/bench/identity.test.cjs checks the same on a real Thunderbird.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // T1, T2: threadOf and groupBy "thread" on the conversation fixtures (Inbox + Sent); T4: participant:@domain; T5: searchBody.
 const { describe, it, after } = require("node:test");

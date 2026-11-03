@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // The quote of a reply or a forward: tagEmbeddedObjects marks the tags it finds in the text, then the elements
 // Thunderbird's parser finds are checked (tagQuotedObjects). Here with a stand-in for the parser; the real one is
