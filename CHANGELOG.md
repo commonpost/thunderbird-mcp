@@ -34,6 +34,14 @@ project is kept in this repository.
   flags. No body is parsed, and a large message is not read past its headers. Without a local copy of the message
   (IMAP not kept offline), the subject is withheld unless reading encrypted messages is allowed, since nothing then
   shows that the message is not encrypted.
+- `getMessages` with `headersOnly: true` also returns, for a message with a List-Unsubscribe header, `unsubscribe`:
+  `{ mailto: [{ address, subject?, body? }], https: [url], oneClick }` (RFC 2369 and RFC 8058). `oneClick` is true
+  only when List-Unsubscribe-Post is exactly `List-Unsubscribe=One-Click` and an https URI is listed; the DKIM
+  signature RFC 8058 also asks for is not checked. `http:` URIs come apart as `insecure`; any other scheme
+  (`javascript:`, `data:`, `file:`...), a URI with user info or a non-ASCII host, and malformed entries are only
+  counted (`ignored`). At most 5 URIs of each kind, 2,048 characters each. The header is written by the sender:
+  nothing is fetched, sent or opened, a mailto `body` comes between the untrusted-content markers like a message
+  body, and the tool description says the user decides.
 
 ### Changed
 
