@@ -96,7 +96,7 @@ function updateSteps(version, bridge, minBridge) {
       'connected, each with its version and "Up to date", "Newer version available" or "Update recommended". Claude Desktop and another ' +
       'client on the same computer are two bridges, updated separately.',
     '',
-    'The `.sigstore.json` files are provenance attestations, not something to install.',
+    'The `.sigstore.json` and `.intoto.jsonl` files are provenance attestations, not something to install.',
   ].join('\n');
 }
 

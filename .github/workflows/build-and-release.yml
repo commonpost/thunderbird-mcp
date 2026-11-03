@@ -199,7 +199,13 @@ jobs:
           cp "$BUNDLE_XPI" "dist/${XPI}.sigstore.json"
           cp "$BUNDLE_MCPB" "dist/${MCPB}.sigstore.json"
           cp "$BUNDLE_BRIDGE" "dist/mcp-bridge.cjs.sigstore.json"
-          ASSETS=("dist/${XPI}" "dist/${XPI}.sigstore.json" "dist/${MCPB}" "dist/${MCPB}.sigstore.json" "dist/mcp-bridge.cjs" "dist/mcp-bridge.cjs.sigstore.json")
+          # The same three signed SLSA provenance statements, as DSSE envelopes one per line (the .intoto.jsonl form
+          # that SLSA verifiers and OpenSSF Scorecard look for)
+          PROVENANCE="dist/${XPI%.xpi}.intoto.jsonl"
+          for bundle in "$BUNDLE_XPI" "$BUNDLE_MCPB" "$BUNDLE_BRIDGE"; do
+            jq -ce '.dsseEnvelope' "$bundle"
+          done > "$PROVENANCE"
+          ASSETS=("dist/${XPI}" "dist/${XPI}.sigstore.json" "dist/${MCPB}" "dist/${MCPB}.sigstore.json" "dist/mcp-bridge.cjs" "dist/mcp-bridge.cjs.sigstore.json" "$PROVENANCE")
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" "${ASSETS[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
