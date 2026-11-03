@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
+name: MCP Registry
+
+# Publishes the listing io.github.commonpost/thunderbird-mcp on the official MCP Registry for a published release:
+# the .mcpb of that release, with its SHA-256. Run by hand after a release (RELEASING.md). The registry grants the
+# io.github.commonpost namespace to this repository's GitHub OIDC token, so no secret is stored; that token could
+# publish any io.github.commonpost/* listing, so the job runs in the protected "mcp-registry" environment (required
+# reviewer, main branch only). Only GitHub's preinstalled gh and jq and the registry's signed mcp-publisher run here.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to list (vX.Y.Z)
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: mcp-registry
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to the MCP Registry
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: mcp-registry
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PUBLISHER_VERSION: v1.8.7
+    steps:
+      - name: Write server.json for the release
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag must be vX.Y.Z"; exit 1; }
+          mkdir dl
+          gh release download "$TAG" --pattern '*.mcpb' --dir dl
+          shopt -s nullglob
+          files=(dl/*.mcpb)
+          [ "${#files[@]}" -eq 1 ] || { echo "::error::expected one .mcpb in $TAG"; exit 1; }
+          mcpb="$(basename "${files[0]}")"
+          gh attestation verify "dl/$mcpb" --repo "$GH_REPO"
+          sha="$(sha256sum "dl/$mcpb" | cut -d' ' -f1)"
+          jq -n --arg version "${TAG#v}" --arg url "https://github.com/$GH_REPO/releases/download/$TAG/$mcpb" --arg sha "$sha" '{
+            "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+            name: "io.github.commonpost/thunderbird-mcp",
+            title: "Commonpost MCP for Thunderbird",
+            description: "Mail, contacts, calendar and filters of Thunderbird for AI assistants, through a local add-on.",
+            version: $version,
+            websiteUrl: "https://github.com/commonpost/thunderbird-mcp",
+            repository: { url: "https://github.com/commonpost/thunderbird-mcp", source: "github" },
+            packages: [ { registryType: "mcpb", identifier: $url, fileSha256: $sha, transport: { type: "stdio" } } ]
+          }' > server.json
+          cat server.json
+
+      - name: Install mcp-publisher (signature verified)
+        run: |
+          set -euo pipefail
+          archive=mcp-publisher_linux_amd64.tar.gz
+          base="https://github.com/modelcontextprotocol/registry/releases/download/$PUBLISHER_VERSION"
+          curl --fail --location --silent --show-error --output "$archive" "$base/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base/$archive.sigstore.json"
+          gh attestation verify "$archive" --bundle "$archive.sigstore.json" --repo modelcontextprotocol/registry \
+            --cert-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/$PUBLISHER_VERSION"
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive" "$archive.sigstore.json"
+
+      - name: Publish
+        run: |
+          set -euo pipefail
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
