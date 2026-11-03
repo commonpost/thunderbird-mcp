@@ -48,8 +48,19 @@ project is kept in this repository.
   relative to the end) are kept. `listEvents` returns `reminders` on each event. A calendar that does not take
   display alarms, or fewer alarms than asked (`capabilities.alarms.*`), gets an error instead of losing them; a
   calendar whose reminders are turned off gets a warning.
+- Contacts with several email addresses: `getContact` and `searchContacts` return `emails`
+  (`[{ address, type?, primary? }]`, primary first, in Thunderbird's preference order; `email` stays the primary),
+  and `searchContacts` matches any of them. `createContact` and `updateContact` take `emails` (at most 10 plain
+  addresses, type `work`, `home` or `other`, at most one `primary`, otherwise the first), which replaces the list:
+  an address already on the card keeps its vCard entry and parameters, the primary gets `PREF=1`, and no other vCard
+  property is touched. `email` alone still changes only the primary address.
 
 ### Changed
+
+- `createContact` creates a vCard contact, as Thunderbird's contact editor does, instead of a card with the old flat
+  properties: a new contact can now hold several phones or addresses of one type. A contact note is stripped of the
+  add-on's email-content markers on vCard contacts too (it already was on the others), so `updateContact` no longer
+  stores a note copied with them.
 
 - A direct send (`sendMail` with `skipReview`, `replyToMessage` and `forwardMessage` with `mode: "send"`) is refused
   when it has no recipient, or when it is larger than Thunderbird's large-message size
