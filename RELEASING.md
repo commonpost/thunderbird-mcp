@@ -60,6 +60,14 @@ environment can publish.
   again.
 - <https://commonpost.github.io/thunderbird-mcp/updates.json> lists the new version with the same hash.
 
+## 5. MCP Registry listing
+
+Run the **MCP Registry** workflow (Actions, Run workflow) from `main` with the new tag and approve the
+`mcp-registry` environment. It
+lists the release's `.mcpb` and its SHA-256 as `io.github.commonpost/thunderbird-mcp` on the
+[MCP Registry](https://registry.modelcontextprotocol.io), signing in with the workflow's GitHub OIDC token (no
+secret). Check: `curl -s 'https://registry.modelcontextprotocol.io/v0/servers?search=commonpost'`.
+
 ## Compatibility thresholds
 
 The bridge and the add-on are installed separately and only the add-on updates itself. Each side warns only about an

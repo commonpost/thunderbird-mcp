@@ -14,6 +14,8 @@ project is kept in this repository.
   that tools recognize it; the MPL-2.0 terms of `extension/httpd.sys.mjs` stay in `THIRD-PARTY.md`, which ships next
   to `LICENSE` in the XPI and the `.mcpb`. CONTRIBUTING.md now documents the code review and small tasks for new
   contributors.
+- Releases are listed on the official MCP Registry as `io.github.commonpost/thunderbird-mcp` (workflow
+  `mcp-registry.yml`, run after each release; see RELEASING.md).
 
 ### Fixed
 
