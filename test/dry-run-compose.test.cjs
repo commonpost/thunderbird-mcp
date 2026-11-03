@@ -102,3 +102,28 @@ describe("dryRun wiring", () => {
     assert.match(direct, /setDirectSendRecipients\(composeFields, msgComposeParams\.identity, to, cc, bcc\)/);
   });
 });
+
+describe("directSendRefusal", () => {
+  const sandbox2 = {};
+  vm.createContext(sandbox2);
+  vm.runInContext(`${marked("// BEGIN DRY RUN COMPOSE", "// END DRY RUN COMPOSE")}\nthis.directSendRefusal = directSendRefusal;`, sandbox2);
+  const refusal = sandbox2.directSendRefusal;
+
+  it("refuses a direct send without any recipient", () => {
+    assert.match(refusal({ to: "", cc: " ", bcc: undefined }, 10, [], 0), /at least one recipient/);
+    assert.equal(refusal({ to: "", cc: "", bcc: "a@example.com" }, 10, [], 0), null);
+  });
+
+  it("refuses a message above Thunderbird's large-message size, only when that check is on", () => {
+    assert.match(refusal({ to: "a@example.com" }, 10, [30 * 1024 * 1024], 20 * 1024 * 1024), /large-message size/);
+    assert.equal(refusal({ to: "a@example.com" }, 10, [30 * 1024 * 1024], 0), null);
+    assert.equal(refusal({ to: "a@example.com" }, 10, [1024], 20 * 1024 * 1024), null);
+  });
+
+  it("is checked before every direct send, and by a dry run of one", () => {
+    const send = marked("function sendMessageDirectly(", "return new Promise((resolve) => {");
+    assert.match(send, /if \(mode === Ci\.nsIMsgCompDeliverMode\.Now\) \{\n\s*const refusal = directSendRefusal\(/);
+    const compose = marked("function composeMail(", "function decodeHeaderValue(");
+    assert.match(compose, /if \(direct\) \{\n\s*const refusal = directSendRefusal\(/);
+  });
+});

@@ -4447,6 +4447,21 @@ function dryRunComposeResult(details, largeMessageBytes = 0) {
   result.note = "Nothing was sent, saved or opened";
   return result;
 }
+// Why a direct send must not start, or null. Without any recipient there is nobody to send to; above
+// mailnews.message_warning_size Thunderbird asks for a confirmation in a dialog nobody watches during a direct send
+// (MessageSend), and the call would wait on it. `attachmentSizes` holds the sizes that are known.
+function directSendRefusal({ to, cc, bcc, subject }, bodyBytes, attachmentSizes, largeMessageBytes) {
+  if (![to, cc, bcc].some(v => String(v || "").trim())) {
+    return "A direct send needs at least one recipient (to, cc or bcc); nothing was sent";
+  }
+  if (largeMessageBytes > 0) {
+    const estimated = estimateMessageBytes([to, cc, bcc, subject].map(v => v || "").join("\n"), bodyBytes, attachmentSizes);
+    if (estimated > largeMessageBytes) {
+      return `About ${estimated} bytes, above Thunderbird's large-message size (${largeMessageBytes}): Thunderbird would ask for a confirmation in a dialog during a direct send. Open the review window instead; nothing was sent`;
+    }
+  }
+  return null;
+}
 // END DRY RUN COMPOSE
 
 // getMessages with headersOnly: the headers it returns, and the longest value kept
@@ -8659,6 +8674,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * NS_ERROR_XPC_NOT_ENOUGH_ARGS, fall back to the legacy 18-arg call.
              */
             // BEGIN DIRECT SEND
+            // Thunderbird's large-message confirmation size (mailnews.message_warning_size), 0 when off
+            function largeMessageWarningBytes() {
+              try {
+                return Math.max(0, Services.prefs.getIntPref("mailnews.message_warning_size", 0));
+              } catch {
+                return 0;
+              }
+            }
+
             function sendMessageDirectly(composeFields, identity, attachDescs, originalMsgURI, compType, deliverMode, bodyType) {
               if (!identity) {
                 return Promise.resolve({ error: "No identity available for direct send" });
@@ -8666,6 +8690,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
               const mode = deliverMode ?? Ci.nsIMsgCompDeliverMode.Now;
               const bodyMimeType = bodyType || "text/html";
+              if (mode === Ci.nsIMsgCompDeliverMode.Now) {
+                const refusal = directSendRefusal(composeFields, utf8ByteLength(composeFields.body || ""),
+                  (attachDescs || []).map(d => d.size).filter(n => typeof n === "number"), largeMessageWarningBytes());
+                if (refusal) return Promise.resolve({ error: refusal });
+              }
               const SEND_TIMEOUT_MS = 120000; // 2 min safety timeout
 
               return new Promise((resolve) => {
@@ -13486,13 +13515,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               try {
                 // A dry run reports what this call would do, or the error it would return, and does nothing
                 const refuse = (error) => dryRun ? dryRunComposeResult({ error }) : { error };
-                const largeMessageBytes = () => {
-                  try {
-                    return Math.max(0, Services.prefs.getIntPref("mailnews.message_warning_size", 0));
-                  } catch {
-                    return 0;
-                  }
-                };
+                const largeMessageBytes = largeMessageWarningBytes;
                 if (skipReview && isSkipReviewBlocked()) {
                   return refuse("User preference blocks skipReview. Retry with skipReview: false (or omitted) to open the review window instead.");
                 }
@@ -13541,6 +13564,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   const fields = Cc["@mozilla.org/messengercompose/composefields;1"].createInstance(Ci.nsIMsgCompFields);
                   setDirectSendRecipients(fields, identity, to, cc, bcc);
                   const finalBody = newMessageBody(body, isHtml, useHtml, identity);
+                  if (direct) {
+                    const refusal = directSendRefusal({ to: fields.to, cc: fields.cc, bcc: fields.bcc, subject },
+                      utf8ByteLength(finalBody), fileDescs.map(d => d.size || 0), largeMessageBytes());
+                    if (refusal) return refuse(refusal);
+                  }
                   return dryRunComposeResult({
                     action: direct ? "send now, without a review window" : "open a review window; nothing is sent until the user sends it",
                     from: identity?.email ? (identity.fullName ? `"${identity.fullName}" <${identity.email}>` : identity.email) : "",

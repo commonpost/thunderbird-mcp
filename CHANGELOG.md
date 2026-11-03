@@ -37,6 +37,10 @@ project is kept in this repository.
 
 ### Changed
 
+- A direct send (`sendMail` with `skipReview`, `replyToMessage` and `forwardMessage` with `mode: "send"`) is refused
+  when it has no recipient, or when it is larger than Thunderbird's large-message size
+  (`mailnews.message_warning_size`, 20 MiB by default): Thunderbird would then ask for a confirmation in a dialog
+  nobody watches, and the call would wait. Open the review window for these.
 - A direct `sendMail` (`skipReview`) now adds the identity's automatic Cc, Bcc and Reply-To, as the compose window,
   and direct replies and forwards, already did.
 - The add-on's HTTP server closes a connection that sends nothing of its request for 30 s, or has not sent all of

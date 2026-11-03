@@ -42,6 +42,9 @@ function load() {
     MailServices: { accounts: { accounts: [] } },
     descsToMsgAttachments: () => [],
     accountKeyForIdentity: () => "",
+    // The refusals before a direct send are tested in dry-run-compose.test.cjs
+    directSendRefusal: () => null,
+    utf8ByteLength: () => 0,
   };
   vm.createContext(sandbox);
   vm.runInContext(`${region}\nthis.sendMessageDirectly = sendMessageDirectly;`, sandbox);
