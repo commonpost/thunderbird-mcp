@@ -65,6 +65,9 @@ project is kept in this repository.
   and direct replies and forwards, already did.
 - The add-on's HTTP server closes a connection that sends nothing of its request for 30 s, or has not sent all of
   it after 5 minutes. Handling a request (a direct send can take minutes) is not limited.
+- The raw MIME fallbacks of `getMessage` (body and attachments of a message Thunderbird's own parser returns empty)
+  stop at 10,000 MIME parts: a message of up to 50 MiB can hold over a million empty parts, and splitting them all
+  held Thunderbird for seconds. A body or attachment past that point is not found.
 
 ## [0.17.5] - 2026-11-03
 
