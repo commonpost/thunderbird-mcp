@@ -101,6 +101,34 @@ describe("rawMimeParameter", () => {
   });
 });
 
+describe("rawMimeParameter bounds", () => {
+  it("decodes at most 12 x 255 characters of a value, so a long name is still kept whole", () => {
+    assert.equal(rawMimeParameter(`attachment; filename="${"a".repeat(100000)}"`, "filename").plain.length, 3060);
+    const ext = rawMimeParameter(`attachment; filename*=utf-8''${"%F0%9F%98%80".repeat(10000)}`, "filename").extended;
+    assert.equal([...ext].length, 255); // 255 four-byte characters, nothing cut in the middle
+    // The 255 characters a listed name keeps survive in every form
+    const name = "\u{1F600}".repeat(300);
+    const word = `=?UTF-8?B?${Buffer.from(name).toString("base64")}?=`;
+    for (const header of [`attachment; filename*=UTF-8''${encodeURIComponent(name)}`, `attachment; filename="${Buffer.from(name).toString("latin1")}"`,
+      `attachment; filename="${word}"`]) {
+      const raw = mixed("b", [text, `Content-Type: application/pdf\r\nContent-Disposition: ${header}\r\n\r\nx`]);
+      const listed = listRawMimeAttachments(raw, decodeWord).attachments[0].name;
+      assert.equal(listed, name.slice(0, 255), header.slice(0, 40));
+    }
+  });
+
+  it("reads a repeated parameter or segment once (the last), in bounded time", () => {
+    const started = Date.now();
+    const repeated = Array.from({ length: 50000 }, (_, i) => `filename*=utf-8''n${i}`).join("; ");
+    assert.deepEqual(plain(rawMimeParameter(`attachment; ${repeated}`, "filename")), { extended: "n49999" });
+    const segments = Array.from({ length: 50000 }, (_, i) => `filename*${i % 2}="s${i % 2}-${i}"`).join("; ");
+    assert.deepEqual(plain(rawMimeParameter(`attachment; ${segments}`, "filename")), { extended: "s0-49998s1-49999" });
+    const long = Array.from({ length: 999 }, (_, i) => `filename*${i}="${"x".repeat(100)}"`).join("; ");
+    assert.equal(rawMimeParameter(`attachment; ${long}`, "filename").extended.length, 3060);
+    assert.ok(Date.now() - started < 2000);
+  });
+});
+
 describe("rawMimeDecodedSize", () => {
   it("estimates the decoded size without decoding", () => {
     assert.equal(rawMimeDecodedSize(b64, "base64"), 1000);
