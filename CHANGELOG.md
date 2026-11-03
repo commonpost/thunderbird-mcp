@@ -6,6 +6,11 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Changed
+
+- Each release also carries `commonpost-mcp-v<version>.intoto.jsonl`: the signed SLSA provenance of the XPI, the
+  `.mcpb` and the bridge, the same statements as in the `.sigstore.json` bundles, in the form SLSA tools read.
+
 ### Fixed
 
 - `updateContact` with `emails`: an address that `getContact` returns with `invalid: true` (a display name, a list or

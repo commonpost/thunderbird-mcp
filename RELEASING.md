@@ -41,7 +41,8 @@ environment can publish.
 3. Waits for a maintainer to approve the `release` environment.
 4. Rebuilds both from the tag and refuses any difference with the first build.
 5. Attests the build provenance of the XPI, the `.mcpb` and `mcp-bridge.cjs` (Sigstore bundles).
-6. Creates the release with the XPI, the `.mcpb`, the bridge and the three `.sigstore.json` bundles. Its page is
+6. Creates the release with the XPI, the `.mcpb`, the bridge, the three `.sigstore.json` bundles and
+   `commonpost-mcp-v<version>.intoto.jsonl` (the same three provenance statements as DSSE envelopes). Its page is
    written by `scripts/release-notes.cjs`: the summary ("In short"), how to update the add-on and the bridge (it
    says whether this release changes the bridge, from `BRIDGE_VERSION`), then the CHANGELOG section.
 7. Publishes `updates.json` on `gh-pages` with the new version and its `update_hash`, so installed copies update.
