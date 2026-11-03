@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 
 // The outer headers are read from the header block only, whatever the message size.

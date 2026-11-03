@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // sendMessageDirectly: on TB 128+ createAndSendMessage resolves when SMTP starts, so a send
 // must wait for the SMTP outcome; drafts may complete on the promise or onStopCopy.

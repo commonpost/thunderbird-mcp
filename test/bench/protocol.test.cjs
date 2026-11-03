@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // MCP protocol through the bridge and the running extension: instructions, tool metadata, isError results.
 const { describe, it, after } = require("node:test");

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 'use strict';
 
 // The bridge tells the user, once per connection, when its version and the

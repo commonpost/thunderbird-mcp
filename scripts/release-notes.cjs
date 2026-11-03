@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 /**
  * Release notes of a version, for the release workflow: what the release brings in plain words, how to update, then
  * the section of CHANGELOG.md.

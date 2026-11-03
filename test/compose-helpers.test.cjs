@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 /**
  * Compose decisions: mode resolution, reply recipients, References, draft merge, body layout (nsMsgCompose.cpp / mimedrft.cpp ports).
  */

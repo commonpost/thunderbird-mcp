@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 
 // The repository as a Claude Code plugin marketplace: the manifests at .claude-plugin/ and what they point to.

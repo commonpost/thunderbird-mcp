@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // R1: rawSource is decoded text; the body Thunderbird itself decodes (getMessage) appears in it unchanged.
 const { describe, it, after } = require("node:test");

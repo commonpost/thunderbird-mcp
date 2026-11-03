@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 // `browser` is declared as a global in eslint.config.mjs for the
 // extension/ file group. Per-file /* global browser */ triggered
 // no-redeclare.

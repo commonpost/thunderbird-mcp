@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // getMessages headersOnly: List-Unsubscribe / List-Unsubscribe-Post parsed for reading (LIST UNSUBSCRIBE region).
 const { describe, it } = require("node:test");

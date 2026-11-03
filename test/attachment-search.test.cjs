@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 
 // searchMessages attachmentName / attachmentType: the filter, the MIME structure walk and the per-call limits.

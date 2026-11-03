@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 /**
  * What an agent benchmark found: answers that left the caller without what it needed to go on.
  * Empty search hint, recipients without an address, the path of a renamed folder.

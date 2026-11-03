@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 /**
  * Argument coercion and validation as tools/call runs them: the production
  * coerceToolArgs + validateToolArgs against the production tool schemas.

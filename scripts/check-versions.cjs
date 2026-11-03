@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 /**
  * Version rules of Commonpost MCP for Thunderbird (Version sync job, and the tag check of the release workflow).
  *

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 /**
  * Reproducible .mcpb build (Claude Desktop bundle) for Commonpost MCP for Thunderbird.
  *

@@ -19,6 +19,9 @@ versions, and moving functionality from the Experiment API to standard MailExten
    [docs/experiment-inventory.md](docs/experiment-inventory.md) when you change what needs the Experiment.
 6. **Be respectful of upstream.** This project continues thunderbird-mcp by Tomasz Kasperczyk and keeps its history.
    Where a change fits the original project, we offer it there too.
+7. **License header in each source file.** A new source file starts (after any `#!` line) with the two SPDX lines the
+   other files carry: `SPDX-License-Identifier: MIT` and `SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost
+   contributors (see LICENSE)`. `test/spdx-headers.test.cjs` checks it.
 
 ## Working locally
 
@@ -68,6 +71,12 @@ A behaviour change that a lab scenario encodes needs a matching change in the la
 
 To try the extension in Thunderbird, install the XPI from a release (Tools > Add-ons > Install Add-on From File).
 
+## Small tasks for new contributors
+
+Issues labelled [good first issue](https://github.com/commonpost/thunderbird-mcp/labels/good%20first%20issue) are small,
+self-contained tasks that need no knowledge of Thunderbird's internals. Say in the issue that you are taking one, so
+that two people do not do the same work.
+
 ## Reporting bugs and requesting features
 
 Open an [issue](https://github.com/commonpost/thunderbird-mcp/issues): what you did, what you expected, what
@@ -82,6 +91,24 @@ through a public issue.
 - AI-assisted contributions are welcome if you have reviewed and run them yourself; please say so in the pull request.
   (Commits of the maintainers made with an AI assistant carry a `Co-Authored-By` trailer.)
 - By contributing, you agree that your contribution is licensed under the MIT license of this repository.
+
+## Code review
+
+Every change reaches `main` through a pull request, and the
+[required checks](GOVERNANCE.md#how-decisions-are-made) must pass before it is merged. The reviewer checks:
+
+- **Behaviour:** the change does what the pull request says, and a test covers it (a bug fix: a test that fails
+  without the fix, when practical). A change in what Thunderbird ends up doing is also checked in the end-to-end lab.
+- **Security:** no new privileged call outside `api.js` and `httpd.sys.mjs`; the restrictions still hold (account
+  restriction, refusal of encrypted content unless allowed, direct-send blocking, attachment path checks, the auth
+  token); arguments from the assistant are validated; failures refuse rather than allow.
+- **Data:** only synthetic data in tests, fixtures and logs.
+- **Dependencies:** new ones are justified and pinned; GitHub Actions by commit SHA.
+- **Documentation:** README and `CHANGELOG.md` (`[Unreleased]`) describe the change in the same pull request.
+
+A pull request is merged when the checks pass and a maintainer approves it. A maintainer's own pull request needs the
+approval of another maintainer; while the project has a single maintainer ([GOVERNANCE.md](GOVERNANCE.md)), the
+required checks and the end-to-end lab are the second line of review.
 
 ## Conduct
 

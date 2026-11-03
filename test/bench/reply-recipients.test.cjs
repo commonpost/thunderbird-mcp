@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // replyToMessage mode "draft": recipients and threading headers match Thunderbird's own reply window for every fixture.
 const { describe, it, before, after } = require("node:test");

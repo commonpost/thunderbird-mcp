@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // Without `from`, replies and forwards use the identity Thunderbird's own Reply / Forward picks.
 // A direct send (skipReview) takes the sender and the recipients from the caller only.

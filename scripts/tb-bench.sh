@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 # Test bench: a throwaway headless Thunderbird with synthetic mail (test/fixtures/mail),
 # driven through mcp-bridge.cjs and Marionette. Never touches the user's profile:
 # HOME, TMPDIR (connection.json) and the profile live under .cache/tb-bench.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 'use strict';
 
 // server/discover is answered by the bridge itself, at once, with the plain JSON-RPC "Method not found", whether

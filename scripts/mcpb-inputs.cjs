@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 'use strict';
 // The files of the .mcpb bundle, [path in the repository, name in the archive], and the scripts whose change alters
 // the bundle bytes without being in it. Shared by build-mcpb-reproducible.cjs and check-versions.cjs.

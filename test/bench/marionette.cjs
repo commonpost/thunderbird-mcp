@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // Minimal Marionette client for the test bench: chrome-context scripts only.
 // Protocol: "<len>:<json>" frames; commands [0, id, name, params], replies [1, id, error, result].

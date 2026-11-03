@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 'use strict';
 
 // The released 0.11.0 bridge (test/fixtures/mcp-bridge-v0.11.0.cjs.txt, byte for byte) against the add-on's bridge

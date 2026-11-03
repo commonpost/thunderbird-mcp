@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 'use strict';
 
 // COMMONPOST_MCP_CONNECTION_FILE holding an unexpanded ${user_config.…} placeholder (a client that

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // Reply, forward and new-message draft bodies (cite line, quote, forward header, signature, layout, charset) equal
 // what Thunderbird's own compose window saves with the same text typed at its caret; an edited draft equals a fresh

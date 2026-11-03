@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // Reading on a real Thunderbird: libmime decodes bodies and headers, search finds the fixtures.
 const { describe, it, after } = require("node:test");

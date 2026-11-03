@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 /**
  * What the add-on knows about the MCP bridge that calls it: the X-Commonpost-Bridge header, the states and
  * decisions, the notices and refusals, the memory of bridges seen. The production BRIDGE COMPAT block runs in a vm.
