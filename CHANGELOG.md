@@ -6,6 +6,15 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-03
+
+- New options on existing tools (still 40 tools): check a send without sending (`sendMail` `dryRun`), ask the server
+  for a folder's new mail (`listFolders` `refresh`), the headers of up to 200 messages at once with their unsubscribe
+  link (`getMessages` `headersOnly`), event reminders, contacts with several email addresses, and search by
+  attachment name or type.
+- A direct send without recipients, or larger than Thunderbird's large-message warning size, is refused.
+- **The bridge does not change in this release:** nothing to update in your MCP clients if their bridge is 0.17.1.
+
 ### Added
 
 - `sendMail` with `dryRun: true` reports what the call would do (open a review window or send directly, the sender,
