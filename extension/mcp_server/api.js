@@ -4479,6 +4479,131 @@ function clampHeaderValue(value) {
   return value.length > MAX_HEADER_VALUE_CHARS ? `${value.slice(0, MAX_HEADER_VALUE_CHARS)}... (truncated)` : value;
 }
 
+// BEGIN LIST UNSUBSCRIBE
+// getMessages with headersOnly: List-Unsubscribe (RFC 2369) and List-Unsubscribe-Post (RFC 8058) parsed for reading.
+// The sender writes these headers: nothing here fetches, sends or opens anything, and only mailto: and https: URIs
+// are returned (http: apart, as insecure; any other scheme is only counted).
+const MAX_UNSUBSCRIBE_HEADER_CHARS = 16384;
+const MAX_UNSUBSCRIBE_URIS = 10;
+const MAX_UNSUBSCRIBE_PER_KIND = 5;
+const MAX_UNSUBSCRIBE_URI_CHARS = 2048;
+const MAX_UNSUBSCRIBE_SUBJECT_CHARS = 200;
+const MAX_UNSUBSCRIBE_BODY_CHARS = 1000;
+// ASCII host names only (an IDN must be in its xn-- form), with a dot, no user info, no IP-v6 literal; the rest of
+// the URI is printable ASCII without quotes, angle brackets, backslash, caret, backquote or braces
+const UNSUBSCRIBE_WEB_URI = /^(https?):\/\/((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?::(\d{1,5}))?([/?#][\x21\x23-\x3B\x3D\x3F-\x5B\x5D\x5F\x61-\x7A\x7E]*)?$/i;
+const UNSUBSCRIBE_ADDRESS = /^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+
+// The URIs between angle brackets, outside comments; folding whitespace inside the brackets is not part of the URI.
+// Text outside brackets is not a URI (RFC 2369 requires them). An unclosed bracket ends the list.
+function listUnsubscribeUris(value) {
+  const uris = [];
+  let unclosed = false;
+  let depth = 0;
+  for (let i = 0; i < value.length && uris.length < MAX_UNSUBSCRIBE_URIS; i++) {
+    const ch = value[i];
+    if (depth > 0) {
+      if (ch === "\\") i++;
+      else if (ch === "(") depth++;
+      else if (ch === ")") depth--;
+    } else if (ch === "(") {
+      depth = 1;
+    } else if (ch === "<") {
+      const end = value.indexOf(">", i + 1);
+      if (end < 0) {
+        unclosed = true;
+        break;
+      }
+      uris.push(value.slice(i + 1, end).replace(/[ \t\r\n]+/g, ""));
+      i = end;
+    }
+  }
+  return { uris, unclosed };
+}
+
+function decodeUnsubscribeComponent(text) {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return null;
+  }
+}
+
+// A mailto: URI (RFC 6068): one entry per valid address (path and to=), with its subject and body. Null when no
+// address is valid. Other header fields (cc, bcc...) are not returned.
+function parseUnsubscribeMailto(uri) {
+  const rest = uri.slice("mailto:".length).split("#")[0];
+  const queryAt = rest.indexOf("?");
+  const candidates = (queryAt < 0 ? rest : rest.slice(0, queryAt)).split(",");
+  let subject;
+  let body;
+  if (queryAt >= 0) {
+    for (const pair of rest.slice(queryAt + 1).split("&")) {
+      const eq = pair.indexOf("=");
+      const name = decodeUnsubscribeComponent(eq < 0 ? pair : pair.slice(0, eq))?.toLowerCase();
+      const value = eq < 0 ? "" : pair.slice(eq + 1);
+      if (name === "to") candidates.push(...value.split(","));
+      else if (name === "subject" && subject === undefined) subject = decodeUnsubscribeComponent(value);
+      else if (name === "body" && body === undefined) body = decodeUnsubscribeComponent(value);
+    }
+  }
+  // Subject: one line; body: lines kept; other control characters removed
+  if (typeof subject === "string") {
+    subject = subject.replace(/[\x00-\x1F\x7F]+/g, " ").trim().slice(0, MAX_UNSUBSCRIBE_SUBJECT_CHARS);
+  }
+  if (typeof body === "string") {
+    body = body.replace(/\r\n?/g, "\n").replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "").slice(0, MAX_UNSUBSCRIBE_BODY_CHARS);
+  }
+  const addresses = [];
+  for (const candidate of candidates) {
+    const address = decodeUnsubscribeComponent(candidate);
+    if (!address || address.length > 254 || !UNSUBSCRIBE_ADDRESS.test(address)) continue;
+    if (!addresses.some(known => known.toLowerCase() === address.toLowerCase())) addresses.push(address);
+  }
+  if (!addresses.length) return null;
+  return addresses.map(address => ({ address, ...(subject ? { subject } : {}), ...(body ? { body } : {}) }));
+}
+
+/**
+ * { mailto: [{ address, subject?, body? }], https: [url], oneClick, insecure?: [http url], ignored?: n }.
+ * oneClick (RFC 8058): List-Unsubscribe-Post is exactly "List-Unsubscribe=One-Click" and an https URI is listed;
+ * the DKIM signature RFC 8058 also requires is not checked. ignored counts the URIs dropped (other schemes,
+ * malformed, too long, over the limits).
+ */
+function parseListUnsubscribe(value, postValue) {
+  const { uris, unclosed } = listUnsubscribeUris(String(value || "").slice(0, MAX_UNSUBSCRIBE_HEADER_CHARS));
+  const mailto = [];
+  const https = [];
+  const insecure = [];
+  let ignored = unclosed ? 1 : 0;
+  for (const uri of uris) {
+    const scheme = uri.slice(0, Math.max(uri.indexOf(":"), 0)).toLowerCase();
+    let kept = false;
+    if (uri.length <= MAX_UNSUBSCRIBE_URI_CHARS && scheme === "mailto" && mailto.length < MAX_UNSUBSCRIBE_PER_KIND) {
+      const entries = parseUnsubscribeMailto(uri);
+      if (entries) {
+        for (const entry of entries) {
+          if (mailto.length < MAX_UNSUBSCRIBE_PER_KIND && !mailto.some(known => known.address.toLowerCase() === entry.address.toLowerCase())) mailto.push(entry);
+        }
+        kept = true;
+      }
+    } else if (uri.length <= MAX_UNSUBSCRIBE_URI_CHARS && (scheme === "https" || scheme === "http")) {
+      const match = UNSUBSCRIBE_WEB_URI.exec(uri);
+      const port = match?.[3] === undefined ? 1 : Number(match[3]);
+      const list = scheme === "https" ? https : insecure;
+      if (match && port >= 1 && port <= 65535 && list.length < MAX_UNSUBSCRIBE_PER_KIND) {
+        const url = `${scheme}://${match[2].toLowerCase()}${match[3] === undefined ? "" : `:${match[3]}`}${match[4] || ""}`;
+        if (!list.includes(url)) list.push(url);
+        kept = true;
+      }
+    }
+    if (!kept) ignored++;
+  }
+  const oneClick = typeof postValue === "string" && postValue.trim() === "List-Unsubscribe=One-Click" && https.length > 0;
+  return { mailto, https, oneClick, ...(insecure.length ? { insecure } : {}), ...(ignored ? { ignored } : {}) };
+}
+// END LIST UNSUBSCRIBE
+
 const DIRECT_SEND_BLOCKED_ERROR = "User preference blocks direct sending (mode \"send\" or skipReview). Use mode \"draft\" to save a draft, or \"window\" (the default) to open a review window.";
 
 const DRAFT_TOOL_DISABLED_ERROR = "mode \"draft\" saves through the saveDraft tool, which is disabled in the add-on settings. Use mode \"window\" (the default) to open a review window, or ask the user to enable saveDraft.";
@@ -5946,7 +6071,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               type: "array",
               minItems: 1,
               maxItems: Math.max(getMessagesLimit, MAX_HEADERS_ONLY_MESSAGES),
-              description: `Messages to read, max ${getMessagesLimit} (${MAX_HEADERS_ONLY_MESSAGES} with headersOnly). Each item is { messageId, folderPath }.`,
+              description: `Messages to read, max ${getMessagesLimit} (${MAX_HEADERS_ONLY_MESSAGES} with headersOnly).`,
               items: {
                 type: "object",
                 properties: {
@@ -5962,7 +6087,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             rawSource: { type: "boolean", description: "If true, return raw RFC 2822 source (decoded text, rawCharset) for each message instead of parsed body fields" },
             rawEncoding: { type: "string", enum: ["text", "base64"], default: "text", description: "With rawSource: 'base64' returns the exact bytes instead of decoded text" },
             maxBodyChars: { type: "integer", minimum: 1, maximum: MAX_BODY_CHARS, default: DEFAULT_GET_MESSAGES_BODY_CHARS, description: "Max body characters per message; read the rest with getMessage bodyOffset" },
-            headersOnly: { type: "boolean", description: "Only headers as received (From, To, Cc, Subject, Date, Message-ID, References, List-*) and flags; no body" },
+            headersOnly: { type: "boolean", description: "Headers as received (From, To, Cc, Subject, Date, Message-ID, References, List-*), flags, no body; unsubscribe parsed (sender-set: user decides)" },
           },
           required: ["messages"],
         },
@@ -13396,6 +13521,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const root = block === null ? null : { headers: parseRawMimeHeaders(block) };
               const headers = {};
               let source = "message";
+              let unsubscribe = null;
               if (root) {
                 const decodeBytes = (value) => {
                   // Raw header bytes: UTF-8 when valid (RFC 6532), else kept as read
@@ -13410,6 +13536,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (!values.length) continue;
                   const joined = values.map(v => decodeHeaderValue(decodeBytes(v))).join(name === "references" ? " " : ", ");
                   headers[key] = clampHeaderValue(joined);
+                }
+                // Parsed from the whole raw value (URIs are ASCII; RFC 2047 does not apply inside the brackets)
+                const unsubscribeValues = root.headers["list-unsubscribe"];
+                if (unsubscribeValues?.length) {
+                  const postValues = root.headers["list-unsubscribe-post"];
+                  unsubscribe = parseListUnsubscribe(unsubscribeValues.map(decodeBytes).join(", "), postValues?.length ? postValues.map(decodeBytes).join(", ") : undefined);
                 }
               } else {
                 // No local copy: the database's fields
@@ -13437,6 +13569,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 flagged: !!msgHdr.isFlagged,
                 ...(tags.length ? { tags } : {}),
                 size: msgHdr.messageSize,
+                ...(unsubscribe ? { unsubscribe } : {}),
               };
             }
             // END MESSAGE HEADERS
