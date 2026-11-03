@@ -449,7 +449,8 @@ async function loadToolAccess() {
 
         const limitLabel = document.createElement("label");
         limitLabel.htmlFor = "getMessagesLimit";
-        limitLabel.textContent = "Max messages per call";
+        // headersOnly reads headers only, up to its own fixed limit
+        limitLabel.textContent = "Max full messages per call";
 
         getMessagesLimitInput = document.createElement("input");
         getMessagesLimitInput.type = "text";
