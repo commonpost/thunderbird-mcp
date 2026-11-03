@@ -227,7 +227,7 @@ describe("own addresses for conversation linking", () => {
 });
 
 describe("attachment search (attachmentName / attachmentType)", () => {
-  const NOTE = { note: "Only messages Thunderbird flags as having attachments are read; signed (multipart/signed), multipart/related and single-part messages are usually not flagged." };
+  const NOTE = { coverage: "Only messages Thunderbird flags as having attachments are read; signed (multipart/signed), multipart/related and single-part messages are usually not flagged." };
   const pdf = name => `Content-Type: multipart/mixed; boundary="b"\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nhi\r\n`
     + `--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename="${name}"\r\n\r\n%PDF\r\n--b--\r\n`;
   const encrypted = `Content-Type: multipart/mixed; boundary="b"\r\n\r\n--b\r\nContent-Type: application/pdf\r\n`

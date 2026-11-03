@@ -13485,7 +13485,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
 
             // Thunderbird sets the Attachment flag from the message's top-level structure (multipart/mixed) when it
-            // stores the message, so the search never reads the messages it left unflagged.
+            // stores the message, so the search never reads the messages it left unflagged. Not named "note", which
+            // the untrusted-content markers wrap (contact and event notes).
             const ATTACHMENT_SEARCH_NOTE = "Only messages Thunderbird flags as having attachments are read; signed (multipart/signed), multipart/related and single-part messages are usually not flagged.";
 
             // The attachmentSearch field of the result
@@ -13494,7 +13495,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const out = { checked: scan.checked };
               if (Object.keys(skipped).length) out.skipped = skipped;
               if (scan.limitReached || collectionCapped) out.limitReached = true;
-              out.note = ATTACHMENT_SEARCH_NOTE;
+              out.coverage = ATTACHMENT_SEARCH_NOTE;
               return out;
             }
 
