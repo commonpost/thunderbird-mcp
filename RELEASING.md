@@ -62,11 +62,13 @@ environment can publish.
 
 ## 5. MCP Registry listing
 
-Run the **MCP Registry** workflow (Actions, Run workflow) from `main` with the new tag and approve the
-`mcp-registry` environment. It
-lists the release's `.mcpb` and its SHA-256 as `io.github.commonpost/thunderbird-mcp` on the
+Automatic: the last job of **Build and Release** runs the **MCP Registry** workflow, which lists the release's
+`.mcpb` and its SHA-256 as `io.github.commonpost/thunderbird-mcp` on the
 [MCP Registry](https://registry.modelcontextprotocol.io), signing in with the workflow's GitHub OIDC token (no
 secret). Check: `curl -s 'https://registry.modelcontextprotocol.io/v0/servers?search=commonpost'`.
+
+If that job failed, fix the cause and run the **MCP Registry** workflow (Actions, Run workflow) from `main` with the
+tag. The registry refuses a version it already lists.
 
 ## Compatibility thresholds
 

@@ -7,6 +7,7 @@ name: Build and Release
 #   release (contents: write)  rebuilds both from the tag on its own, refuses any difference with the build
 #                              job's artifacts, attests build provenance of the XPI, the .mcpb and mcp-bridge.cjs,
 #                              publishes the release and the update manifest on gh-pages.
+# Then mcp-registry.yml lists the new .mcpb on the official MCP Registry.
 # The "release" environment is protected in the repository settings (required reviewer).
 on:
   push:
@@ -248,3 +249,13 @@ jobs:
             -f branch=gh-pages \
             -f content="$(base64 -w0 updates.json)" \
             ${CURRENT_SHA:+-f sha="$CURRENT_SHA"}
+
+  mcp-registry:
+    name: MCP Registry
+    needs: release
+    permissions:
+      contents: read # gh release download and gh attestation verify of this repository
+      id-token: write # GitHub OIDC token for mcp-publisher login github-oidc
+    uses: $/.github/workflows/mcp-registry.yml
+    with:
+      tag: ${{ github.ref_name }}

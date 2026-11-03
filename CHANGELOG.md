@@ -15,7 +15,7 @@ project is kept in this repository.
   to `LICENSE` in the XPI and the `.mcpb`. CONTRIBUTING.md now documents the code review and small tasks for new
   contributors.
 - Releases are listed on the official MCP Registry as `io.github.commonpost/thunderbird-mcp` (workflow
-  `mcp-registry.yml`, run after each release; see RELEASING.md).
+  `mcp-registry.yml`, run by the release workflow once the release is published; see RELEASING.md).
 
 ### Fixed
 

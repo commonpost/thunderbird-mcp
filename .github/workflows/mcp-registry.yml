@@ -3,12 +3,18 @@
 name: MCP Registry
 
 # Publishes the listing io.github.commonpost/thunderbird-mcp on the official MCP Registry for a published release:
-# the .mcpb of that release, with its SHA-256. Run by hand after a release (RELEASING.md). The registry grants the
-# io.github.commonpost namespace to this repository's GitHub OIDC token, so no secret is stored; that token could
-# publish any io.github.commonpost/* listing, so the job runs in the protected "mcp-registry" environment (required
-# reviewer, main branch only). Only GitHub's preinstalled gh and jq and the registry's signed mcp-publisher (pinned
+# the .mcpb of that release, with its SHA-256. Called by Build and Release once the release is published, or run by
+# hand from main for an existing tag (RELEASING.md). The registry grants the io.github.commonpost namespace to this
+# repository's GitHub OIDC token, so no secret is stored; that token could publish any io.github.commonpost/*
+# listing, so the job runs in the "mcp-registry" environment, limited to main and the protected v*.*.* tags. Only GitHub's preinstalled gh and jq and the registry's signed mcp-publisher (pinned
 # by hash) run here.
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to list (vX.Y.Z)
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:
