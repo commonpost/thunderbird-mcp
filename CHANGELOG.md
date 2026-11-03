@@ -6,6 +6,20 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+## [0.17.5] - 2026-11-03
+
+- **Security fix:** an encrypted message with a long header block is recognized as encrypted again in search results
+  and listings. Updating is recommended.
+- **The bridge does not change in this release:** nothing to update in your MCP clients if their bridge is 0.17.1.
+
+### Security
+
+- `searchMessages`, `getRecentMessages` and the other listings read only the header block of a message to tell
+  whether it is encrypted. Before, a message whose source was larger than the amount read could be counted as not
+  encrypted, so it was listed with the subject stored in Thunderbird's database while encrypted content was not
+  allowed. A header block larger than 256 KiB now counts as encrypted, and the subject of a message known to be
+  encrypted is never taken from the database.
+
 ## [0.17.4] - 2026-11-02
 
 - **Security fix:** an attachment that is only a link to a file or web address (a detached attachment or a feed
