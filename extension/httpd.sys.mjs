@@ -421,9 +421,11 @@ nsHttpServer.prototype = {
       );
       var reader = new RequestReader(conn);
 
-      // Commonpost: a client that does not finish sending its request (line, headers and body) within
-      // REQUEST_READ_TIMEOUT_MS is cut off, so that a slow or idle local connection cannot be held open forever.
-      // Only the reading is timed: handling the request (a direct send can take minutes) starts after it.
+      // Commonpost: a client that sends nothing of its request (line, headers, body) for REQUEST_READ_TIMEOUT_MS,
+      // or has not sent all of it after REQUEST_READ_MAX_MS, is cut off, so that a slow or idle local connection
+      // cannot be held open forever. Each read that makes progress re-arms the timer (RequestReader), so a large
+      // body arriving steadily is not cut. Only the reading is timed: handling the request (a direct send can take
+      // minutes) starts after it.
       var readTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
       readTimer.initWithCallback(
         {
@@ -438,6 +440,7 @@ nsHttpServer.prototype = {
         Ci.nsITimer.TYPE_ONE_SHOT
       );
       conn._readTimer = readTimer;
+      conn._readStartedAt = Date.now();
 
       // Note: must use main thread here, or we might get a GC that will cause
       //       threadsafety assertions.  We really need to fix XPConnect so that
@@ -448,6 +451,9 @@ nsHttpServer.prototype = {
       // don't attempt to close it so that we can assert that any connection
       // being closed is in this._connections.
       dumpn("*** error in initial request-processing stages: " + e);
+      if (readTimer) {
+        readTimer.cancel();
+      }
       trans.close(Cr.NS_BINDING_ABORTED);
       return;
     }
@@ -1372,8 +1378,9 @@ const READER_IN_HEADERS = 1;
 const READER_IN_BODY = 2;
 const READER_FINISHED = 3;
 
-/** Commonpost: time a client has to send its whole request, in ms. */
+/** Commonpost: longest silence while a client sends its request, and longest time to send all of it, in ms. */
 export const REQUEST_READ_TIMEOUT_MS = 30000;
+export const REQUEST_READ_MAX_MS = 300000;
 
 /**
  * Reads incoming request data asynchronously, does any necessary preprocessing,
@@ -1459,6 +1466,11 @@ RequestReader.prototype = {
 
     try {
       data.appendBytes(readBytes(input, input.available()));
+      // Commonpost: progress re-arms the read timer, up to REQUEST_READ_MAX_MS after the connection opened
+      var conn = this._connection;
+      if (conn._readTimer && Date.now() - conn._readStartedAt < REQUEST_READ_MAX_MS) {
+        conn._readTimer.delay = REQUEST_READ_TIMEOUT_MS;
+      }
     } catch (e) {
       if (streamClosed(e)) {
         dumpn(

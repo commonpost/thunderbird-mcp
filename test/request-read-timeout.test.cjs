@@ -12,8 +12,14 @@ const httpd = fs.readFileSync(path.resolve(__dirname, "../extension/httpd.sys.mj
 const api = fs.readFileSync(path.resolve(__dirname, "../extension/mcp_server/api.js"), "utf8");
 
 describe("request read timeout", () => {
-  it("is 30 s", () => {
+  it("is 30 s of silence, 5 minutes in all", () => {
     assert.match(httpd, /export const REQUEST_READ_TIMEOUT_MS = 30000;/);
+    assert.match(httpd, /export const REQUEST_READ_MAX_MS = 300000;/);
+  });
+
+  it("re-arms on progress, only within the overall limit", () => {
+    const ready = httpd.slice(httpd.indexOf("  onInputStreamReady(input) {"), httpd.indexOf("  // PRIVATE API"));
+    assert.match(ready, /Date\.now\(\) - conn\._readStartedAt < REQUEST_READ_MAX_MS\) \{\n\s*conn\._readTimer\.delay = REQUEST_READ_TIMEOUT_MS;/);
   });
 
   it("arms a timer for every accepted connection that closes it only while the request is unread", () => {
@@ -41,6 +47,7 @@ describe("listFolders refresh and getMessages headersOnly wiring", () => {
   it("never lets IMAP's FolderLoaded end its refresh", () => {
     const fn = api.slice(api.indexOf("// BEGIN FOLDER REFRESH"), api.indexOf("// END FOLDER REFRESH"));
     assert.match(fn, /!imapFolder && event === "FolderLoaded"/);
+    assert.match(fn, /type === "nntp" \|\| type === "rss"/);
     assert.match(fn, /updateFolderWithListener\(null,/);
   });
 
@@ -49,6 +56,20 @@ describe("listFolders refresh and getMessages headersOnly wiring", () => {
     assert.match(fn, /readRawHeaderBlock\(msgHdr\)/);
     assert.doesNotMatch(fn, /readRawMimeOuterEntity\(/);
     assert.doesNotMatch(fn, /getMessage\(/);
+  });
+
+  it("withholds the database subject unless encrypted content is allowed", () => {
+    const fn = api.slice(api.indexOf("function messageHeadersOf("), api.indexOf("// END MESSAGE HEADERS"));
+    assert.match(fn, /if \(isEncryptedContentAllowed\(\)\) set\("subject"/);
+    assert.match(fn, /headers\.subjectWithheld = /);
+  });
+
+  it("opens each folder once and keeps the result under its budget", () => {
+    const fn = api.slice(api.indexOf("async function getMessageHeaders("), api.indexOf("function messageHeadersOf("));
+    assert.match(fn, /openedFolders\.get\(folderPath\)/);
+    assert.match(fn, /findMessageInOpened\(opened, messageId\)/);
+    assert.doesNotMatch(fn, /findMessage\(/);
+    assert.match(fn, /out\.incomplete = true/);
   });
 
   it("dispatches headersOnly before the full read", () => {

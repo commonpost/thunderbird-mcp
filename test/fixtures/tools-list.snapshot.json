@@ -49,7 +49,7 @@
           },
           "refresh": {
             "type": "boolean",
-            "description": "With folderPath: first fetch its new mail from the server (waits up to 20 s); returns { refresh, folders }"
+            "description": "With folderPath: first fetch its new mail from the mail server (waits up to 20 s); returns { refresh, folders }"
           }
         },
         "required": []

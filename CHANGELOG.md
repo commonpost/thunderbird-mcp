@@ -25,19 +25,22 @@ project is kept in this repository.
   the recipients with the identity's automatic Cc and Bcc, the attachments and an estimated size) or the error it
   would return, without sending, saving or opening anything. Decoded attachments are checked but never written. A
   file path the bridge refuses comes back as the same error as for a real `sendMail`.
-- `listFolders` with `refresh: true` and a `folderPath` first asks the server for that folder's new mail (IMAP,
-  Exchange, news, feeds), as clicking the folder in Thunderbird does, waits up to 20 s and returns
-  `{ refresh: { status, newMessages }, folders }`. Local folders report `status: "local"`.
+- `listFolders` with `refresh: true` and a `folderPath` first asks the mail server for that folder's new mail (IMAP,
+  Exchange, Graph), as clicking the folder in Thunderbird does, waits up to 20 s and returns
+  `{ refresh: { status, newMessages }, folders }`: `done`, `pending` (started, not confirmed), `failed`, `offline`,
+  `local` (local folders) or `unsupported` (news and feeds, where many new articles open a dialog in Thunderbird).
 - `getMessages` with `headersOnly: true` returns, for up to 200 messages, only the headers as they arrived
   (Message-ID, Date, From, To, Cc, Subject, In-Reply-To, References, List-*), decoded, and the read/flagged/tags
-  flags. No body is parsed, and a large message is not read past its headers.
+  flags. No body is parsed, and a large message is not read past its headers. Without a local copy of the message
+  (IMAP not kept offline), the subject is withheld unless reading encrypted messages is allowed, since nothing then
+  shows that the message is not encrypted.
 
 ### Changed
 
 - A direct `sendMail` (`skipReview`) now adds the identity's automatic Cc, Bcc and Reply-To, as the compose window,
   and direct replies and forwards, already did.
-- The add-on's HTTP server closes a connection whose request is not fully received within 30 s. Handling a request
-  (a direct send can take minutes) is not limited.
+- The add-on's HTTP server closes a connection that sends nothing of its request for 30 s, or has not sent all of
+  it after 5 minutes. Handling a request (a direct send can take minutes) is not limited.
 
 ## [0.17.4] - 2026-11-02
 

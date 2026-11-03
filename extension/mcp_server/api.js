@@ -4457,6 +4457,8 @@ const MESSAGE_HEADER_FIELDS = [
   ["listUnsubscribePost", "list-unsubscribe-post"], ["autoSubmitted", "auto-submitted"],
 ];
 const MAX_HEADER_VALUE_CHARS = 2000;
+// getMessages with headersOnly: characters of the whole result; later messages are reported as not read
+const MAX_HEADERS_ONLY_RESULT_CHARS = 400000;
 
 function clampHeaderValue(value) {
   return value.length > MAX_HEADER_VALUE_CHARS ? `${value.slice(0, MAX_HEADER_VALUE_CHARS)}... (truncated)` : value;
@@ -5852,7 +5854,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             format: { type: "string", enum: ["objects", "table"], description: "Response format: 'objects' (default, existing array of folder objects) or 'table' ({ columns, rows } compact form)" },
             favoritesOnly: { type: "boolean", description: "If true, return only folders the user has marked as favorites in Thunderbird (default: false). Useful for finding the folders that matter without listing hundreds." },
             savedSearches: { type: "boolean", description: "If true, return only saved searches (virtual folders) with their folders and conditions" },
-            refresh: { type: "boolean", description: "With folderPath: first fetch its new mail from the server (waits up to 20 s); returns { refresh, folders }" },
+            refresh: { type: "boolean", description: "With folderPath: first fetch its new mail from the mail server (waits up to 20 s); returns { refresh, folders }" },
           },
           required: [],
         },
@@ -7430,15 +7432,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
             /**
              * Asks Thunderbird to fetch new mail of `folder` from its server, as clicking the folder does, and waits
-             * up to FOLDER_REFRESH_TIMEOUT_MS. IMAP reports the end of its update; other server types (Exchange,
-             * Graph, news, feeds, add-on providers) end with FolderLoaded. Local folders have no server to ask.
-             * Resolves { status, newMessages, ms }: "done", "timeout" (still running, counts may still change),
-             * "failed" (with error), "offline" or "local".
+             * up to FOLDER_REFRESH_TIMEOUT_MS. IMAP reports the end of its update; other mail servers (Exchange,
+             * Graph, add-on providers) end with FolderLoaded, which may not come when nothing changed. News and
+             * feeds are not refreshed: a newsgroup with many new articles opens a dialog in Thunderbird.
+             * Resolves { status, newMessages, ms }: "done", "pending" (started, not confirmed: counts may still
+             * change), "failed" (with error), "offline", "local" or "unsupported".
              */
             function refreshFolderFromServer(folder) {
               const started = Date.now();
               const type = folder.server?.type || "";
               if (type === "none" || type === "pop3") return Promise.resolve({ status: "local", newMessages: 0, ms: 0 });
+              if (type === "nntp" || type === "rss") return Promise.resolve({ status: "unsupported", newMessages: 0, ms: 0 });
               if (Services.io.offline) return Promise.resolve({ status: "offline", newMessages: 0, ms: 0 });
               const total = () => {
                 try {
@@ -7477,7 +7481,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 };
                 try {
                   MailServices.mailSession.AddFolderListener(listener, Ci.nsIFolderListener.event);
-                  timer.initWithCallback({ notify: () => settle("timeout") }, FOLDER_REFRESH_TIMEOUT_MS, Ci.nsITimer.TYPE_ONE_SHOT);
+                  timer.initWithCallback({ notify: () => settle("pending") }, FOLDER_REFRESH_TIMEOUT_MS, Ci.nsITimer.TYPE_ONE_SHOT);
                   if (imapFolder) {
                     imapFolder.updateFolderWithListener(null, {
                       QueryInterface: ChromeUtils.generateQI(["nsIUrlListener"]),
@@ -10239,7 +10243,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	            function findMessage(messageId, folderPath) {
 	              const opened = openFolder(folderPath);
 	              if (opened.error) return opened;
+	              return findMessageInOpened(opened, messageId);
+	            }
 
+	            // findMessage in a folder already opened (openFolder), so that a call reading many messages of one
+	            // folder opens, and refreshes, it once.
+	            function findMessageInOpened(opened, messageId) {
 	              const { folder, db } = opened;
 	              let msgHdr = null;
 
@@ -13281,6 +13290,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
               const results = [];
               const rebuildDeadline = Date.now() + FOLDER_SUMMARY_REBUILD_TIMEOUT_MS;
+              // Each folder is opened (and refreshed) once per call; the result stays under a size budget
+              const openedFolders = new Map();
+              let budget = MAX_HEADERS_ONLY_RESULT_CHARS;
               for (let i = 0; i < messages.length; i++) {
                 const ref = messages[i];
                 const messageId = ref && typeof ref === "object" ? ref.messageId : undefined;
@@ -13289,20 +13301,33 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   results.push({ index: i, error: "Each item needs a non-empty messageId and folderPath" });
                   continue;
                 }
-                const prepared = await prepareFolderDatabase(folderPath, rebuildDeadline);
-                if (prepared?.error) {
-                  results.push({ index: i, messageId, folderPath, error: prepared.error });
+                if (budget <= 0) {
+                  results.push({ index: i, messageId, folderPath, error: "Not read: the result reached its size limit; ask for the rest in another call" });
                   continue;
                 }
-                const found = findMessage(messageId, folderPath);
+                let opened = openedFolders.get(folderPath);
+                if (!opened) {
+                  const prepared = await prepareFolderDatabase(folderPath, rebuildDeadline);
+                  opened = prepared?.error ? prepared : openFolder(folderPath);
+                  openedFolders.set(folderPath, opened);
+                }
+                if (opened.error) {
+                  results.push({ index: i, messageId, folderPath, error: opened.error });
+                  continue;
+                }
+                const found = findMessageInOpened(opened, messageId);
                 if (found.error) {
                   results.push({ index: i, messageId, folderPath, error: found.error });
                   continue;
                 }
-                results.push({ index: i, messageId, folderPath, ...messageHeadersOf(found.msgHdr) });
+                const entry = { index: i, messageId, folderPath, ...messageHeadersOf(found.msgHdr) };
+                budget -= JSON.stringify(entry).length;
+                results.push(entry);
               }
               const failed = results.filter(result => result.error).length;
-              return { messages: results, requested: messages.length, succeeded: results.length - failed, failed };
+              const out = { messages: results, requested: messages.length, succeeded: results.length - failed, failed };
+              if (budget <= 0) out.incomplete = true;
+              return out;
             }
 
             // The raw header block of a message: read until the blank line that ends it, at most `maxBytes`, so a
@@ -13365,10 +13390,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 set("date", msgHdr.date ? new Date(msgHdr.date / 1000).toISOString() : "");
                 set("from", msgHdr.mime2DecodedAuthor || msgHdr.author);
                 set("to", msgHdr.mime2DecodedRecipients || msgHdr.recipients);
-                set("cc", msgHdr.ccList);
+                set("cc", decodeHeaderValue(msgHdr.ccList));
                 set("references", msgHdr.getStringProperty("references"));
-                // As outerWireSubject falls back when the raw message cannot be read
-                set("subject", msgHdr.mime2DecodedSubject || msgHdr.subject);
+                // Without the raw message nothing shows whether it is encrypted, and the database's subject of a
+                // protected-header message Thunderbird decrypted once is the decrypted one
+                if (isEncryptedContentAllowed()) set("subject", msgHdr.mime2DecodedSubject || msgHdr.subject);
+                else headers.subjectWithheld = "no local copy to check that the message is not encrypted";
               }
               let tags = [];
               try {
@@ -13508,6 +13535,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (dryRun) {
                   const identity = msgComposeParams.identity;
                   const direct = !!skipReview;
+                  // sendMessageDirectly's own refusals
+                  if (direct && !identity) return refuse("No identity available for direct send");
                   // The window adds the identity's automatic Cc and Bcc, a direct send does too
                   const fields = Cc["@mozilla.org/messengercompose/composefields;1"].createInstance(Ci.nsIMsgCompFields);
                   setDirectSendRecipients(fields, identity, to, cc, bcc);
