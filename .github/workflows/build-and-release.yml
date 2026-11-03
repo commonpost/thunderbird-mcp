@@ -256,6 +256,6 @@ jobs:
     permissions:
       contents: read # gh release download and gh attestation verify of this repository
       id-token: write # GitHub OIDC token for mcp-publisher login github-oidc
-    uses: ./.github/workflows/mcp-registry.yml
+    uses: $/.github/workflows/mcp-registry.yml
     with:
       tag: ${{ github.ref_name }}
