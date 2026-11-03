@@ -24,12 +24,12 @@ vm.runInContext(`${[
 Object.assign(this, { parseAttachmentFilter, attachmentMatchesFilter, rawMimeParameter, listRawMimeAttachments,
   rawMimeDecodedSize, scanAttachmentCandidates, attachmentSearchSummary, attachmentSearchIncomplete,
   ATTACHMENT_SEARCH_LIMITS, ATTACHMENT_SEARCH_MAX_DEPTH, ATTACHMENT_SEARCH_MAX_PARTS, parseRawMimeEntity,
-  extractBodyPartFromRawMime, parseAttachmentPartsFromRawMime, RAW_MIME_MAX_PARTS });`, sandbox);
+  extractBodyPartFromRawMime, parseAttachmentPartsFromRawMime, RAW_MIME_MAX_PARTS, attachmentCandidateCollector });`, sandbox);
 const {
   parseAttachmentFilter, attachmentMatchesFilter, rawMimeParameter, listRawMimeAttachments, rawMimeDecodedSize,
   scanAttachmentCandidates, attachmentSearchSummary, attachmentSearchIncomplete, ATTACHMENT_SEARCH_LIMITS,
   ATTACHMENT_SEARCH_MAX_DEPTH, ATTACHMENT_SEARCH_MAX_PARTS, parseRawMimeEntity, extractBodyPartFromRawMime,
-  parseAttachmentPartsFromRawMime, RAW_MIME_MAX_PARTS,
+  parseAttachmentPartsFromRawMime, RAW_MIME_MAX_PARTS, attachmentCandidateCollector,
 } = sandbox;
 
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -292,17 +292,61 @@ describe("scanAttachmentCandidates", () => {
   });
 });
 
+describe("attachmentCandidateCollector", () => {
+  const isEnvelopeEncrypted = hdr => hdr.encrypted;
+  // Encrypted messages spread among the others
+  const mailbox = (plainCount, encryptedCount) => {
+    const out = Array.from({ length: plainCount }, () => ({ msgHdr: { encrypted: false } }));
+    for (let i = 0; i < encryptedCount; i++) out.splice((i * 7) % (out.length + 1), 0, { msgHdr: { encrypted: true } });
+    return out;
+  };
+  const run = async (messages, dropEncrypted, cap = 10000) => {
+    const collector = attachmentCandidateCollector({ cap, dropEncrypted, isEnvelopeEncrypted });
+    for (const m of messages) if (!collector.add(m)) break;
+    const scan = await scanAttachmentCandidates(collector.candidates, parseAttachmentFilter({ attachmentType: "image/" }),
+      c => (c.msgHdr.encrypted ? { skip: "encrypted" } : { attachments: [] }), ATTACHMENT_SEARCH_LIMITS, null);
+    return plain({
+      summary: attachmentSearchSummary(scan, { collectionCapped: collector.capped }),
+      incomplete: attachmentSearchIncomplete(scan, collector.capped),
+    });
+  };
+
+  it("with query words, nothing in the result depends on the encrypted messages the query matched", async () => {
+    // Below, at and above the 500-message read budget, with none to many encrypted messages
+    for (const plainCount of [10, 499, 500, 501, 900]) {
+      const reference = await run(mailbox(plainCount, 0), true);
+      for (const encryptedCount of [1, 2, 300, 1000]) {
+        assert.deepEqual(await run(mailbox(plainCount, encryptedCount), true), reference, `${plainCount} + ${encryptedCount}`);
+      }
+    }
+    // Nor the collection cap
+    const capped = await run(mailbox(5, 0), true, 5);
+    assert.equal(capped.summary.limitReached, undefined);
+    assert.deepEqual(await run(mailbox(5, 7), true, 5), capped);
+  });
+
+  it("without query words, counts the encrypted messages as skipped", async () => {
+    const result = await run(mailbox(450, 100), false);
+    assert.ok(result.summary.skipped.encrypted > 0);
+    assert.equal(result.summary.checked + result.summary.skipped.encrypted, 500);
+    assert.equal(result.summary.skipped.limitReached, 50);
+    // Which is why they must be left out when a query with words matched them
+    assert.notDeepEqual(await run(mailbox(450, 0), false), result);
+    const capped = attachmentCandidateCollector({ cap: 2, dropEncrypted: false, isEnvelopeEncrypted });
+    assert.equal(capped.add({ msgHdr: { encrypted: true } }), true);
+    assert.equal(capped.add({ msgHdr: {} }), true);
+    assert.equal(capped.add({ msgHdr: {} }), false);
+    assert.equal(capped.capped, true);
+  });
+});
+
 describe("attachmentSearchSummary", () => {
   const scan = { checked: 4, skipped: { encrypted: 2, tooLarge: 1, limitReached: 3 }, limitReached: true };
   it("reports the counts and the limit", () => {
-    assert.deepEqual(plain(attachmentSearchSummary(scan, { collectionCapped: false, hideEncryptedCounts: false })),
+    assert.deepEqual(plain(attachmentSearchSummary(scan, { collectionCapped: false })),
       { checked: 4, skipped: { encrypted: 2, tooLarge: 1, limitReached: 3 }, limitReached: true });
     assert.deepEqual(plain(attachmentSearchSummary({ checked: 1, skipped: {}, limitReached: false }, { collectionCapped: false })), { checked: 1 });
     assert.deepEqual(plain(attachmentSearchSummary({ checked: 1, skipped: {}, limitReached: false }, { collectionCapped: true })), { checked: 1, limitReached: true });
-  });
-  it("leaves out the counts that could include encrypted messages a query matched", () => {
-    assert.deepEqual(plain(attachmentSearchSummary(scan, { collectionCapped: false, hideEncryptedCounts: true })),
-      { checked: 4, skipped: { tooLarge: 1 }, limitReached: true });
   });
   it("calls a search incomplete only for skips other than encryption", () => {
     assert.equal(attachmentSearchIncomplete({ skipped: { encrypted: 3 } }, false), false);
@@ -310,5 +354,14 @@ describe("attachmentSearchSummary", () => {
     for (const reason of ["tooLarge", "notOffline", "unreadable", "limitReached"]) {
       assert.equal(attachmentSearchIncomplete({ skipped: { [reason]: 1 } }, false), true, reason);
     }
+  });
+});
+
+describe("attachmentSearch wiring", () => {
+  it("leaves out encrypted envelopes at collection when the query has words and encryption is not allowed", () => {
+    const body = source.slice(source.indexOf("async function attachmentSearch("), source.indexOf("function headerMatchesTerms("));
+    assert.match(body, /dropEncrypted: !encryptedAllowed && terms\.length > 0/);
+    assert.match(body, /isEnvelopeEncrypted: isRawMimeEnvelopeEncrypted/);
+    assert.match(body, /attachmentSearchSummary\(scan, \{ collectionCapped \}\)/);
   });
 });
