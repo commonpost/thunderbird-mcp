@@ -52,7 +52,10 @@ project is kept in this repository.
   could not be checked. While reading encrypted messages is not allowed, a query with words leaves out a message
   whose outer envelope is encrypted before anything is read, as the search without attachment options does (its
   subject and preview may be decrypted ones): it is in no count and takes none of the limits; `encrypted` then
-  counts only messages with an encrypted part inside a plain envelope.
+  counts only messages with an encrypted part inside a plain envelope. Thunderbird sets its attachment flag from a
+  message's top-level structure, so a signed message (`multipart/signed`), a `multipart/related` one or a
+  single-part attachment is usually not found; `attachmentSearch.note` says so. The attachment options cannot be
+  combined with `searchBody`, `threadOf` or `format: "legacy"`.
 
 ### Changed
 

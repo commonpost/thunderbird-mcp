@@ -342,11 +342,12 @@ describe("attachmentCandidateCollector", () => {
 
 describe("attachmentSearchSummary", () => {
   const scan = { checked: 4, skipped: { encrypted: 2, tooLarge: 1, limitReached: 3 }, limitReached: true };
-  it("reports the counts and the limit", () => {
+  const note = { note: "Only messages Thunderbird flags as having attachments are read; signed (multipart/signed), multipart/related and single-part messages are usually not flagged." };
+  it("reports the counts, the limit and the messages never read", () => {
     assert.deepEqual(plain(attachmentSearchSummary(scan, { collectionCapped: false })),
-      { checked: 4, skipped: { encrypted: 2, tooLarge: 1, limitReached: 3 }, limitReached: true });
-    assert.deepEqual(plain(attachmentSearchSummary({ checked: 1, skipped: {}, limitReached: false }, { collectionCapped: false })), { checked: 1 });
-    assert.deepEqual(plain(attachmentSearchSummary({ checked: 1, skipped: {}, limitReached: false }, { collectionCapped: true })), { checked: 1, limitReached: true });
+      { checked: 4, skipped: { encrypted: 2, tooLarge: 1, limitReached: 3 }, limitReached: true, ...note });
+    assert.deepEqual(plain(attachmentSearchSummary({ checked: 1, skipped: {}, limitReached: false }, { collectionCapped: false })), { checked: 1, ...note });
+    assert.deepEqual(plain(attachmentSearchSummary({ checked: 1, skipped: {}, limitReached: false }, { collectionCapped: true })), { checked: 1, limitReached: true, ...note });
   });
   it("calls a search incomplete only for skips other than encryption", () => {
     assert.equal(attachmentSearchIncomplete({ skipped: { encrypted: 3 } }, false), false);
