@@ -421,7 +421,23 @@ nsHttpServer.prototype = {
       );
       var reader = new RequestReader(conn);
 
-      // XXX add request timeout functionality here!
+      // Commonpost: a client that does not finish sending its request (line, headers and body) within
+      // REQUEST_READ_TIMEOUT_MS is cut off, so that a slow or idle local connection cannot be held open forever.
+      // Only the reading is timed: handling the request (a direct send can take minutes) starts after it.
+      var readTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+      readTimer.initWithCallback(
+        {
+          notify() {
+            if (reader._state != READER_FINISHED && !conn._closed) {
+              dumpn("*** request not read within " + REQUEST_READ_TIMEOUT_MS + " ms, closing connection " + connectionNumber);
+              conn.close();
+            }
+          },
+        },
+        REQUEST_READ_TIMEOUT_MS,
+        Ci.nsITimer.TYPE_ONE_SHOT
+      );
+      conn._readTimer = readTimer;
 
       // Note: must use main thread here, or we might get a GC that will cause
       //       threadsafety assertions.  We really need to fix XPConnect so that
@@ -1275,6 +1291,10 @@ Connection.prototype = {
       "*** closing connection " + this.number + " on port " + this._outgoingPort
     );
 
+    if (this._readTimer) {
+      this._readTimer.cancel();
+      this._readTimer = null;
+    }
     this.input.close();
     this.output.close();
     this._closed = true;
@@ -1351,6 +1371,9 @@ const READER_IN_REQUEST_LINE = 0;
 const READER_IN_HEADERS = 1;
 const READER_IN_BODY = 2;
 const READER_FINISHED = 3;
+
+/** Commonpost: time a client has to send its whole request, in ms. */
+export const REQUEST_READ_TIMEOUT_MS = 30000;
 
 /**
  * Reads incoming request data asynchronously, does any necessary preprocessing,
@@ -1725,6 +1748,12 @@ RequestReader.prototype = {
    */
   _handleResponse() {
     NS_ASSERT(this._state == READER_FINISHED);
+
+    // Commonpost: the whole request was read in time
+    if (this._connection._readTimer) {
+      this._connection._readTimer.cancel();
+      this._connection._readTimer = null;
+    }
 
     // We don't need the line-based data any more, so make attempted reuse an
     // error.
