@@ -1862,6 +1862,41 @@ function eventReminderMinutes(alarms, relatedStart) {
   return out.sort((a, b) => b - a);
 }
 
+// updateEvent `reminders`: the alarms to keep, in their order, and the minutes
+// to add. A managed alarm whose minutes stay in the list is kept as it is (the
+// same object: its REPEAT, DURATION, DESCRIPTION and X- properties survive,
+// and two at the same offset stay two); one whose minutes left the list goes;
+// every other alarm stays. changed: something is removed or added.
+// managedCount / otherCount: the reminders and other alarms the event ends up
+// with.
+function planReminderUpdate(alarms, minutes, relatedStart) {
+  const wanted = new Set(minutes);
+  const covered = new Set();
+  const kept = [];
+  let removed = 0;
+  let otherCount = 0;
+  for (const alarm of alarms || []) {
+    const m = reminderMinutesOfAlarm(alarm, relatedStart);
+    if (m === null) {
+      kept.push(alarm);
+      otherCount++;
+    } else if (wanted.has(m)) {
+      kept.push(alarm);
+      covered.add(m);
+    } else {
+      removed++;
+    }
+  }
+  const add = minutes.filter(m => !covered.has(m));
+  return {
+    kept,
+    add,
+    changed: removed > 0 || add.length > 0,
+    managedCount: kept.length - otherCount + add.length,
+    otherCount,
+  };
+}
+
 // A calendar's provider can limit alarms (capabilities.alarms.actionValues,
 // capabilities.alarms.maxCount; unset means no limit). Thunderbird's event
 // dialog silently drops what the calendar cannot store, so refuse instead.
@@ -12219,22 +12254,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 // null/undefined keeps the alarms; [] removes the display reminders.
                 let reminderMinutes = null;
                 let reminderWarning = null;
+                let remindersChanged = false;
                 if (reminders !== undefined && reminders !== null) {
                   if (!CalAlarm) return { error: "Calendar reminders are not available" };
                   const parsed = normalizeReminderMinutes(reminders);
                   if (parsed.error) return { error: parsed.error };
                   reminderMinutes = parsed.minutes;
-                  const relatedStart = Ci.calIAlarm.ALARM_RELATED_START;
-                  const alarms = newItem.getAlarms();
-                  const kept = alarms.filter(a => reminderMinutesOfAlarm(a, relatedStart) === null);
-                  const capError = reminderCapabilityError(calendar, reminderMinutes.length, kept.length);
-                  if (capError) return { error: capError };
-                  const before = eventReminderMinutes(alarms, relatedStart);
-                  const replaced = alarms.length - kept.length;
-                  if (replaced !== reminderMinutes.length || before.some((m, i) => m !== reminderMinutes[i])) {
+                  const plan = planReminderUpdate(newItem.getAlarms(), reminderMinutes, Ci.calIAlarm.ALARM_RELATED_START);
+                  if (plan.changed) {
+                    const capError = reminderCapabilityError(calendar, plan.managedCount, plan.otherCount);
+                    if (capError) return { error: capError };
+                    remindersChanged = true;
                     newItem.clearAlarms();
-                    for (const a of kept) newItem.addAlarm(a);
-                    for (const m of reminderMinutes) newItem.addAlarm(buildDisplayReminder(m));
+                    for (const a of plan.kept) newItem.addAlarm(a);
+                    for (const m of plan.add) newItem.addAlarm(buildDisplayReminder(m));
                     // As Thunderbird's dialog does when reminders change: a snooze or
                     // an acknowledgement of the old ones must not hide the new ones.
                     newItem.alarmLastAck = null;
@@ -12261,6 +12294,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 const warnings = [];
                 if (oldItem.recurrenceInfo) {
                   warnings.push("This is a recurring event -- changes apply to the entire series.");
+                  let exceptions = 1;
+                  try { exceptions = oldItem.recurrenceInfo.getExceptionIds().length; } catch {}
+                  if (remindersChanged && exceptions > 0) {
+                    warnings.push("Occurrences changed on their own keep their own reminders.");
+                  }
                 }
                 if (reminderWarning) warnings.push(reminderWarning);
                 if (warnings.length) result.warning = warnings.join(" ");

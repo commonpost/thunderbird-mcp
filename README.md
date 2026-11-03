@@ -160,7 +160,7 @@ OpenPGP and S/MIME messages are not decrypted for the assistant by default: `get
 | `listCalendars` | List all calendars with read-only, disabled, event, and task support flags |
 | `createEvent` | Create a calendar event -- opens a review dialog; direct creation via `skipReview` requires explicitly disabling the default safety block. Accepts `status: tentative \| confirmed \| cancelled` (VEVENT STATUS per iCal RFC 5545) and `showAs: busy \| free` (whether the time is blocked; does not change `status`). `reminders` adds display reminders, in minutes before the start (up to 5, 0 to 40320). |
 | `listEvents` | Query events by date range with recurring event expansion; a date without a time is a whole day in local time. Returns `status` and `reminders` (display reminders, minutes before the start) on each event. Supports `maxResults` and `format: "table"`. |
-| `updateEvent` | Modify an event's title, dates, location, description, `status`, `showAs`, or `reminders` (replaces the display reminders; `[]` removes them; email, audio, absolute and end-related alarms are kept) |
+| `updateEvent` | Modify an event's title, dates, location, description, `status`, `showAs`, or `reminders` (replaces the display reminders; `[]` removes them; email, audio, absolute and end-related alarms are kept, as are reminders whose minutes stay; exceptions of a recurring event keep their own) |
 | `deleteEvent` | Delete a calendar event by ID |
 | `createTask` | Open a pre-filled task dialog for review; direct creation via `skipReview` requires explicitly disabling the default safety block |
 | `listTasks` | List tasks/to-dos from calendars -- filter by completion status, due date, or calendar. Supports `maxResults` and `format: "table"`. |
