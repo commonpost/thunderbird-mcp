@@ -11087,18 +11087,21 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	              const { terms } = parsedQuery;
 	              const ownEmails = args.groupBy === "thread" ? getOwnEmails() : null;
 	              const encryptedAllowed = isEncryptedContentAllowed();
-	              const candidates = [];
-	              let collectionCapped = false;
+	              const collector = attachmentCandidateCollector({
+	                cap: SEARCH_COLLECTION_CAP,
+	                dropEncrypted: !encryptedAllowed && terms.length > 0,
+	                isEnvelopeEncrypted: isRawMimeEnvelopeEncrypted,
+	              });
 	              const walked = walkSearchFolders(args, (folder, db) => {
 	                for (const msgHdr of db.enumerateMessages()) {
 	                  if (!(msgHdr.flags & Ci.nsMsgMessageFlags.Attachment)) continue;
 	                  if (!prepared.passesHeaderFilters(msgHdr) || !headerMatchesTerms(msgHdr, terms)) continue;
-	                  if (candidates.length >= SEARCH_COLLECTION_CAP) { collectionCapped = true; return false; }
-	                  candidates.push({ msgHdr, folder, dateTs: msgHdr.date || 0 });
+	                  if (!collector.add({ msgHdr, folder, dateTs: msgHdr.date || 0 })) return false;
 	                }
 	                return true;
 	              });
 	              if (walked) return walked;
+	              const { candidates, capped: collectionCapped } = collector;
 	              const dir = prepared.sortOrder === "asc" ? 1 : -1;
 	              candidates.sort((a, b) => dir * (a.dateTs - b.dateTs));
 
@@ -11128,10 +11131,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	              }
 	              const incomplete = attachmentSearchIncomplete(scan, collectionCapped);
 	              const result = withEmptySearchHint(finishSearch(rows, args, prepared, incomplete), parsedQuery);
-	              result.attachmentSearch = attachmentSearchSummary(scan, {
-	                collectionCapped,
-	                hideEncryptedCounts: !encryptedAllowed && terms.length > 0,
-	              });
+	              result.attachmentSearch = attachmentSearchSummary(scan, { collectionCapped });
 	              return result;
 	            }
 
@@ -13379,16 +13379,33 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return { matches, checked, skipped, limitReached };
             }
 
-            // The attachmentSearch field of the result. While encrypted content is not allowed, a query with words
-            // matched the database's subject and preview, which for a protected-header message Thunderbird decrypted
-            // once are the decrypted ones: how many encrypted messages matched, or how many candidates (encrypted
-            // ones among them) were left unread, would tell something about them, so those counts are left out.
-            function attachmentSearchSummary(scan, { collectionCapped, hideEncryptedCounts }) {
+            /**
+             * Collects attachment search candidates, at most `cap`; add(candidate) returns false once the cap is
+             * passed. While encrypted content is not allowed, a query with words matched the database's subject and
+             * preview, which for a protected-header message Thunderbird decrypted once are the decrypted ones: with
+             * dropEncrypted, a candidate whose outer envelope is encrypted is left out here, before it takes any of
+             * the cap or the read budget, as the main search leaves it out, so no count or limit depends on it.
+             */
+            function attachmentCandidateCollector({ cap, dropEncrypted, isEnvelopeEncrypted }) {
+              const collector = {
+                candidates: [],
+                capped: false,
+                add(candidate) {
+                  if (dropEncrypted && isEnvelopeEncrypted(candidate.msgHdr)) return true;
+                  if (collector.candidates.length >= cap) {
+                    collector.capped = true;
+                    return false;
+                  }
+                  collector.candidates.push(candidate);
+                  return true;
+                },
+              };
+              return collector;
+            }
+
+            // The attachmentSearch field of the result
+            function attachmentSearchSummary(scan, { collectionCapped }) {
               const skipped = { ...scan.skipped };
-              if (hideEncryptedCounts) {
-                delete skipped.encrypted;
-                delete skipped.limitReached;
-              }
               const out = { checked: scan.checked };
               if (Object.keys(skipped).length) out.skipped = skipped;
               if (scan.limitReached || collectionCapped) out.limitReached = true;

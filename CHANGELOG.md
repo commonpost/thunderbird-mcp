@@ -46,9 +46,13 @@ project is kept in this repository.
   other filters. Each row lists its matching attachments (`name`, `contentType`, `size`), attached messages and the
   attachments inside them included. Only the messages Thunderbird marks as having attachments are read, from their
   local copy and only for their MIME structure: nothing is downloaded from the server or decrypted, and while reading
-  encrypted messages is not allowed an encrypted message is skipped. At most 500 messages of 16 MiB each are read
-  per call; `attachmentSearch` gives how many were checked and counts the others by reason (`encrypted`, `tooLarge`,
-  `notOffline`, `unreadable`, `limitReached`), and `incomplete: true` is set when some could not be checked.
+  encrypted messages is not allowed an encrypted message is skipped. At most 500 messages of 16 MiB each, and 1,000
+  MIME parts each, are read per call; `attachmentSearch` gives how many were checked and counts the others by reason
+  (`encrypted`, `tooLarge`, `notOffline`, `unreadable`, `limitReached`), and `incomplete: true` is set when some
+  could not be checked. While reading encrypted messages is not allowed, a query with words leaves out a message
+  whose outer envelope is encrypted before anything is read, as the search without attachment options does (its
+  subject and preview may be decrypted ones): it is in no count and takes none of the limits; `encrypted` then
+  counts only messages with an encrypted part inside a plain envelope.
 
 ### Changed
 
