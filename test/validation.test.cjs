@@ -1115,7 +1115,7 @@ describe('Production contact schemas and dispatch', () => {
       assert.equal(addressItems.additionalProperties, false);
 
       const emailItems = schema.properties.emails.items;
-      assert.deepEqual(Object.keys(emailItems.properties), ['address', 'type', 'primary']);
+      assert.deepEqual(Object.keys(emailItems.properties), ['address', 'type', 'primary', 'invalid']);
       assert.deepEqual(Array.from(emailItems.properties.type.enum), ['work', 'home', 'other']);
       assert.deepEqual(Array.from(emailItems.required), ['address']);
       assert.equal(emailItems.additionalProperties, false);

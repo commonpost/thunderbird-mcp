@@ -1097,6 +1097,9 @@
                 },
                 "primary": {
                   "type": "boolean"
+                },
+                "invalid": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -1251,6 +1254,9 @@
                   ]
                 },
                 "primary": {
+                  "type": "boolean"
+                },
+                "invalid": {
                   "type": "boolean"
                 }
               },

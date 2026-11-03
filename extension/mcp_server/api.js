@@ -349,7 +349,12 @@ function isValidContactEmailAddress(value) {
   );
 }
 
-function validateContactEmails(emails) {
+/**
+ * storedInvalid: the addresses flagged invalid on the card being updated. One
+ * of them passed back unchanged is kept as it is; a new or changed address
+ * must be one plain address.
+ */
+function validateContactEmails(emails, storedInvalid = []) {
   if (!Array.isArray(emails)) return "emails must be an array";
   if (emails.length > CONTACT_MAX_EMAILS) {
     return `emails accepts at most ${CONTACT_MAX_EMAILS} addresses`;
@@ -361,11 +366,16 @@ function validateContactEmails(emails) {
     if (!email || typeof email !== "object" || Array.isArray(email)) {
       return `emails[${i}] must be an object`;
     }
-    const unknown = Object.keys(email).find(key => !["address", "type", "primary"].includes(key));
+    const unknown = Object.keys(email).find(key => !["address", "type", "primary", "invalid"].includes(key));
     if (unknown) return `Unknown emails[${i}] property: ${unknown}`;
+    if (email.invalid !== undefined && typeof email.invalid !== "boolean") {
+      return `emails[${i}].invalid must be a boolean`;
+    }
     const address = typeof email.address === "string" ? email.address.trim() : "";
-    if (!isValidContactEmailAddress(address)) {
-      return `emails[${i}].address must be one plain e-mail address`;
+    if (!isValidContactEmailAddress(address) && !storedInvalid.includes(address)) {
+      return email.invalid === true
+        ? `emails[${i}].address is not one plain e-mail address: pass it back unchanged to keep it, or leave it out`
+        : `emails[${i}].address must be one plain e-mail address`;
     }
     if (seen.has(address.toLowerCase())) return `emails[${i}].address is listed twice`;
     seen.add(address.toLowerCase());
@@ -695,7 +705,7 @@ function contactFieldsHaveContent(fields) {
  * Deep validation used inside contact handlers before any card is mutated.
  * Returns an error string, or null for a valid payload.
  */
-function validateContactFields(fields, requireContent = false) {
+function validateContactFields(fields, requireContent = false, storedInvalidEmails = []) {
   for (const name of CONTACT_SCALAR_FIELDS) {
     if (fields[name] !== undefined && typeof fields[name] !== "string") {
       return `${name} must be a string`;
@@ -703,7 +713,7 @@ function validateContactFields(fields, requireContent = false) {
   }
 
   if (fields.emails !== undefined) {
-    const emailsError = validateContactEmails(fields.emails);
+    const emailsError = validateContactEmails(fields.emails, storedInvalidEmails);
     if (emailsError) return emailsError;
     // email is the primary address: both may be passed only when they agree.
     if (fields.email !== undefined) {
@@ -6310,6 +6320,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               address: { type: "string" },
               type: { type: "string", enum: CONTACT_EMAIL_TYPES },
               primary: { type: "boolean" },
+              invalid: { type: "boolean" },
             },
             required: ["address"],
             additionalProperties: false,
@@ -11519,12 +11530,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   note,
                   birthday,
                 };
-                const validationError = validateContactFields(fields);
-                if (validationError) return { error: validationError };
-
                 const found = findContactByUID(contactId);
                 if (found.error) return found;
                 const { card, book } = found;
+
+                const storedInvalidEmails = fields.emails === undefined
+                  ? []
+                  : readContactFields(card).emails.filter(item => item.invalid).map(item => item.address);
+                const validationError = validateContactFields(fields, false, storedInvalidEmails);
+                if (validationError) return { error: validationError };
 
                 const applyError = applyContactFields(card, fields, VCardPropertyEntry);
                 if (applyError) return applyError;
