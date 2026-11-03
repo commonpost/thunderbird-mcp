@@ -40,11 +40,16 @@ project is kept in this repository.
   display alarms, or fewer alarms than asked (`capabilities.alarms.*`), gets an error instead of losing them; a
   calendar whose reminders are turned off gets a warning.
 - Contacts with several email addresses: `getContact` and `searchContacts` return `emails`
-  (`[{ address, type?, primary? }]`, primary first, in Thunderbird's preference order; `email` stays the primary),
-  and `searchContacts` matches any of them. `createContact` and `updateContact` take `emails` (at most 10 plain
-  addresses, type `work`, `home` or `other`, at most one `primary`, otherwise the first), which replaces the list:
-  an address already on the card keeps its vCard entry and parameters, the primary gets `PREF=1`, and no other vCard
-  property is touched. `email` alone still changes only the primary address.
+  (`[{ address, type?, primary?, invalid? }]`, primary first, in Thunderbird's preference order; `email` stays the
+  primary), and `searchContacts` matches any of them. The values are returned as stored; `invalid: true` marks one
+  that is not a single plain address (a display name, a list, whitespace or an invisible character), which should
+  not be written to as it is. `createContact` and `updateContact` take `emails` (at most 10 plain addresses, type
+  `work`, `home` or `other`, at most one `primary`, otherwise the first), which replaces the list: an address already
+  on the card keeps its vCard entry and parameters, the primary gets `PREF=1`, and no other vCard property is
+  touched, except the label of a removed grouped address (`itemN.X-ABLABEL` next to `itemN.EMAIL`), which goes with
+  it when nothing else is in its group. An address with a character that draws nothing (format and control
+  characters, default-ignorable ones such as variation selectors and the Hangul filler, the Tag block, private-use
+  or unassigned code points) is refused. `email` alone still changes only the primary address.
 - `searchMessages` finds messages by attachment: `attachmentName` (part of a filename, any case) and `attachmentType`
   (a MIME type such as `application/pdf`, or a prefix such as `image/`), combined with the query, folder, date and
   other filters. Each row lists its matching attachments (`name`, `contentType`, `size`), attached messages and the

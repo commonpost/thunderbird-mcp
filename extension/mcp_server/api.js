@@ -296,6 +296,9 @@ function readVCardContactEmails(vCardProperties) {
     const type = getContactEmailType(entry);
     if (type) email.type = type;
     if (emails.length === 0) email.primary = true;
+    // Stored as another client wrote it: a display name, a list or hidden
+    // characters are not one address to write to
+    if (!isValidContactEmailAddress(address)) email.invalid = true;
     emails.push(email);
   }
   return emails;
@@ -312,10 +315,18 @@ function readFlatContactEmails(card) {
     if (!address || emails.some(email => email.address.toLowerCase() === address.toLowerCase())) {
       continue;
     }
-    emails.push(emails.length === 0 ? { address, primary: true } : { address });
+    const email = emails.length === 0 ? { address, primary: true } : { address };
+    if (!isValidContactEmailAddress(address)) email.invalid = true;
+    emails.push(email);
   }
   return emails;
 }
+
+// Characters that draw nothing or are not text: the class of
+// CORE_HIDDEN_CLASS_SRC (untrusted content helpers, not loaded with this
+// block), the Tag block, and private-use, surrogate and unassigned code points
+const CONTACT_EMAIL_HIDDEN_PATTERN =
+  /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u180B-\u180F\u2800\p{Co}\p{Cs}\p{Cn}]|[\u{E0000}-\u{E0FFF}]/u;
 
 /**
  * One plain address as stored in a vCard EMAIL value: no display name, no
@@ -325,9 +336,7 @@ function readFlatContactEmails(card) {
 function isValidContactEmailAddress(value) {
   if (typeof value !== "string" || !value || value.length > 254) return false;
   if (/[\s,;:<>"()[\]\\]/u.test(value)) return false;
-  if (/[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/u.test(value)) {
-    return false;
-  }
+  if (CONTACT_EMAIL_HIDDEN_PATTERN.test(value)) return false;
   const at = value.indexOf("@");
   if (at <= 0 || at !== value.lastIndexOf("@")) return false;
   const local = value.slice(0, at);
@@ -448,6 +457,19 @@ function applyVCardContactEmails(vCardProperties, emails, VCardPropertyEntry) {
   if (!inOrder) {
     for (const entry of existingEntries) vCardProperties.removeEntry(entry);
     for (const entry of entries) vCardProperties.addEntry(entry);
+  }
+
+  // The label of a removed grouped address (itemN.EMAIL with itemN.X-ABLABEL,
+  // as Apple writes them) goes with it, unless another property is in that
+  // group
+  const groupOf = entry => (typeof entry.params?.group === "string" ? entry.params.group.toLowerCase() : "");
+  for (const removed of existingEntries) {
+    const group = groupOf(removed);
+    if (!group || entries.includes(removed)) continue;
+    const members = vCardProperties.entries.filter(entry => groupOf(entry) === group);
+    if (members.length && members.every(entry => String(entry.name).toLowerCase() === "x-ablabel")) {
+      for (const label of members) vCardProperties.removeEntry(label);
+    }
   }
 }
 
