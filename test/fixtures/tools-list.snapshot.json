@@ -46,6 +46,10 @@
           "savedSearches": {
             "type": "boolean",
             "description": "If true, return only saved searches (virtual folders) with their folders and conditions"
+          },
+          "refresh": {
+            "type": "boolean",
+            "description": "With folderPath: first fetch its new mail from the server (waits up to 20 s); returns { refresh, folders }"
           }
         },
         "required": []
@@ -263,8 +267,8 @@
           "messages": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 20,
-            "description": "Messages to read, max 20. Each item is { messageId, folderPath }.",
+            "maxItems": 200,
+            "description": "Messages to read, max 20 (200 with headersOnly). Each item is { messageId, folderPath }.",
             "items": {
               "type": "object",
               "properties": {
@@ -316,6 +320,10 @@
             "maximum": 200000,
             "default": 4000,
             "description": "Max body characters per message; read the rest with getMessage bodyOffset"
+          },
+          "headersOnly": {
+            "type": "boolean",
+            "description": "Only headers as received (From, To, Cc, Subject, Date, Message-ID, References, List-*) and flags; no body"
           }
         },
         "required": [
@@ -367,6 +375,10 @@
           "skipReview": {
             "type": "boolean",
             "description": "Request direct sending without a compose window. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)."
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "Check only: report sender, recipients (with automatic Cc/Bcc), attachments and size, or the error; sends nothing"
           },
           "attachments": {
             "type": "array",

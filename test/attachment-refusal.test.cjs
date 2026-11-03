@@ -42,10 +42,10 @@ describe("attachmentFailureResult", () => {
 
 describe("wiring in the compose tools", () => {
   // Each call site converts the attachments, then stops before composing.
-  const sites = [...apiSource.matchAll(/filePathsToAttachDescs\(attachments\);\n[ \t]*const attachmentFailure = attachmentFailureResult\(failedPaths, "([^"]+)"\);/g)];
+  const sites = [...apiSource.matchAll(/filePathsToAttachDescs\(attachments(?:, \{ dryRun: !!dryRun \})?\);\n[ \t]*const attachmentFailure = attachmentFailureResult\(failedPaths, "([^"]+)"\);/g)];
 
   it("sendMail, saveDraft, replyToMessage and forwardMessage all check the result", () => {
-    assert.equal(apiSource.match(/filePathsToAttachDescs\(attachments\)/g).length, 4);
+    assert.equal(apiSource.match(/filePathsToAttachDescs\(attachments(?:, \{ dryRun: !!dryRun \})?\)/g).length, 4);
     assert.deepEqual(sites.map((m) => m[1]), ["sent or opened", "saved", "sent or opened", "sent or opened"]);
   });
 
