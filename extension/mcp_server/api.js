@@ -6305,8 +6305,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           properties: {
             accountId: { type: "string", description: "Optional account ID (from listAccounts) to limit results to a single account" },
             folderPath: { type: "string", description: "Optional folder URI (from listFolders) to list only that folder and its subfolders" },
-            format: { type: "string", enum: ["objects", "table"], description: "Response format: 'objects' (default, existing array of folder objects) or 'table' ({ columns, rows } compact form)" },
-            favoritesOnly: { type: "boolean", description: "If true, return only folders the user has marked as favorites in Thunderbird (default: false). Useful for finding the folders that matter without listing hundreds." },
+            format: { type: "string", enum: ["objects", "table"], description: "'objects' (default) or 'table' ({ columns, rows }, compact)" },
+            favoritesOnly: { type: "boolean", description: "If true, return only folders the user has marked as favorites in Thunderbird (default: false)" },
             savedSearches: { type: "boolean", description: "If true, return only saved searches (virtual folders) with their folders and conditions" },
             refresh: { type: "boolean", description: "With folderPath: first fetch its new mail from the mail server (waits up to 20 s); returns { refresh, folders }" },
           },
@@ -6337,7 +6337,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             groupBy: { type: "string", enum: ["sender", "thread"], description: "Collapse matches into one row per sender or conversation: count, unread, first/last date, latestId + latestFolderPath of the newest non-draft message, drafts count" },
             threadOf: {
               type: "object",
-              description: "Return the whole conversation of this message across folders (incl. Sent), oldest first. A Re: message without threading headers joins by subject the earlier message its sender took part in (linkedBy: subject). Reads at most 10,000 headers; incomplete: true when it stopped there (narrow with folderPath)",
+              description: "Return the whole conversation of this message across folders (incl. Sent), oldest first. A Re: message without threading headers joins by subject the earlier message its sender took part in (linkedBy: subject). Reads at most 10,000 headers, else incomplete: true (narrow with folderPath)",
               properties: {
                 messageId: { type: "string" },
                 folderPath: { type: "string" },
@@ -6345,9 +6345,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               required: ["messageId", "folderPath"],
               additionalProperties: false,
             },
-            format: { type: "string", enum: ["objects", "table", "legacy"], description: "'table' returns messages as { columns, rows } (fewer tokens for long lists). 'legacy' (deprecated, to be removed in a later release): the 0.10 output, a plain array of full rows (threadId, folder, whole preview) unless offset is passed, 50 rows by default; not with groupBy" },
-            searchBody: { type: "boolean", description: "Full-text search of subject, body and attachment names via the Gloda index (slower). Query: words or \"quoted phrases\", all must match, no operators; terms under 3 characters are ignored; English words match other forms (stemming), other languages such as Russian only the exact word form. IMAP needs offline sync." },
+            format: { type: "string", enum: ["objects", "table", "legacy"], description: "'table': messages as { columns, rows }, fewer tokens. 'legacy' (deprecated, to be removed): the 0.10 output, a plain array of full rows (threadId, folder, whole preview) unless offset is passed, 50 rows by default; not with groupBy" },
+            searchBody: { type: "boolean", description: "Full-text search of subject, body and attachment names via the Gloda index (slower). Query: words or \"quoted phrases\", all must match, no operators; terms under 3 characters are ignored; English words match other forms (stemming), other languages only the exact form. IMAP needs offline sync." },
             dedupByMessageId: { type: "boolean", default: true, description: "Collapse copies of one message in several folders into one row with dupLocations" },
+            attachmentName: { type: "string", description: "Only messages with an attachment whose filename contains this (any case); rows list them" },
+            attachmentType: { type: "string", description: "Same for a MIME type or prefix ('application/pdf', 'image/'). Reads local copies, 500 at most; attachmentSearch counts skipped ones" },
           },
           required: ["query"],
         },
@@ -6363,9 +6365,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             messageId: { type: "string", description: "The message ID (from searchMessages results)" },
             folderPath: { type: "string", description: "The folder URI path (from searchMessages results)" },
             saveAttachments: { type: "boolean", description: "If true, save attachments to <OS temp dir>/commonpost-mcp/<messageId>/ and include filePath in response (default: false)" },
-            includeInlineImages: { type: "boolean", description: "If true, append supported inline email images as MCP image content blocks after the text result (default: false; max 1 MiB base64 per image and 4 MiB total). Images referenced by the rendered body are attempted first in document order, followed by remaining inline images in MIME order. Ignored when rawSource is true." },
+            includeInlineImages: { type: "boolean", description: "If true, append supported inline images as MCP image blocks after the text (max 1 MiB base64 each, 4 MiB total): those the body shows first, in document order, then the others in MIME order. Ignored with rawSource." },
             bodyFormat: { type: "string", enum: ["markdown", "text", "html"], description: "Body output format: 'markdown' (default, preserves structure), 'text' (plain text), 'html' (raw HTML)" },
-            rawSource: { type: "boolean", description: "If true, return the full raw RFC 2822 message source (all headers + MIME parts). Useful for extracting calendar invites, S/MIME data, or debugging. Decoded as UTF-8 when valid, else by the charset of the top-level Content-Type, then of the parts, else a detected one; rawCharset names it, rawMixedCharsets lists the part charsets when they differ. Other fields (body, attachments) are omitted when this is set. Note: requires local/offline message copy; IMAP messages not cached offline may fail." },
+            rawSource: { type: "boolean", description: "If true, return the full raw RFC 2822 source (all headers + MIME parts), e.g. for calendar invites, S/MIME data, debugging. Decoded as UTF-8 when valid, else by the charset of the top-level Content-Type, then of the parts, else a detected one; rawCharset names it, rawMixedCharsets lists the part charsets when they differ. Other fields (body, attachments) are omitted. Needs a local copy: IMAP messages not kept offline may fail." },
             rawEncoding: { type: "string", enum: ["text", "base64"], default: "text", description: "With rawSource: 'base64' returns the exact bytes instead of decoded text, for 8bit/binary parts; pages then start and end on 4-character groups" },
             maxBodyChars: { type: "integer", minimum: 1, maximum: MAX_BODY_CHARS, default: DEFAULT_GET_MESSAGE_BODY_CHARS, description: "Max characters of body (or rawSource) returned; longer bodies set bodyTruncated and nextBodyOffset" },
             bodyOffset: { type: "integer", minimum: 0, default: 0, description: "Continue a truncated body from nextBodyOffset" },
@@ -10980,6 +10982,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	            function searchMessages(args, options = {}) {
 	              const prepared = prepareSearch(args);
 	              if (prepared.error) return prepared;
+	              const attachmentFilter = parseAttachmentFilter(args);
+	              if (attachmentFilter?.error) return attachmentFilter;
+	              if (attachmentFilter) {
+	                const other = args.searchBody ? "searchBody" : args.threadOf ? "threadOf" : args.format === "legacy" ? 'format "legacy"' : null;
+	                if (other) return { error: `attachmentName / attachmentType cannot be combined with ${other}` };
+	              }
 
 	              if (args.searchBody) {
 	                if (!GlodaMsgSearcher) return { error: "Gloda full-text index is not available" };
@@ -10999,6 +11007,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	              if (failed) return finishSearch([], args, prepared, false);
 
 	              if (args.threadOf) return threadOfSearch(args, prepared, terms);
+	              if (attachmentFilter) return attachmentSearch(args, prepared, parsedQuery, attachmentFilter);
 
 	              const ownEmails = args.groupBy === "thread" ? getOwnEmails() : null;
 	              const encryptedAllowed = isEncryptedContentAllowed();
@@ -11027,6 +11036,103 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	              });
 	              if (walked) return walked;
 	              return withEmptySearchHint(finishSearch(rows, args, prepared, incomplete), parsedQuery);
+	            }
+
+	            // Server types whose messages are always stored locally; any other (IMAP, news, ...) is read only when
+	            // Thunderbird keeps the message offline, so nothing is downloaded.
+	            const LOCAL_STORE_SERVER_TYPES = new Set(["none", "pop3", "rss", "movemail"]);
+	            function hasLocalMessageCopy(folder, msgHdr) {
+	              try {
+	                if (LOCAL_STORE_SERVER_TYPES.has(folder.server?.type)) return true;
+	                return !!folder.hasMsgOffline(msgHdr.messageKey);
+	              } catch {
+	                return false;
+	              }
+	            }
+
+	            // One attachment search candidate: { attachments, bytes } or { skip, bytes }. Read from the local copy,
+	            // at most maxBytes; while encrypted content is not allowed an encrypted message is skipped.
+	            function inspectMessageAttachments({ msgHdr, folder }, maxBytes, encryptedAllowed) {
+	              if (!hasLocalMessageCopy(folder, msgHdr)) return { skip: "notOffline" };
+	              // Too large to read: its outer envelope still tells whether it is an encrypted message
+	              const tooLarge = () => ({ skip: !encryptedAllowed && isRawMimeEnvelopeEncrypted(msgHdr) ? "encrypted" : "tooLarge" });
+	              if ((msgHdr.messageSize || 0) > maxBytes) return tooLarge();
+	              let stream = null;
+	              let raw = null;
+	              let overLimit = false;
+	              try {
+	                stream = folder.getMsgInputStream(msgHdr, {});
+	                raw = readMessageStreamFully(stream, maxBytes);
+	              } catch (e) {
+	                if (e?.isStreamSizeLimit) overLimit = true;
+	              } finally {
+	                if (stream) try { stream.close(); } catch { /* ignore */ }
+	              }
+	              if (overLimit) return { ...tooLarge(), bytes: maxBytes };
+	              if (!raw) return { skip: "unreadable" };
+	              const listed = listRawMimeAttachments(raw, decodeHeaderValue);
+	              if (!listed) return { skip: "unreadable", bytes: raw.length };
+	              if (listed.encrypted && !encryptedAllowed) return { skip: "encrypted", bytes: raw.length };
+	              if (listed.limited) return { skip: "unreadable", bytes: raw.length };
+	              return { attachments: listed.attachments, bytes: raw.length };
+	            }
+
+	            /**
+	             * searchMessages with attachmentName / attachmentType: the messages flagged as having attachments that
+	             * pass the other filters are collected (newest first, or oldest with sortOrder asc), then at most
+	             * ATTACHMENT_SEARCH_LIMITS.maxCandidates of them are read. The result's attachmentSearch says how many
+	             * were checked and why the others were not.
+	             */
+	            async function attachmentSearch(args, prepared, parsedQuery, filter) {
+	              const { terms } = parsedQuery;
+	              const ownEmails = args.groupBy === "thread" ? getOwnEmails() : null;
+	              const encryptedAllowed = isEncryptedContentAllowed();
+	              const candidates = [];
+	              let collectionCapped = false;
+	              const walked = walkSearchFolders(args, (folder, db) => {
+	                for (const msgHdr of db.enumerateMessages()) {
+	                  if (!(msgHdr.flags & Ci.nsMsgMessageFlags.Attachment)) continue;
+	                  if (!prepared.passesHeaderFilters(msgHdr) || !headerMatchesTerms(msgHdr, terms)) continue;
+	                  if (candidates.length >= SEARCH_COLLECTION_CAP) { collectionCapped = true; return false; }
+	                  candidates.push({ msgHdr, folder, dateTs: msgHdr.date || 0 });
+	                }
+	                return true;
+	              });
+	              if (walked) return walked;
+	              const dir = prepared.sortOrder === "asc" ? 1 : -1;
+	              candidates.sort((a, b) => dir * (a.dateTs - b.dateTs));
+
+	              const pause = () => new Promise(resolve => {
+	                try {
+	                  Services.tm.dispatchToMainThread(resolve);
+	                } catch {
+	                  resolve();
+	                }
+	              });
+	              const scan = await scanAttachmentCandidates(candidates, filter,
+	                (candidate, maxBytes) => inspectMessageAttachments(candidate, maxBytes, encryptedAllowed),
+	                ATTACHMENT_SEARCH_LIMITS, pause);
+
+	              const rows = [];
+	              for (const { candidate: { msgHdr, folder }, attachments } of scan.matches) {
+	                let row;
+	                try {
+	                  row = buildSearchRow(msgHdr, folder, false);
+	                } catch {
+	                  continue; // removed while the search ran
+	                }
+	                row.attachments = attachments.slice(0, ATTACHMENT_SEARCH_ROW_ATTACHMENTS);
+	                if (attachments.length > ATTACHMENT_SEARCH_ROW_ATTACHMENTS) row.moreAttachments = attachments.length - ATTACHMENT_SEARCH_ROW_ATTACHMENTS;
+	                if (ownEmails) addThreadGroupingFields(row, msgHdr, null, ownEmails);
+	                rows.push(row);
+	              }
+	              const incomplete = attachmentSearchIncomplete(scan, collectionCapped);
+	              const result = withEmptySearchHint(finishSearch(rows, args, prepared, incomplete), parsedQuery);
+	              result.attachmentSearch = attachmentSearchSummary(scan, {
+	                collectionCapped,
+	                hideEncryptedCounts: !encryptedAllowed && terms.length > 0,
+	              });
+	              return result;
 	            }
 
 	            function headerMatchesTerms(msgHdr, terms) {
@@ -12993,6 +13099,275 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return results;
             }
             // END RAW MIME ATTACHMENT HELPERS
+
+            // BEGIN ATTACHMENT SEARCH HELPERS
+            // searchMessages attachmentName / attachmentType. Candidates are the messages Thunderbird flags as having
+            // attachments (nsMsgMessageFlags.Attachment) that pass the other filters; each is read from its local copy
+            // only, up to a size limit, and only its MIME structure is walked: no part is decoded, nothing is fetched
+            // from the server, nothing is decrypted.
+            const ATTACHMENT_SEARCH_LIMITS = {
+              maxCandidates: 500,
+              maxMessageBytes: 16 * 1024 * 1024,
+              maxTotalBytes: 128 * 1024 * 1024,
+              maxMs: 20000,
+              // Let Thunderbird run after this many bytes or messages
+              pauseBytes: 4 * 1024 * 1024,
+              pauseMessages: 25,
+            };
+            const ATTACHMENT_SEARCH_MAX_DEPTH = 10;
+            const ATTACHMENT_SEARCH_MAX_PARTS = 1000;
+            const ATTACHMENT_SEARCH_ROW_ATTACHMENTS = 20;
+            const ATTACHMENT_FILTER_MAX_CHARS = 256;
+            const ATTACHMENT_NAME_MAX_CHARS = 255;
+
+            // null without attachment options, { error }, or { name, type, typePrefix } (lower case; null = any)
+            function parseAttachmentFilter(args) {
+              const given = key => args[key] !== undefined && args[key] !== null;
+              if (!given("attachmentName") && !given("attachmentType")) return null;
+              for (const key of ["attachmentName", "attachmentType"]) {
+                if (!given(key)) continue;
+                if (typeof args[key] !== "string" || !args[key].trim()) return { error: `${key} must be a non-empty string` };
+                if (args[key].length > ATTACHMENT_FILTER_MAX_CHARS) return { error: `${key} is longer than ${ATTACHMENT_FILTER_MAX_CHARS} characters` };
+              }
+              const filter = { name: null, type: null, typePrefix: false };
+              if (given("attachmentName")) filter.name = args.attachmentName.trim().normalize("NFC").toLowerCase();
+              if (given("attachmentType")) {
+                // "image", "image/" and "image/*" are prefixes; "application/pdf" is exact
+                const m = args.attachmentType.trim().toLowerCase().match(/^([a-z0-9][a-z0-9!#$&^_.+-]*)(?:\/(\*|[a-z0-9][a-z0-9!#$&^_.+-]*)?)?$/);
+                if (!m) return { error: `attachmentType must be a MIME type or prefix such as 'application/pdf' or 'image/', got: ${JSON.stringify(args.attachmentType)}` };
+                filter.typePrefix = !m[2] || m[2] === "*";
+                filter.type = filter.typePrefix ? `${m[1]}/` : `${m[1]}/${m[2]}`;
+              }
+              return filter;
+            }
+
+            function attachmentMatchesFilter(attachment, filter) {
+              if (filter.name !== null && !String(attachment.name || "").normalize("NFC").toLowerCase().includes(filter.name)) return false;
+              if (filter.type !== null) {
+                const ct = String(attachment.contentType || "");
+                if (filter.typePrefix ? !ct.startsWith(filter.type) : ct !== filter.type) return false;
+              }
+              return true;
+            }
+
+            // A parameter of a raw MIME header value, with RFC 2231 extended values (name*=utf-8''...) and
+            // continuations (name*0*=..., name*1*=...) joined and decoded. The extended form wins over the plain one.
+            // plain: the plain value as read (raw bytes), for the caller to decode.
+            function rawMimeParameter(headerValue, param) {
+              const pieces = splitRawMimeHeaderParameters(String(headerValue || ""));
+              pieces.shift();
+              let plain = "";
+              let extended = "";
+              const segments = [];
+              for (const piece of pieces) {
+                const eq = piece.indexOf("=");
+                if (eq < 0) continue;
+                const key = piece.slice(0, eq).trim().toLowerCase();
+                const value = piece.slice(eq + 1).trim();
+                if (key === param) plain = unquoteRawMimeParameter(value);
+                else if (key === `${param}*`) extended = decodeRawMimeExtendedParameter(value);
+                else if (key.startsWith(`${param}*`)) {
+                  const m = key.slice(param.length + 1).match(/^(\d{1,3})(\*?)$/);
+                  if (m) segments.push({ index: Number(m[1]), encoded: m[2] === "*", value: unquoteRawMimeParameter(value) });
+                }
+              }
+              if (extended) return { extended };
+              if (segments.length) {
+                segments.sort((a, b) => a.index - b.index);
+                let charset = "utf-8";
+                const bytes = [];
+                segments.forEach((seg, i) => {
+                  let v = seg.value;
+                  if (seg.encoded) {
+                    if (i === 0) {
+                      const m = v.match(/^([^']*)'[^']*'([\s\S]*)$/);
+                      if (m) { charset = m[1].trim() || "utf-8"; v = m[2]; }
+                    }
+                    for (const b of decodeRawMimePercentBytes(v)) bytes.push(b);
+                  } else {
+                    for (let j = 0; j < v.length; j++) bytes.push(v.charCodeAt(j) & 0xFF);
+                  }
+                });
+                const data = new Uint8Array(bytes);
+                try {
+                  return { extended: new TextDecoder(charset, { fatal: false }).decode(data) };
+                } catch {
+                  return { extended: new TextDecoder("utf-8", { fatal: false }).decode(data) };
+                }
+              }
+              return { plain };
+            }
+
+            // The filename of a part (Content-Disposition filename, else Content-Type name). A plain value is UTF-8
+            // when valid (RFC 6532), else kept as read; decodeWord decodes RFC 2047 encoded-words in it.
+            function rawMimePartFilename(entity, decodeWord) {
+              for (const [header, param] of [["content-disposition", "filename"], ["content-type", "name"]]) {
+                const value = getRawMimeHeader(entity.headers, header);
+                if (!value) continue;
+                const found = rawMimeParameter(value, param);
+                let name = found.extended || "";
+                if (!name && found.plain) {
+                  name = found.plain;
+                  try {
+                    name = new TextDecoder("utf-8", { fatal: true }).decode(rawMimeBytesFromByteString(name));
+                  } catch { /* kept as read */ }
+                  if (decodeWord && name.includes("=?")) {
+                    try { name = decodeWord(name) || name; } catch { /* kept as read */ }
+                  }
+                }
+                name = name.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+                if (name) return name.length > ATTACHMENT_NAME_MAX_CHARS ? name.slice(0, ATTACHMENT_NAME_MAX_CHARS) : name;
+              }
+              return "";
+            }
+
+            // Decoded size of a part body from its encoded form, without decoding it; null for an unknown encoding.
+            function rawMimeDecodedSize(body, transferEncoding) {
+              const s = String(body || "");
+              const cte = mimeBaseType(transferEncoding) || "7bit";
+              if (cte === "base64") {
+                let n = 0;
+                for (let i = 0; i < s.length; i++) {
+                  const c = s.charCodeAt(i);
+                  if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 43 || c === 47) n++;
+                }
+                return Math.floor(n * 3 / 4);
+              }
+              if (cte === "quoted-printable") {
+                const soft = (s.match(/=(?:\r\n|\r|\n)/g) || []).reduce((sum, m) => sum + m.length, 0);
+                const escapes = (s.match(/=[0-9A-Fa-f]{2}/g) || []).length;
+                return s.length - soft - 2 * escapes;
+              }
+              if (cte === "7bit" || cte === "8bit" || cte === "binary") return s.length;
+              return null;
+            }
+
+            // The attachments of a raw message, from its MIME structure: [{ name, contentType, size }]. A part is an
+            // attachment by the rule of parseAttachmentPartsFromRawMime (disposition attachment, or a filename on an
+            // inline or non-text part); an attached message (message/rfc822) is one, and its own attachments are
+            // listed after it (inAttachedMessage). encrypted: an OpenPGP / S/MIME encrypted part anywhere. limited:
+            // the walk stopped at the depth or part limit, so neither the list nor encrypted can be trusted.
+            // Null when the message cannot be parsed.
+            function listRawMimeAttachments(raw, decodeWord) {
+              const root = parseRawMimeEntity(raw, { maxDepth: ATTACHMENT_SEARCH_MAX_DEPTH });
+              if (!root) return null;
+              const out = { attachments: [], encrypted: false, limited: false };
+              let parts = 0;
+              const walk = (entity, depth, inAttachedMessage) => {
+                if (out.limited) return;
+                if (++parts > ATTACHMENT_SEARCH_MAX_PARTS) {
+                  out.limited = true;
+                  return;
+                }
+                const ct = entity.contentType.value || "text/plain";
+                if (ENCRYPTED_CONTENT_TYPES.has(ct)) out.encrypted = true;
+                if (ct.startsWith("multipart/")) {
+                  if (entity.depthLimitReached) {
+                    out.limited = true;
+                    return;
+                  }
+                  for (const child of entity.parts) walk(child, depth + 1, inAttachedMessage);
+                  return;
+                }
+                const name = rawMimePartFilename(entity, decodeWord);
+                const disposition = entity.contentDisposition.value || "";
+                const isMessage = ct === "message/rfc822";
+                const transferEncoding = getRawMimeHeader(entity.headers, "content-transfer-encoding");
+                if (disposition === "attachment" || (name && (disposition === "inline" || !ct.startsWith("text/"))) || (isMessage && depth > 0)) {
+                  const attachment = { name, contentType: ct };
+                  const size = rawMimeDecodedSize(entity.body, transferEncoding);
+                  if (size !== null) attachment.size = size;
+                  if (inAttachedMessage) attachment.inAttachedMessage = true;
+                  out.attachments.push(attachment);
+                }
+                if (!isMessage) return;
+                const remaining = ATTACHMENT_SEARCH_MAX_DEPTH - depth - 1;
+                if (remaining < 0) {
+                  out.limited = true;
+                  return;
+                }
+                let innerRaw = entity.body;
+                if (mimeBaseType(transferEncoding) === "base64" || mimeBaseType(transferEncoding) === "quoted-printable") {
+                  const bytes = decodeRawMimeTransferBody(entity.body, transferEncoding);
+                  innerRaw = bytes ? rawMimeToByteString(bytes) : "";
+                }
+                const inner = parseRawMimeEntity(innerRaw, { maxDepth: remaining });
+                if (inner) walk(inner, depth + 1, true);
+              };
+              walk(root, 0, false);
+              return out;
+            }
+
+            /**
+             * Inspects the candidates in order within the limits. inspect(candidate, maxMessageBytes) returns
+             * { attachments, bytes } or { skip: reason, bytes }; pause() lets Thunderbird run between messages.
+             * Returns { matches: [{ candidate, attachments }], checked, skipped: { reason: count }, limitReached }:
+             * every candidate is either checked or counted once in skipped (limitReached for those never read).
+             */
+            async function scanAttachmentCandidates(candidates, filter, inspect, limits, pause, now = Date.now) {
+              const skipped = {};
+              const matches = [];
+              let checked = 0;
+              let attempted = 0;
+              let bytes = 0;
+              let pauseBytes = 0;
+              let pauseCount = 0;
+              let limitReached = false;
+              const deadline = now() + limits.maxMs;
+              for (let i = 0; i < candidates.length; i++) {
+                if (attempted >= limits.maxCandidates || bytes >= limits.maxTotalBytes || now() > deadline) {
+                  skipped.limitReached = candidates.length - i;
+                  limitReached = true;
+                  break;
+                }
+                attempted++;
+                let result;
+                try {
+                  result = inspect(candidates[i], limits.maxMessageBytes) || { skip: "unreadable" };
+                } catch {
+                  result = { skip: "unreadable" };
+                }
+                const read = Number(result.bytes) > 0 ? Number(result.bytes) : 0;
+                bytes += read;
+                if (result.skip) {
+                  skipped[result.skip] = (skipped[result.skip] || 0) + 1;
+                } else {
+                  checked++;
+                  const hit = (result.attachments || []).filter(a => attachmentMatchesFilter(a, filter));
+                  if (hit.length) matches.push({ candidate: candidates[i], attachments: hit });
+                }
+                pauseBytes += read;
+                pauseCount++;
+                if (pause && (pauseBytes >= limits.pauseBytes || pauseCount >= limits.pauseMessages)) {
+                  pauseBytes = 0;
+                  pauseCount = 0;
+                  await pause();
+                }
+              }
+              return { matches, checked, skipped, limitReached };
+            }
+
+            // The attachmentSearch field of the result. While encrypted content is not allowed, a query with words
+            // matched the database's subject and preview, which for a protected-header message Thunderbird decrypted
+            // once are the decrypted ones: how many encrypted messages matched, or how many candidates (encrypted
+            // ones among them) were left unread, would tell something about them, so those counts are left out.
+            function attachmentSearchSummary(scan, { collectionCapped, hideEncryptedCounts }) {
+              const skipped = { ...scan.skipped };
+              if (hideEncryptedCounts) {
+                delete skipped.encrypted;
+                delete skipped.limitReached;
+              }
+              const out = { checked: scan.checked };
+              if (Object.keys(skipped).length) out.skipped = skipped;
+              if (scan.limitReached || collectionCapped) out.limitReached = true;
+              return out;
+            }
+
+            // Whether the summary leaves messages unchecked for a reason other than their being encrypted
+            function attachmentSearchIncomplete(scan, collectionCapped) {
+              return !!collectionCapped || ["tooLarge", "notOffline", "unreadable", "limitReached"].some(r => scan.skipped[r] > 0);
+            }
+            // END ATTACHMENT SEARCH HELPERS
 
 	            function getMessage(messageId, folderPath, saveAttachments, bodyFormat, rawSource, includeInlineImages, rawEncoding) {
 	              return new Promise((resolve) => {
