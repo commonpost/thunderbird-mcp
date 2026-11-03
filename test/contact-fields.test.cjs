@@ -625,6 +625,61 @@ describe("contact email list", () => {
     }
   });
 
+  it("rejects every character the untrusted-content filter treats as hidden", () => {
+    const source = fs.readFileSync(path.resolve(__dirname, "../extension/mcp_server/api.js"), "utf8");
+    const classSrc = JSON.parse(source.match(/const CORE_HIDDEN_CLASS_SRC =\s*("(?:[^"\\]|\\.)*");/)[1]);
+    const hidden = new RegExp(`^(?:[${classSrc}]|[\\u{E0000}-\\u{E0FFF}])$`, "u");
+    let checked = 0;
+    for (let cp = 0; cp <= 0x10FFFF; cp++) {
+      if (cp >= 0xD800 && cp <= 0xDFFF) continue;
+      const ch = String.fromCodePoint(cp);
+      if (!hidden.test(ch)) continue;
+      checked++;
+      assert.equal(helpers.isValidContactEmailAddress(`a${ch}b@example.com`), false, `U+${cp.toString(16).toUpperCase()}`);
+    }
+    assert.ok(checked > 4096);
+    for (const ch of ["\u{E0041}", "\uFE0F", "\uFE00", "\u3164", "\u034F", "\u115F", "\u17B4", "\uFFA0", "\u2800", "\u180B",
+      "\uE000", "\u{F0000}", "\uD800", "\u00AD", "\u2066", "\u{E0FFF}"]) {
+      assert.equal(helpers.isValidContactEmailAddress(`a${ch}b@example.com`), false, escape(ch));
+    }
+  });
+
+  it("flags a stored address that is not one plain address, without changing the primary", () => {
+    const card = emailCard([
+      new FakeVCardPropertyEntry("email", { pref: "1" }, "text", "Ada <ada@example.com>"),
+      new FakeVCardPropertyEntry("email", {}, "text", "ok@example.com"),
+      new FakeVCardPropertyEntry("email", {}, "text", "a@example.com, b@example.com"),
+      new FakeVCardPropertyEntry("email", {}, "text", "tag\u{E0041}@example.com"),
+    ]);
+    assert.deepEqual(emailRows(card), [
+      { address: "Ada <ada@example.com>", primary: true, invalid: true },
+      { address: "ok@example.com" },
+      { address: "a@example.com, b@example.com", invalid: true },
+      { address: "tag\u{E0041}@example.com", invalid: true },
+    ]);
+    const flat = makeFlatCard({ SecondEmail: "x y@example.com" });
+    assert.deepEqual(plain(helpers.readContactFields(flat).emails), [
+      { address: "flat@example.com", primary: true },
+      { address: "x y@example.com", invalid: true },
+    ]);
+  });
+
+  it("removes the label of a removed grouped address, not one its group still uses", () => {
+    const grouped = new FakeVCardPropertyEntry("email", { group: "item1" }, "text", "gone@example.com");
+    const label = new FakeVCardPropertyEntry("x-ablabel", { group: "item1" }, "text", "_$!<Other>!$_");
+    const shared = new FakeVCardPropertyEntry("email", { group: "ITEM2" }, "text", "gone2@example.com");
+    const sharedLabel = new FakeVCardPropertyEntry("x-ablabel", { group: "item2" }, "text", "Shared");
+    const sharedUrl = new FakeVCardPropertyEntry("url", { group: "item2" }, "uri", "https://example.com");
+    const keptGrouped = new FakeVCardPropertyEntry("email", { group: "item3", pref: "1" }, "text", "kept@example.com");
+    const keptLabel = new FakeVCardPropertyEntry("x-ablabel", { group: "item3" }, "text", "Kept");
+    const other = new FakeVCardPropertyEntry("x-ablabel", { group: "item4" }, "text", "Orphan before");
+    const card = emailCard([grouped, label, shared, sharedLabel, sharedUrl, keptGrouped, keptLabel, other]);
+    assert.equal(helpers.applyContactFields(card, { emails: [{ address: "kept@example.com" }] }, FakeVCardPropertyEntry), null);
+    const left = card.vCardProperties.entries;
+    assert.ok(!left.includes(grouped) && !left.includes(label) && !left.includes(shared));
+    for (const entry of [sharedLabel, sharedUrl, keptGrouped, keptLabel, other]) assert.ok(left.includes(entry));
+  });
+
   it("validates the emails payload", () => {
     assert.equal(helpers.validateContactEmails([
       { address: " a@example.com ", type: "work" },
