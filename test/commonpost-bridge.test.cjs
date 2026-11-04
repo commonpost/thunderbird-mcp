@@ -1115,7 +1115,7 @@ describe('the bridge refuses profile and mail-store files named in the real conn
       res.writeHead(403);
       res.end();
     });
-    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    await new Promise((resolve) => { server.listen(0, '127.0.0.1', resolve); });
     try {
       writeConn(JSON.stringify({ port: server.address().port, token: 'c'.repeat(64) }));
       const res = await handleMessage(saveDraftCall(3, [path.join(root, 'tb-profile', 'abook.sqlite')]));
@@ -1123,7 +1123,7 @@ describe('the bridge refuses profile and mail-store files named in the real conn
       assert.ok(served >= 1, 'the first instance was tried');
       assert.match(text, /profile or mail store/);
     } finally {
-      await new Promise((resolve) => server.close(resolve));
+      await new Promise((resolve) => { server.close(resolve); });
     }
   });
 

@@ -49,7 +49,7 @@ async function startFake({ onInitialize } = {}) {
       res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
     });
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => { server.listen(0, '127.0.0.1', resolve); });
   cleanups.push(() => new Promise((resolve) => {
     server.closeAllConnections();
     server.close(resolve);
@@ -277,7 +277,7 @@ describe('version notice', () => {
     assert.match(texts(first).at(-1), NOTICE);
     // The bridge keeps the connection file for 5 s
     writeConnectionFile(bridge.file, fake.port, 4343);
-    await new Promise((resolve) => setTimeout(resolve, 5200));
+    await new Promise((resolve) => { setTimeout(resolve, 5200); });
     const second = await bridge.call();
     assert.equal(probeCount(fake), 2);
     assert.match(texts(second).at(-1), NOTICE);

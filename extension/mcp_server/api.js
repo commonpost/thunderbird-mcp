@@ -6261,7 +6261,7 @@ function bridgeStatusView(seen, extCore, thresholds) {
 }
 // END BRIDGE COMPAT
 
-// eslint-disable-next-line no-unused-vars -- read by Thunderbird: the Experiment API namespace "commonpostMcp" (schema.json)
+// eslint-disable-next-line no-unused-vars, no-var -- read by Thunderbird: the Experiment API namespace "commonpostMcp" (schema.json) must be a var, a property of the script's global
 var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
   getAPI(context) {
     // Clear the stable token and the listen-all setting when the user removes
@@ -9510,7 +9510,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               if (status === null) return { error: `Draft save timed out after ${DRAFT_SAVE_TIMEOUT_MS / 1000}s` };
               if (!Components.isSuccessCode(status)) return { error: `Draft save failed (status: 0x${(status >>> 0).toString(16)})` };
               // RemoveCurrentDraftMessage sets draftId to the new draft right after ComposeProcessDone
-              await new Promise(resolve => Services.tm.dispatchToMainThread(resolve));
+              await new Promise(resolve => { Services.tm.dispatchToMainThread(resolve); });
 
               const fields = msgCompose.compFields;
               let hdr = null;
@@ -10236,8 +10236,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       // The alt text stands in for the image.
                       const alt = node.getAttribute("alt") || "";
                       // Skip tracking pixels (1x1, tiny)
-                      const w = parseInt(node.getAttribute("width")) || 0;
-                      const h = parseInt(node.getAttribute("height")) || 0;
+                      const w = parseInt(node.getAttribute("width"), 10) || 0;
+                      const h = parseInt(node.getAttribute("height"), 10) || 0;
                       if ((w > 0 && w <= 3) || (h > 0 && h <= 3)) return "";
                       return alt;
                     }
@@ -11630,7 +11630,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   return { error: `Invalid startDate: ${startDate}` };
                 }
 
-                let endJs = endDate ? new Date(endDate) : null;
+                const endJs = endDate ? new Date(endDate) : null;
                 if (endDate && (!endJs || isNaN(endJs.getTime()))) {
                   return { error: `Invalid endDate: ${endDate}` };
                 }
@@ -13936,9 +13936,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     if (bodyNote) baseResponse.bodyNote = bodyNote;
 
                     function fetchInlineImageBase64(source) {
-                      return new Promise((resolve) => {
+                      return new Promise((resolveImage) => {
                         if (!source.url) {
-                          resolve({ error: "Inline image has no fetchable message-part URL" });
+                          resolveImage({ error: "Inline image has no fetchable message-part URL" });
                           return;
                         }
                         try {
@@ -13949,11 +13949,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                           NetUtil.asyncFetch(channel, (inputStream, status) => {
                             try {
                               if (status && status !== 0) {
-                                resolve({ error: `Inline image fetch failed: ${status}` });
+                                resolveImage({ error: `Inline image fetch failed: ${status}` });
                                 return;
                               }
                               if (!inputStream) {
-                                resolve({ error: "Inline image fetch returned no data" });
+                                resolveImage({ error: "Inline image fetch returned no data" });
                                 return;
                               }
                               // Message-part channels can report the parent message's
@@ -13966,26 +13966,26 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                                 byteString = readMessageStreamFully(inputStream, maxRawBytes);
                               } catch (e) {
                                 if (e?.isStreamSizeLimit === true) {
-                                  resolve({
+                                  resolveImage({
                                     error: `Image exceeds per-image base64 limit (${MAX_INLINE_IMAGE_BASE64_BYTES} bytes)`,
                                   });
                                 } else {
                                   console.error("commonpost-mcp: inline image stream read failed:", e);
-                                  resolve({ error: "Inline image read failed" });
+                                  resolveImage({ error: "Inline image read failed" });
                                 }
                                 return;
                               }
-                              resolve({ data: encodeByteStringToBase64(byteString) });
+                              resolveImage({ data: encodeByteStringToBase64(byteString) });
                             } catch (e) {
                               console.error("commonpost-mcp: inline image fetch callback failed:", e);
-                              resolve({ error: "Inline image fetch failed" });
+                              resolveImage({ error: "Inline image fetch failed" });
                             } finally {
                               try { inputStream?.close(); } catch {}
                             }
                           });
                         } catch (e) {
                           console.error("commonpost-mcp: inline image fetch setup failed:", e);
-                          resolve({ error: "Inline image fetch failed" });
+                          resolveImage({ error: "Inline image fetch failed" });
                         }
                       });
                     }
@@ -14201,14 +14201,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                                         }
 
                                         function recoverAttachmentFromRawMime(info, expectedSize, file) {
-                                          const found = findRawMimeAttachmentPart(info, expectedSize);
-                                          if (found.error) {
-                                            return { error: `attachment body not recoverable from raw MIME: ${found.error}` };
+                                          const rawPart = findRawMimeAttachmentPart(info, expectedSize);
+                                          if (rawPart.error) {
+                                            return { error: `attachment body not recoverable from raw MIME: ${rawPart.error}` };
                                           }
-                                          if (!found.part) {
+                                          if (!rawPart.part) {
                                             return { error: "attachment body not recoverable from raw MIME" };
                                           }
-                                          const bytes = found.part.bytes;
+                                          const bytes = rawPart.part.bytes;
                                           if (!bytes || bytes.length === 0) {
                                             return { error: "attachment body not recoverable from raw MIME" };
                                           }
@@ -14233,28 +14233,28 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                         const expectedText = typeof expectedSize === "number" ? `, expected ${expectedSize}` : "";
                         return { error: `attachment body recovered from raw MIME but size mismatch (${recoveredSize} bytes${expectedText})` };
                       }
-                      _consumedRawMimeParts.add(found.part);
+                      _consumedRawMimeParts.add(rawPart.part);
                       return { size: recoveredSize };
                     }
 
                                         const saveOne = ({ info, url, size }, index) =>
-                                          new Promise((resolve) => {
+                                          new Promise((resolveSaved) => {
                         try {
                           if (info.external) {
                             info.error = "Not saved: the attachment is only a link to a file or web address, not part of the message (detached attachment or feed enclosure)";
-                            resolve();
+                            resolveSaved();
                             return;
                           }
                           if (!url) {
                             info.error = "Missing attachment URL";
-                            resolve();
+                            resolveSaved();
                             return;
                           }
 
                           const knownSize = typeof size === "number" ? size : null;
                           if (knownSize !== null && knownSize > MAX_ATTACHMENT_BYTES) {
                             info.error = `Attachment too large (${knownSize} bytes, limit ${MAX_ATTACHMENT_BYTES})`;
-                            resolve();
+                            resolveSaved();
                             return;
                           }
 
@@ -14270,7 +14270,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                             file.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o600);
                           } catch (e) {
                             info.error = `Failed to create file: ${e}`;
-                            resolve();
+                            resolveSaved();
                             return;
                           }
 
@@ -14285,13 +14285,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                                 try { inputStream?.close(); } catch {}
                                 info.error = `Fetch failed: ${status}`;
                                 try { file.remove(false); } catch {}
-                                resolve();
+                                resolveSaved();
                                 return;
                               }
                               if (!inputStream) {
                                 info.error = "Fetch returned no data";
                                 try { file.remove(false); } catch {}
-                                resolve();
+                                resolveSaved();
                                 return;
                               }
 
@@ -14306,7 +14306,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                                   if (copyStatus && copyStatus !== 0) {
                                     info.error = `Write failed: ${copyStatus}`;
                                     try { file.remove(false); } catch {}
-                                    resolve();
+                                    resolveSaved();
                                     return;
                                   }
 
@@ -14316,7 +14316,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                                     if (actualSize > MAX_ATTACHMENT_BYTES) {
                                       info.error = `Attachment too large (${actualSize} bytes, limit ${MAX_ATTACHMENT_BYTES})`;
                                       try { file.remove(false); } catch {}
-                                      resolve();
+                                      resolveSaved();
                                       return;
                                     }
                                   } catch {
@@ -14329,29 +14329,29 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                                       info.error = recovered.error;
                                       delete info.filePath;
                                       try { file.remove(false); } catch {}
-                                      resolve();
+                                      resolveSaved();
                                       return;
                                     }
                                     actualSize = recovered.size;
                                   }
 
                                   info.filePath = file.path;
-                                  resolve();
+                                  resolveSaved();
                                                                 } catch (e) {
                                   info.error = `Write failed: ${e}`;
                                   try { file.remove(false); } catch {}
-                                  resolve();
+                                  resolveSaved();
                                 }
                               });
                             } catch (e) {
                               info.error = `Fetch failed: ${e}`;
                               try { file.remove(false); } catch {}
-                              resolve();
+                              resolveSaved();
                             }
                           });
                         } catch (e) {
                           info.error = String(e);
-                          resolve();
+                          resolveSaved();
                         }
                       });
 
@@ -15207,7 +15207,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     // The original is marked as forwarded when the draft is sent
                     const result = await saveComposeFieldsAsDraft(composeFields, msgComposeParams.identity, allDescs, fwdUseHtml, msgURI, compType);
                     if (result.success) {
-                      let msg = `Forward draft saved with ${allDescs.length} attachment(s)`;
+                      const msg = `Forward draft saved with ${allDescs.length} attachment(s)`;
                       result.message = msg;
                       Object.assign(result, composeAddresses(composeFields), { subject: composeFields.subject });
                     }
@@ -15411,7 +15411,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   folder.deleteMessages(found, null, false, true, null, false);
                 }
 
-                let result = { success: true, deleted: found.length };
+                const result = { success: true, deleted: found.length };
                 if (isDrafts && trashFolder) result.movedToTrash = true;
                 if (notFound.length > 0) result.notFound = notFound;
                 return result;
@@ -15756,7 +15756,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   try { accountKey = MailServices.accounts.findAccountForServer(folder.server)?.key ?? null; } catch { /* no account */ }
                   if (accountId && accountKey !== accountId) continue;
 
-                  let searchFolders = [];
+                  const searchFolders = [];
                   let hiddenSearchFolders = 0;
                   let terms = [];
                   let onlineSearch = false;
@@ -16629,19 +16629,19 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // again at commit time with the same expiry, it must give the same
             // text: what is written is what the user saw.
             function composeFilterConfirmationDialog(plan, verdict, expiresAt) {
-              const context = verdict.context.map((r) => serializeFilter(plan.filterList.getFilterAt(r.index), r.index));
-              const templates = resolveTemplatesForDisplay([plan.display.rule, ...context]);
+              const contextRules = verdict.context.map((r) => serializeFilter(plan.filterList.getFilterAt(r.index), r.index));
+              const templates = resolveTemplatesForDisplay([plan.display.rule, ...contextRules]);
               const dialog = buildFilterConfirmationDialog({
                 operation: plan.operation,
                 account: describeAccountForDialog(plan.account),
                 ...plan.display,
-                context,
+                context: contextRules,
                 resultSends: verdict.resultSends,
                 templates,
                 expiresAt,
                 formatTime: formatConfirmationTime,
               });
-              return { dialog, context };
+              return { dialog, context: contextRules };
             }
 
             function requestFilterConfirmation(kind, args, plan, verdict) {
@@ -16663,9 +16663,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const ttlMs = resolveFilterConfirmTtlMs(FILTER_PREFS);
               const dialogExpiresAt = Date.now() + ttlMs;
               let dialog;
-              let context;
+              let contextRules;
               try {
-                ({ dialog, context } = composeFilterConfirmationDialog(plan, verdict, dialogExpiresAt));
+                ({ dialog, context: contextRules } = composeFilterConfirmationDialog(plan, verdict, dialogExpiresAt));
               } catch (e) {
                 const reason = `This change cannot be shown in full for confirmation (${describeError(e)}); `
                   + "nothing was written -- use Thunderbird's filter editor";
@@ -16673,7 +16673,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 return { error: reason };
               }
               const summary = summarizeFilterConfirmation({
-                operation: plan.operation, rule: plan.display.rule, context, folder: plan.display.folder,
+                operation: plan.operation, rule: plan.display.rule, context: contextRules, folder: plan.display.folder,
               });
               const opened = store.open({ operation: kind, accountId: args.accountId, ttlMs, summary });
               if (opened.error) return { error: describeConfirmationRefusal(opened.error) };
@@ -16921,7 +16921,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
             function deleteFilter(accountId, filterIndex) {
               try {
-                if (typeof filterIndex === "string") filterIndex = parseInt(filterIndex);
+                if (typeof filterIndex === "string") filterIndex = parseInt(filterIndex, 10);
                 if (!Number.isInteger(filterIndex)) return { error: "filterIndex must be an integer" };
                 return runFilterOperation("deleteFilter", { accountId, filterIndex });
               } catch (e) {
@@ -16931,8 +16931,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
             function reorderFilters(accountId, fromIndex, toIndex) {
               try {
-                if (typeof fromIndex === "string") fromIndex = parseInt(fromIndex);
-                if (typeof toIndex === "string") toIndex = parseInt(toIndex);
+                if (typeof fromIndex === "string") fromIndex = parseInt(fromIndex, 10);
+                if (typeof toIndex === "string") toIndex = parseInt(toIndex, 10);
                 if (!Number.isInteger(fromIndex)) return { error: "fromIndex must be an integer" };
                 if (!Number.isInteger(toIndex)) return { error: "toIndex must be an integer" };
                 return runFilterOperation("reorderFilters", { accountId, fromIndex, toIndex });
@@ -17597,7 +17597,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             console.error("Failed to start MCP server:", e);
             // Stop server if it was started but something else failed
             if (globalThis.__cpMcpServer) {
-              try { globalThis.__cpMcpServer.stop(() => {}); } catch (e) { console.error("commonpost-mcp: server.stop failed:", e); }
+              try { globalThis.__cpMcpServer.stop(() => {}); } catch (stopError) { console.error("commonpost-mcp: server.stop failed:", stopError); }
               globalThis.__cpMcpServer = null;
             }
             stopConnectionInfoRefreshTimer();

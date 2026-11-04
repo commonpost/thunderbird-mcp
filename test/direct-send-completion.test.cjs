@@ -56,7 +56,7 @@ function load() {
 const identity = { email: "me@example.test", fullName: "Me" };
 const fields = () => ({ body: "hi", addAttachment() {} });
 const pending = Symbol("pending");
-const settled = (p) => Promise.race([p, new Promise(r => setImmediate(() => r(pending)))]);
+const settled = (p) => Promise.race([p, new Promise(resolve => { setImmediate(() => resolve(pending)); })]);
 
 describe("sendMessageDirectly completion", () => {
   it("does not report a send as done when SMTP has only started", async () => {

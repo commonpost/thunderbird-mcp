@@ -604,11 +604,6 @@ describe("applyFilters runs only enabled, Manually Run rules with accessible tar
     f.filterType = filterType;
     return f;
   }
-  function listOf(...rules) {
-    const list = makeFilterList();
-    list.filters.push(...rules);
-    return list;
-  }
   const plain = (selection) => ({
     run: [...selection.run].map((r) => [r.index, r.filter.filterName]),
     skipped: [...selection.skipped].map((r) => ({ ...r })),

@@ -217,7 +217,7 @@ describe('connection lost during a direct send', () => {
   const plain = { timeoutMs: 5000, directSend: false };
 
   function listen(server) {
-    return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+    return new Promise((resolve) => { server.listen(0, '127.0.0.1', () => resolve(server)); });
   }
 
   function isUnknownOutcome(err) {
@@ -280,7 +280,7 @@ describe('connection lost during a direct send', () => {
   it('keeps the connection-refused error unchanged, so it stays retryable', async () => {
     const probe = await listen(net.createServer());
     const { port } = probe.address();
-    await new Promise((resolve) => probe.close(resolve));
+    await new Promise((resolve) => { probe.close(resolve); });
     await assert.rejects(
       tryRequest('127.0.0.1', '{}', port, TOKEN, direct),
       (err) => err.code === 'ECONNREFUSED' && !isUnknownOutcome(err)

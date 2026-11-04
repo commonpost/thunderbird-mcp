@@ -86,7 +86,7 @@ function load({ initThrows = false, sendMsg } = {}) {
 
 const identity = { email: "me@example.test" };
 const fields = (extra = {}) => ({ deliveryFormat: 0, attachments: [], addAttachment(a) { this.attachments.push(a); }, removeAttachments() { this.attachments = []; }, ...extra });
-const tick = () => new Promise(r => setImmediate(r));
+const tick = () => new Promise(resolve => { setImmediate(resolve); });
 const draftHdr = () => {
   const hdr = { deleted: 0, folder: { getUriForMsg: () => "mailbox-message://drafts#3", deleteMessages(list) { hdr.deleted += list.length; } } };
   return hdr;

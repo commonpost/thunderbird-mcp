@@ -136,6 +136,7 @@ this.pendingRebuilds = () => folderSummaryRebuilds.size;`, sandbox);
   async function finishRebuildsUntil(promise) {
     let settled = false;
     const result = promise.then((v) => { settled = true; return v; }, (e) => { settled = true; throw e; });
+    // eslint-disable-next-line no-unmodified-loop-condition -- set by the promise callbacks above, between ticks
     for (let i = 0; i < 50 && !settled; i++) {
       await tick();
       for (const f of folders.values()) if (f.reparseCalls > 0 && !f.rebuilt) finishRebuild(f);
@@ -146,7 +147,7 @@ this.pendingRebuilds = () => folderSummaryRebuilds.size;`, sandbox);
   return { sandbox, timers, listeners, addFolder, finishRebuild, finishRebuildsUntil, accounts };
 }
 
-const tick = () => new Promise((resolve) => setImmediate(resolve));
+const tick = () => new Promise((resolve) => { setImmediate(resolve); });
 
 describe("ensureFolderDatabase: summary out of date or missing", () => {
   it("has Thunderbird rebuild the summary, waits for FolderLoaded, then reads the database", async () => {

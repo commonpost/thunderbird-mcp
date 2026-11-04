@@ -106,7 +106,7 @@ async function startAddOn({ thresholds, extVersion, probeVersion = extVersion })
         : { jsonrpc: '2.0', id, result }));
     });
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => { server.listen(0, '127.0.0.1', resolve); });
   cleanups.push(() => new Promise((resolve) => {
     server.closeAllConnections();
     server.close(resolve);
