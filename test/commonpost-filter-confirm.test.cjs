@@ -1061,7 +1061,7 @@ function makeWorld({ prefs = { [P_BLOCK]: false } } = {}) {
       filters: {
         // A temporary list, as Thunderbird's own "Run Filters on Folder" builds it.
         getTempFilterList: () => makeFilterList(),
-        applyFiltersToFolders: (list, fs) => w.applied.push({ list, folders: fs.map((f) => f.URI) }),
+        applyFiltersToFolders: (list, targetFolders) => w.applied.push({ list, folders: targetFolders.map((f) => f.URI) }),
       },
     },
     isAccountAllowed: (k) => w.allowedAccounts === null || w.allowedAccounts.includes(k),

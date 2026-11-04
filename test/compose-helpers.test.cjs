@@ -744,22 +744,22 @@ describe('replaceFileURLs: same result as the loop it replaces, without a copy o
       const pos = out.toLowerCase().indexOf('file://', offset);
       if (pos < 0) break;
       const q = pos > 0 ? out[pos - 1] : '';
-      let end;
+      let endIndex;
       if (q === '"' || q === "'") {
-        end = out.indexOf(q, pos);
+        endIndex = out.indexOf(q, pos);
       } else {
         const space = out.indexOf(' ', pos);
         const gt = out.indexOf('>', pos);
-        end = space < 0 ? gt : (gt < 0 ? space : Math.min(space, gt));
+        endIndex = space < 0 ? gt : (gt < 0 ? space : Math.min(space, gt));
       }
-      if (end < 0) break;
+      if (endIndex < 0) break;
       let dataURL = null;
-      try { dataURL = toDataURL(out.slice(pos, end)); } catch { /* keep the file URL */ }
+      try { dataURL = toDataURL(out.slice(pos, endIndex)); } catch { /* keep the file URL */ }
       if (dataURL) {
-        out = out.slice(0, pos) + dataURL + out.slice(end);
+        out = out.slice(0, pos) + dataURL + out.slice(endIndex);
         offset = pos + dataURL.length;
       } else {
-        offset = end;
+        offset = endIndex;
       }
     }
     return out;

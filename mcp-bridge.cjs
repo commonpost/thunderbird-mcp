@@ -1640,7 +1640,7 @@ async function recheckPathAttachments(message, connInfo) {
 async function awaitConnectionInfo() {
   let connInfo = readConnectionInfo();
   for (let attempt = 0; !connInfo && attempt < CONNECTION_MAX_RETRIES; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, CONNECTION_RETRY_DELAY_MS));
+    await new Promise((resolve) => { setTimeout(resolve, CONNECTION_RETRY_DELAY_MS); });
     connInfo = readConnectionInfo();
   }
   if (!connInfo) {

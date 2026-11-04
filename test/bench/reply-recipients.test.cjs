@@ -111,7 +111,7 @@ describe("reply recipients", { skip: SKIP }, () => {
     try {
       const subset = ["chain3@alpha.test", "reply-to@theta.test", "list@kappa.test", "followup@iota.test",
         "own-generated@bench.test", "own-sent@bench.test", "own-bcc@bench.test", "group@omega.test"];
-      for (const [folder, id] of fixtures.filter(([, id]) => subset.includes(id))) {
+      for (const [folder, id] of fixtures.filter(([, fixtureId]) => subset.includes(fixtureId))) {
         for (const type of ["Reply", "ReplyAll"]) await t.test(`${type} ${id}`, () => compare(type, folder, id));
       }
     } finally {

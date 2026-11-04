@@ -113,7 +113,7 @@ async function smtpSink() {
       }
     });
   });
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  await new Promise(resolve => { server.listen(0, "127.0.0.1", resolve); });
   return { messages, port: server.address().port, connections: () => connections, close: () => server.close() };
 }
 
@@ -163,7 +163,10 @@ async function compare(type, key) {
   const ours = await toolWindowDraft(folder, idOf(key));
   if (type === "ForwardInline") {
     // The recipient is typed in by the user in the native window
-    for (const field of ["to", "cc", "bcc"]) delete native[field], delete ours[field];
+    for (const field of ["to", "cc", "bcc"]) {
+      delete native[field];
+      delete ours[field];
+    }
   }
   assert.deepEqual(ours, native);
   return ours;
@@ -291,7 +294,7 @@ describe("identity for replies and forwards", { skip: SKIP }, () => {
   // The block of skipReview is on by default. Nothing may reach the SMTP server while it is, and mode draft is not a send.
   const listDrafts = () => tbLib("return hdrs(args.drafts).map(h => h.messageId);", { drafts: FOLDER.drafts });
   const clearDrafts = () => tbLib("clearFolder(args.drafts);", { drafts: FOLDER.drafts });
-  const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const pause = ms => new Promise(resolve => { setTimeout(resolve, ms); });
 
   it("with the block on, mode send (or skipReview) is refused and nothing reaches SMTP", async () => {
     await allowDirectSend(false);
@@ -367,10 +370,10 @@ const removeIdentityFrom = (accountKey, key) => tbLib(`
   identity.clearAllValues();
 `, { accountKey, key });
 
-const restrictTo = accountKeys => tbLib(`
+const restrictTo = keys => tbLib(`
   if (args.keys) Services.prefs.setStringPref("extensions.commonpost-mcp.allowedAccounts", JSON.stringify(args.keys));
   else Services.prefs.clearUserPref("extensions.commonpost-mcp.allowedAccounts");
-`, { keys: accountKeys });
+`, { keys: keys });
 
 // A message in a Local Folders folder of its own.
 const LOCAL_ID = "c3-local@chi.test";

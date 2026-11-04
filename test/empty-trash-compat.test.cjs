@@ -47,6 +47,7 @@ describe("emptyTrash signature compatibility", () => {
       emptyTrash(...args) {
         calls.push(args);
         if (calls.length === 1) {
+          // eslint-disable-next-line no-throw-literal -- an XPCOM exception is a plain object with a result code
           throw { result: 0x80570009 };
         }
       },

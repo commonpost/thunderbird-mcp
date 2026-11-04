@@ -144,27 +144,27 @@ const productionContacts = loadProductionContactTools();
  * Exact copy of validateToolArgs / validateAgainstSchema from api.js.
  * Kept in sync manually — if the logic in api.js changes, update here too.
  */
-function validateAgainstSchema(value, schema, path, errors) {
+function validateAgainstSchema(value, schema, pointer, errors) {
   if (!schema || value === undefined || value === null) return;
 
   const expectedType = schema.type;
   if (expectedType === "array") {
     if (!Array.isArray(value)) {
-      errors.push(`Parameter '${path}' must be an array, got ${typeof value}`);
+      errors.push(`Parameter '${pointer}' must be an array, got ${typeof value}`);
       return;
     }
     if (schema.items) {
       for (let i = 0; i < value.length; i++) {
         if (value[i] === null || value[i] === undefined) {
-          errors.push(`Parameter '${path}[${i}]' must not be null`);
+          errors.push(`Parameter '${pointer}[${i}]' must not be null`);
           continue;
         }
-        validateAgainstSchema(value[i], schema.items, `${path}[${i}]`, errors);
+        validateAgainstSchema(value[i], schema.items, `${pointer}[${i}]`, errors);
       }
     }
   } else if (expectedType === "object") {
     if (typeof value !== "object" || Array.isArray(value)) {
-      errors.push(`Parameter '${path}' must be an object, got ${Array.isArray(value) ? "array" : typeof value}`);
+      errors.push(`Parameter '${pointer}' must be an object, got ${Array.isArray(value) ? "array" : typeof value}`);
       return;
     }
     const nestedProps = schema.properties || {};
@@ -175,7 +175,7 @@ function validateAgainstSchema(value, schema, path, errors) {
       && nestedProps.content?.contentEncoding === "base64";
     for (const r of nestedRequired) {
       if (value[r] === undefined || value[r] === null) {
-        errors.push(`Missing required parameter: ${path}.${r}`);
+        errors.push(`Missing required parameter: ${pointer}.${r}`);
       }
     }
     for (const [k, v] of Object.entries(value)) {
@@ -183,28 +183,28 @@ function validateAgainstSchema(value, schema, path, errors) {
       const has = Object.prototype.hasOwnProperty.call(nestedProps, k);
       if (!has) {
         if (schema.additionalProperties === false) {
-          errors.push(`Unknown parameter: ${path}.${k}`);
+          errors.push(`Unknown parameter: ${pointer}.${k}`);
         }
         continue;
       }
-      validateAgainstSchema(v, nestedProps[k], `${path}.${k}`, errors);
+      validateAgainstSchema(v, nestedProps[k], `${pointer}.${k}`, errors);
     }
   } else if (expectedType === "integer") {
     if (typeof value !== "number" || !Number.isInteger(value)) {
-      errors.push(`Parameter '${path}' must be an integer, got ${typeof value === "number" ? "non-integer number" : typeof value}`);
+      errors.push(`Parameter '${pointer}' must be an integer, got ${typeof value === "number" ? "non-integer number" : typeof value}`);
       return;
     }
   } else if (expectedType && typeof value !== expectedType) {
-    errors.push(`Parameter '${path}' must be ${expectedType}, got ${typeof value}`);
+    errors.push(`Parameter '${pointer}' must be ${expectedType}, got ${typeof value}`);
     return;
   }
 
   if (expectedType === "string") {
     if (schema.minLength !== undefined && value.length < schema.minLength) {
-      errors.push(`Parameter '${path}' must contain at least ${schema.minLength} character(s)`);
+      errors.push(`Parameter '${pointer}' must contain at least ${schema.minLength} character(s)`);
     }
     if (schema.contentEncoding === "base64" && !productionAttachmentValidation.isValidBase64(value)) {
-      errors.push(`Parameter '${path}' must contain valid base64 data`);
+      errors.push(`Parameter '${pointer}' must contain valid base64 data`);
     }
   }
 
@@ -213,13 +213,13 @@ function validateAgainstSchema(value, schema, path, errors) {
     const branchFailures = [];
     for (const branch of schema.anyOf) {
       const branchErrors = [];
-      validateAgainstSchema(value, branch, path, branchErrors);
+      validateAgainstSchema(value, branch, pointer, branchErrors);
       if (branchErrors.length === 0) matched++;
       else branchFailures.push(branchErrors);
     }
     if (matched === 0) {
       const details = [...new Set(branchFailures.flat())].join("; ");
-      errors.push(`Parameter '${path}' did not match any required schema alternative${details ? `: ${details}` : ""}`);
+      errors.push(`Parameter '${pointer}' did not match any required schema alternative${details ? `: ${details}` : ""}`);
     }
   }
 
@@ -228,20 +228,20 @@ function validateAgainstSchema(value, schema, path, errors) {
     const branchFailures = [];
     for (const branch of schema.oneOf) {
       const branchErrors = [];
-      validateAgainstSchema(value, branch, path, branchErrors);
+      validateAgainstSchema(value, branch, pointer, branchErrors);
       if (branchErrors.length === 0) matched++;
       else branchFailures.push(branchErrors);
     }
     if (matched === 0) {
       const details = [...new Set(branchFailures.flat())].join("; ");
-      errors.push(`Parameter '${path}' did not match any allowed schema variant${details ? `: ${details}` : ""}`);
+      errors.push(`Parameter '${pointer}' did not match any allowed schema variant${details ? `: ${details}` : ""}`);
     } else if (matched > 1) {
-      errors.push(`Parameter '${path}' matched more than one schema variant`);
+      errors.push(`Parameter '${pointer}' matched more than one schema variant`);
     }
   }
 
   if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
-    errors.push(`Parameter '${path}' must be one of ${JSON.stringify(schema.enum)}, got ${JSON.stringify(value)}`);
+    errors.push(`Parameter '${pointer}' must be one of ${JSON.stringify(schema.enum)}, got ${JSON.stringify(value)}`);
   }
 }
 

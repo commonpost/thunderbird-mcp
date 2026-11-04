@@ -8,6 +8,9 @@ project is kept in this repository.
 
 ### Changed
 
+- ESLint is now strict: the recommended sets of ESLint and its Node and promise plugins plus about thirty
+  bug-catching rules (strict equality, no shadowing, explicit radix, no value returned from a promise executor, ...),
+  every rule an error and `--max-warnings 0` in CI. The code was brought up to it without changing behaviour.
 - Each release also carries `commonpost-mcp-v<version>.intoto.jsonl`: the signed SLSA provenance of the XPI, the
   `.mcpb` and the bridge, the same statements as in the `.sigstore.json` bundles, in the form SLSA tools read.
 - Each source file now names its license and copyright holder (SPDX tags). `LICENSE` holds only the MIT license, so

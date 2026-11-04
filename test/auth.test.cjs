@@ -177,7 +177,7 @@ describe('Auth: connection info file', () => {
       // Verify we got a valid response
       assert.equal(response.id, 1);
     } finally {
-      await new Promise((resolve) => server.close(resolve));
+      await new Promise((resolve) => { server.close(resolve); });
     }
   });
 
@@ -212,7 +212,7 @@ describe('Auth: token verification', () => {
 
     // Mock server that checks auth like the extension does
     server = http.createServer((req, res) => {
-      let authHeader = req.headers['authorization'] || '';
+      const authHeader = req.headers['authorization'] || '';
       if (authHeader !== `Bearer ${CORRECT_TOKEN}`) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
@@ -243,7 +243,7 @@ describe('Auth: token verification', () => {
   });
 
   after(async () => {
-    if (server) await new Promise((resolve) => server.close(resolve));
+    if (server) await new Promise((resolve) => { server.close(resolve); });
     restoreConnectionFile();
   });
 
@@ -530,7 +530,7 @@ describe('Auth: connection file corruption', () => {
       assert.equal(response.id, 28);
       assert.ok(response.result);
     } finally {
-      await new Promise((resolve) => server.close(resolve));
+      await new Promise((resolve) => { server.close(resolve); });
     }
   });
 
@@ -579,7 +579,7 @@ describe('Auth: connection file corruption', () => {
         assert.equal(requestCount, 0, `${testCase.name} should be rejected before HTTP`);
       }
     } finally {
-      await new Promise((resolve) => server.close(resolve));
+      await new Promise((resolve) => { server.close(resolve); });
     }
   });
 });
@@ -749,7 +749,7 @@ describe('Auth: bridge retry then fail', () => {
       assert.ok(response.result);
       assert.equal(response.result.delayed, true);
     } finally {
-      await new Promise((resolve) => server.close(resolve));
+      await new Promise((resolve) => { server.close(resolve); });
     }
   });
 });

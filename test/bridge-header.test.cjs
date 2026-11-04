@@ -49,7 +49,7 @@ async function startFake() {
       res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
     });
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => { server.listen(0, '127.0.0.1', resolve); });
   cleanups.push(() => new Promise((resolve) => {
     server.closeAllConnections();
     server.close(resolve);
@@ -108,7 +108,7 @@ async function headerOf(fake, method) {
   while (Date.now() < deadline) {
     const found = fake.requests.find((request) => request.method === method);
     if (found) return found.header;
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
   }
   throw new Error(`the add-on never received ${method}`);
 }
