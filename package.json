@@ -32,6 +32,7 @@
   "scripts": {
     "test": "node --test test/*.cjs test/*.js",
     "test:tb": "bash scripts/tb-bench.sh run",
+    "coverage": "node scripts/coverage/run.cjs",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix --max-warnings 0"
   },
@@ -40,6 +41,7 @@
     "eslint": "^10.13.0",
     "eslint-plugin-n": "^18.5.0",
     "eslint-plugin-promise": "^7.2.1",
+    "espree": "^11.2.0",
     "fast-check": "4.10.2",
     "globals": "^17.13.0"
   },

@@ -189,5 +189,7 @@ connection file 64 KiB in the bridge.
   one, are not fully covered (README, "Attachments refused").
 - **Bridge resource limits.** The bridge does not bound the length of a stdin line or of a response from the add-on;
   a local process that can write to it is already trusted (SECURITY.md).
-- **Coverage.** Parts of `api.js` are tested only in a real Thunderbird (bench and lab), where coverage is not
-  measured.
+- **Coverage.** The Coverage workflow measures statement coverage from the unit tests and the end-to-end lab: 82.6%
+  of the statements on 2026-11-04 (`api.js`: 80.1%). Code that the tests run through `vm` is mapped back to `api.js`
+  by text, and lines a test changed are not counted; the bench (`npm run test:tb`) is not counted. Branch coverage
+  is not measured.

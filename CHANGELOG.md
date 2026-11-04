@@ -6,6 +6,12 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Changed
+
+- Statement coverage is measured: `npm run coverage` for the unit tests, and the Coverage workflow, on main and
+  every week, for the unit tests plus the end-to-end lab in a real Thunderbird (82.6% of the statements on
+  2026-11-04; the workflow fails below 80%). See CONTRIBUTING.md.
+
 ## [0.18.1] - 2026-11-04
 
 - **Security fix:** the folder tools no longer rename, move or delete Thunderbird's special folders (Inbox, Trash,

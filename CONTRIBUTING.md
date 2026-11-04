@@ -29,11 +29,22 @@ versions, and moving functionality from the Experiment API to standard MailExten
 npm ci --ignore-scripts        # dev dependencies from the lockfile (Node.js 22 or later)
 npm test                       # node --test test/*.cjs test/*.js
 npm run lint                   # ESLint, strict: any warning fails (eslint.config.mjs)
+npm run coverage               # the tests under coverage, then the statement coverage of each file
 node scripts/build-xpi-reproducible.cjs   # builds dist/commonpost-mcp-v<version>.xpi from the committed tree
 ```
 
 Before changing how a tool composes, threads, searches or filters mail, see
 [docs/thunderbird-internals.md](docs/thunderbird-internals.md) for how Thunderbird itself does it.
+
+### Coverage
+
+`npm run coverage` runs the unit tests under Node's V8 coverage and prints the statement coverage of each file
+(`scripts/coverage/report.cjs`). Many tests run regions of `api.js` through `vm`, joined with test code:
+`scripts/coverage/preload.cjs` gives that code a file name, and the report maps it back to `api.js` by runs of
+identical lines, leaving out lines a test changed. The Coverage workflow adds the end-to-end lab: it runs the public
+scenarios of [commonpost/thunderbird-mcp-lab](https://github.com/commonpost/thunderbird-mcp-lab) on a copy of the
+add-on instrumented by `scripts/coverage/instrument.cjs`, counts the statements of `api.js` they ran in a real
+Thunderbird, and fails below 80% of all statements.
 
 ### Tests on a real Thunderbird
 
