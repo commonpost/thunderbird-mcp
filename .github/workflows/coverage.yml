@@ -2,8 +2,8 @@ name: Coverage
 
 # Statement coverage of the project's own code (scripts/coverage): the unit tests under Node's V8 coverage, plus the
 # public scenarios of the end-to-end lab (commonpost/thunderbird-mcp-lab) run on a copy of the add-on instrumented by
-# scripts/coverage/instrument.cjs, which returns the statements of api.js it ran. The lab commit is the one pinned in
-# e2e-lab.yml.
+# scripts/coverage/instrument.cjs, which returns the statements of api.js it ran. LAB_SHA is the lab commit pinned in
+# e2e-lab.yml (test/coverage-report.test.cjs checks that they are the same).
 #
 # Runs on main and every week, never on pull requests: unlike E2E lab, it executes the tree (npm ci, the tests). The
 # figures are in the job summary and in a small JSON artifact; the job fails below 80% of the statements.
@@ -22,6 +22,10 @@ permissions:
 concurrency:
   group: coverage-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  LAB_REPO: commonpost/thunderbird-mcp-lab
+  LAB_SHA: 3a6701f8f2784a0f008f888883c18671991d7513
 
 jobs:
   coverage:
@@ -46,22 +50,19 @@ jobs:
         working-directory: tree
         run: node scripts/coverage/run.cjs --out ../cov
 
-      - name: Lab commit (pinned in e2e-lab.yml)
-        id: lab
-        working-directory: tree
-        run: |
-          set -euo pipefail
-          sha="$(sed -n 's/^  LAB_SHA: \([0-9a-f]\{40\}\)$/\1/p' .github/workflows/e2e-lab.yml)"
-          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::no LAB_SHA in e2e-lab.yml"; exit 1; }
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-
       - name: Check out the lab
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: commonpost/thunderbird-mcp-lab
-          ref: ${{ steps.lab.outputs.sha }}
+          repository: ${{ env.LAB_REPO }}
+          ref: ${{ env.LAB_SHA }}
           path: lab
           persist-credentials: false
+
+      - name: Verify the lab commit
+        run: |
+          set -euo pipefail
+          test "$(git -C lab rev-parse HEAD)" = "$LAB_SHA"
+          echo "lab at $LAB_SHA"
 
       - name: Instrument a copy of the add-on
         run: |

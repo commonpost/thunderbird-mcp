@@ -126,6 +126,17 @@ describe('coverage: mapping code run through vm back to the source', () => {
   });
 });
 
+describe('coverage: workflow', () => {
+  it('runs the lab at the commit pinned in e2e-lab.yml', () => {
+    const sha = (file) => {
+      const m = /^ {2}LAB_SHA: ([0-9a-f]{40})$/m.exec(fs.readFileSync(path.join(__dirname, '..', '.github/workflows', file), 'utf8'));
+      return m && m[1];
+    };
+    assert.match(sha('e2e-lab.yml'), /^[0-9a-f]{40}$/);
+    assert.equal(sha('coverage.yml'), sha('e2e-lab.yml'), 'update LAB_SHA in coverage.yml together with e2e-lab.yml');
+  });
+});
+
 describe('coverage: report on a synthetic tree', () => {
   it('adds the unit tests (direct and through vm) and the lab bitmap of api.js', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-cov-root-'));
