@@ -38,13 +38,15 @@ Before changing how a tool composes, threads, searches or filters mail, see
 
 ### Coverage
 
-`npm run coverage` runs the unit tests under Node's V8 coverage and prints the statement coverage of each file
-(`scripts/coverage/report.cjs`). Many tests run regions of `api.js` through `vm`, joined with test code:
-`scripts/coverage/preload.cjs` gives that code a file name, and the report maps it back to `api.js` by runs of
-identical lines, leaving out lines a test changed. The Coverage workflow adds the end-to-end lab: it runs the public
-scenarios of [commonpost/thunderbird-mcp-lab](https://github.com/commonpost/thunderbird-mcp-lab) on a copy of the
-add-on instrumented by `scripts/coverage/instrument.cjs`, counts the statements of `api.js` they ran in a real
-Thunderbird, and fails below 80% of all statements.
+`npm run coverage` runs the unit tests under Node's V8 coverage and prints the statement and branch coverage of each
+file (`scripts/coverage/report.cjs`). A branch is one outcome of a decision: both arms of every `if` (taken or not,
+when it has no `else`) and of every `?:`, both outcomes of every `&&`, `||` and `??` (the right operand evaluated, or
+skipped), and every `case` (`scripts/coverage/branches.cjs`). Many tests run regions of `api.js` through `vm`, joined
+with test code: `scripts/coverage/preload.cjs` gives that code a file name, and the report maps it back to `api.js`
+by runs of identical lines, leaving out lines a test changed. The Coverage workflow adds the end-to-end lab: it runs
+the public scenarios of [commonpost/thunderbird-mcp-lab](https://github.com/commonpost/thunderbird-mcp-lab) on a copy
+of the add-on instrumented by `scripts/coverage/instrument.cjs`, counts the statements and branches of `api.js` they
+ran in a real Thunderbird, and fails below 80% of all statements or 70% of all branches.
 
 ### Tests on a real Thunderbird
 

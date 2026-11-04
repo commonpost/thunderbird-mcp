@@ -49,4 +49,4 @@ function statements(source) {
   return out.sort((a, b) => a[0] - b[0]);
 }
 
-module.exports = { statements };
+module.exports = { statements, parse };

@@ -1,12 +1,13 @@
 name: Coverage
 
-# Statement coverage of the project's own code (scripts/coverage): the unit tests under Node's V8 coverage, plus the
-# public scenarios of the end-to-end lab (commonpost/thunderbird-mcp-lab) run on a copy of the add-on instrumented by
-# scripts/coverage/instrument.cjs, which returns the statements of api.js it ran. LAB_SHA is the lab commit pinned in
+# Statement and branch coverage of the project's own code (scripts/coverage): the unit tests under Node's V8 coverage,
+# plus the public scenarios of the end-to-end lab (commonpost/thunderbird-mcp-lab) run on a copy of the add-on
+# instrumented by scripts/coverage/instrument.cjs, which returns the statements and branches of api.js it ran. LAB_SHA is the lab commit pinned in
 # e2e-lab.yml (test/coverage-report.test.cjs checks that they are the same).
 #
 # Runs on main and every week, never on pull requests: unlike E2E lab, it executes the tree (npm ci, the tests). The
-# figures are in the job summary and in a small JSON artifact; the job fails below 80% of the statements.
+# figures are in the job summary and in a small JSON artifact; the job fails below 80% of the statements or 70% of
+# the branches.
 
 on:
   push:
@@ -81,7 +82,7 @@ jobs:
 
       - name: Report
         working-directory: tree
-        run: node scripts/coverage/report.cjs --unit ../cov --lab ../cov-lab --json ../coverage-summary.json --markdown "$GITHUB_STEP_SUMMARY" --min 80
+        run: node scripts/coverage/report.cjs --unit ../cov --lab ../cov-lab --json ../coverage-summary.json --markdown "$GITHUB_STEP_SUMMARY" --min 80 --min-branches 70
 
       - name: Upload the figures
         if: always()
