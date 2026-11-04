@@ -4,6 +4,15 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Changed
+
+- `scripts/inspection/`: an image for MCP directories that start a server to list its tools (Glama, for example).
+  The bridge answers `tools/list` only once Thunderbird runs, so `setup.sh` installs a real Thunderbird (checked as
+  in the lab: Mozilla's GPG signature, then SHA-512), Xvfb and the add-on of the checkout in a throw-away profile,
+  and `start.sh` starts them, then the bridge on standard input and output. Not for real mail.
+
 ## [0.18.2] - 2026-11-04
 
 - **Calendar dates fixed.** An all-day event created from 12 to 14 December now ends on the 14th, not the 13th. In
