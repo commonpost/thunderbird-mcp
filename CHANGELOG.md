@@ -27,6 +27,9 @@ project is kept in this repository.
 
 ### Fixed
 
+- Options page: "Saved." now stays visible after saving the account or tool access (the reload that followed the save
+  erased it at once), and unchecking `getMessages` no longer blocks the save on an invalid limit in its disabled field
+  (the stored limit is kept).
 - `updateContact` with `emails`: an address that `getContact` returns with `invalid: true` (a display name, a list or
   hidden characters stored by another client) can be passed back as it was returned, flag included, and is kept
   unchanged. Before, passing the list back was refused ("Unknown emails[n] property: invalid"). A new or changed
