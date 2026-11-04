@@ -11,7 +11,7 @@
  *
  * Output: dist/commonpost-mcp-v<version>.xpi and .sha256 (the release asset name)
  *
- * Why not scripts/build-xpi.cjs (upstream): it rewrites manifest.json from
+ * Why not upstream's scripts/build-xpi.cjs (removed here): it rewrites manifest.json from
  * package.json, stamps buildinfo.json with the wall-clock time and zips the
  * directory in readdir order, so two builds differ. Here:
  *   - input = the files of extension/ as COMMITTED (git ls-tree / git show),

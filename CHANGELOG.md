@@ -20,6 +20,11 @@ project is kept in this repository.
 - Releases are listed on the official MCP Registry as `io.github.commonpost/thunderbird-mcp` (workflow
   `mcp-registry.yml`, run by the release workflow once the release is published; see RELEASING.md).
 
+### Removed
+
+- `scripts/build-xpi.cjs`, the upstream XPI builder that nothing used: releases are built by
+  `scripts/build-xpi-reproducible.cjs`.
+
 ### Fixed
 
 - `updateContact` with `emails`: an address that `getContact` returns with `invalid: true` (a display name, a list or
