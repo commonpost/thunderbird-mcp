@@ -29,7 +29,9 @@ function loadUpdateMessage(dependencies) {
   assert.ok(end > start, "updateMessage end marker missing");
 
   const sandbox = { Ci, ...dependencies };
+  sandbox.MailServices = { ...sandbox.MailServices, accounts: { allIdentities: dependencies.identities || [] } };
   vm.createContext(sandbox);
+  // The slice runs up to createFolder, so it holds the special folder guards updateMessage uses.
   vm.runInContext(`${source.slice(start, end)}\nthis.updateMessage = updateMessage;`, sandbox);
   return sandbox.updateMessage;
 }
@@ -39,7 +41,7 @@ function makeHdr(messageId) {
 }
 
 function makeHarness({ templatesFolderUri = "mailbox://n@Local%20Folders/Templates", otherFolderUri = "mailbox://n@Local%20Folders/Archive",
-  outboxUri = "mailbox://n@Local%20Folders/Unsent%20Messages" } = {}) {
+  outboxUri = "mailbox://n@Local%20Folders/Unsent%20Messages", identities = [] } = {}) {
   const hdr = makeHdr("msg-1@example.test");
   const mutations = [];
   const sourceFolder = {
@@ -63,6 +65,7 @@ function makeHarness({ templatesFolderUri = "mailbox://n@Local%20Folders/Templat
       return { error: `Folder not found: ${uri}` };
     },
     MailServices: { copy: { copyMessages: (...args) => copyCalls.push(args) } },
+    identities,
   };
   return { updateMessage: loadUpdateMessage(deps), copyCalls, hdr, mutations };
 }
@@ -128,5 +131,18 @@ describe("updateMessage: a refused move changes nothing", () => {
     assert.equal(result.success, true, JSON.stringify(result));
     assert.deepEqual(mutations, [["read", true], ["flagged", true], ["addTags", "$label1"]]);
     assert.equal(copyCalls.length, 1);
+  });
+});
+
+describe("updateMessage: moveTo the address an identity names for its Templates folder", () => {
+  it("is refused before Thunderbird flags it, and nothing changes", () => {
+    const { updateMessage, copyCalls, mutations } = makeHarness({
+      identities: [{ stationeryFolder: "mailbox://n@Local%20Folders/Archive" }],
+    });
+    const result = updateMessage("msg-1@example.test", undefined, "mailbox://n@Local%20Folders/Inbox", true, undefined,
+      undefined, undefined, "mailbox://n@Local%20Folders/Archive", undefined);
+    assert.match(result.error, /Cannot move a message into a Templates folder through MCP/);
+    assert.deepEqual(mutations, []);
+    assert.equal(copyCalls.length, 0);
   });
 });

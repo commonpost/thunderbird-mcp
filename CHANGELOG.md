@@ -27,6 +27,12 @@ project is kept in this repository.
 
 ### Fixed
 
+- The folder tools keep Thunderbird's special folders (Inbox, Trash, Sent, Drafts, Templates, Outbox, Junk,
+  Archives) as they are: such a folder, or a folder holding one, is no longer renamed, moved or deleted; no top-level
+  folder gets a special folder's name and no folder takes the place an identity names for its Sent, Drafts, Templates
+  or Archives folder; nothing is created or moved into Templates or the Outbox; and a filter rule that files into
+  Templates is no longer kept or run through MCP. On IMAP accounts, a new folder name can no longer contain "/" or the
+  server's folder separator, which the server would read as folder levels.
 - `reorderFilters` moving a rule down put it one place too high: `toIndex` is now its final position in both
   directions (moving rule 0 to 1 did nothing, and no rule could reach the last place).
 - `searchContacts` said `hasMore` when the matches were exactly `maxResults`; it now says so only when a match was

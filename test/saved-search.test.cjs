@@ -299,7 +299,8 @@ describe("listVirtualFolders", () => {
 
 describe("deleteFolder with a saved search", () => {
   // deleteFolder itself, with stand-ins for its collaborators.
-  const code = region("function deleteFolder(", "/**\n             * Find a special folder");
+  const code = region("// BEGIN SPECIAL FOLDER GUARDS", "// END SPECIAL FOLDER GUARDS")
+    + region("function deleteFolder(", "/**\n             * Find a special folder");
 
   function load(blocked = []) {
     const sb = loadSandbox({ blocked });

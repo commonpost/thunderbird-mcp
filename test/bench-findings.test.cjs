@@ -119,7 +119,7 @@ describe('recipients without an address', () => {
 describe('renameFolder', () => {
   it('returns the new path next to the old one', () => {
     const body = source.slice(source.indexOf('function renameFolder('), source.indexOf('function deleteFolder('));
-    assert.match(body, /const parent = folder\.parent;\s+folder\.rename\(newName, null\);/);
+    assert.match(body, /const parent = folder\.parent;[\s\S]*?folder\.rename\(newName, null\);/);
     assert.match(body, /oldPath: folderPath,\s+path: newPath,/);
     assert.match(body, /Its URI changed: use \$\{newPath\} from now on\./);
   });

@@ -34,8 +34,17 @@ function constSource(name) {
   return apiSource.slice(start, end + 1);
 }
 
+function guardsSource() {
+  const start = apiSource.indexOf("// BEGIN SPECIAL FOLDER GUARDS");
+  const end = apiSource.indexOf("// END SPECIAL FOLDER GUARDS", start);
+  assert.ok(start >= 0 && end > start, "special folder guards not found in api.js");
+  return apiSource.slice(start, end);
+}
+
 function loadFolderFunctions() {
   const sandbox = {
+    Ci: { nsMsgFolderFlags: {} },
+    MailServices: { accounts: { allIdentities: [] } },
     getAccessibleFolder: (uri) => (uri === "parent" || uri === "existing"
       ? { folder: { createSubfolder() {}, rename() {}, hasSubFolders: false, subFolders: [] } }
       : { error: `Folder not found: ${uri}` }),
@@ -46,6 +55,7 @@ function loadFolderFunctions() {
     constSource("FILTER_TEXT_NOTE"),
     constSource("FILTER_NAME_MAX_LENGTH"),
     constSource("FOLDER_TEXT_NOTE"),
+    guardsSource(),
     functionSource("assertFilterText", ""),
     functionSource("createFolder"),
     functionSource("renameFolder"),

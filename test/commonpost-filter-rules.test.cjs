@@ -784,13 +784,13 @@ describe("applyFilters wiring", () => {
     assert.ok(commit.indexOf("run.length === 0") < commit.indexOf("applyFiltersToFolders"));
   });
 
-  it("updateFilter re-checks kept targets against the account restriction only", () => {
+  it("updateFilter re-checks kept targets against the account restriction, the Outbox and Templates", () => {
     assert.match(apiSource, /isKeptTargetAllowed: checkExistingFilterTarget/);
     const start = apiSource.indexOf("function checkExistingFilterTarget(uri)");
     const body = apiSource.slice(start, apiSource.indexOf("\n            }\n", start));
     assert.match(body, /getAccessibleFolder\(uri\)/);
     assert.match(body, /Queue\)\) return FILTER_TARGET_IS_OUTBOX/);
-    assert.doesNotMatch(body, /Templates/);
+    assert.match(body, /Templates\) \|\| isIdentityTemplatesAddress\(result\.folder\)\) \{\s+return FILTER_TARGET_IS_TEMPLATES;/);
   });
 });
 
