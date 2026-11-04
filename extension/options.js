@@ -354,9 +354,9 @@ saveBtn.addEventListener("click", async () => {
       saveStatus.textContent = result.error;
       saveStatus.className = "save-status error";
     } else {
-      saveStatus.textContent = "Saved.";
-      // Reload to reflect updated state
+      // Reload to reflect updated state; the reload clears the status line, so confirm after it
       await loadAccountAccess();
+      if (!saveStatus.textContent) saveStatus.textContent = "Saved.";
     }
   } catch (e) {
     saveStatus.textContent = "Error: " + e.message;
@@ -506,7 +506,8 @@ saveToolsBtn.addEventListener("click", async () => {
     }
   }
   let getMessagesLimit;
-  if (getMessagesLimitInput) {
+  // A disabled limit field (getMessages unchecked) is not sent: the stored limit stays as it is
+  if (getMessagesLimitInput && !getMessagesLimitInput.disabled) {
     getMessagesLimit = validateGetMessagesLimitInput();
     if (getMessagesLimit === null) {
       saveToolsStatus.textContent = "Fix the highlighted getMessages limit before saving.";
@@ -522,8 +523,9 @@ saveToolsBtn.addEventListener("click", async () => {
       saveToolsStatus.textContent = result.error;
       saveToolsStatus.className = "save-status error";
     } else {
-      saveToolsStatus.textContent = "Saved.";
+      // The reload clears the status line, so confirm after it
       await loadToolAccess();
+      if (!saveToolsStatus.textContent) saveToolsStatus.textContent = "Saved.";
     }
   } catch (e) {
     saveToolsStatus.textContent = "Error: " + e.message;
