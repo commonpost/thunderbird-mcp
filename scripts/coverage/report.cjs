@@ -3,23 +3,26 @@
 // SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 'use strict';
 /**
- * Statement coverage of the project's own code, from the unit tests and, optionally, the end-to-end lab:
+ * Statement and branch coverage of the project's own code, from the unit tests and, optionally, the end-to-end lab:
  *
  *   node scripts/coverage/report.cjs --unit DIR [--lab DIR] [--json FILE] [--markdown FILE] [--min PERCENT]
+ *                                    [--min-branches PERCENT]
  *
  *   --unit DIR      output directory of scripts/coverage/run.cjs (DIR/v8: raw V8 coverage, DIR/slices: code run
  *                   through vm, saved by preload.cjs)
  *   --lab DIR       results of run-lab.sh on a tree instrumented by instrument.cjs: every result JSON under DIR that
- *                   has a coverage_hex bitmap counts for extension/mcp_server/api.js
+ *                   has a coverage_hex bitmap of this api.js counts for extension/mcp_server/api.js
  *   --json FILE     also write the figures as JSON
  *   --markdown FILE also append them as a Markdown table (for example $GITHUB_STEP_SUMMARY)
- *   --min PERCENT   exit 1 if the total is lower
+ *   --min PERCENT   exit 1 if the total statement coverage is lower
+ *   --min-branches PERCENT  exit 1 if the total branch coverage is lower
  *
- * A statement (statements.cjs) is covered if V8 counted at least one run at its first character. Code that the tests
- * run through vm is mapped back to the source by text: each line of it that belongs to a run of at least two
- * identical consecutive lines of a source file (or to one long line found once) stands for that source line, and
- * the statements starting on that line are covered if the line's first character ran. Lines that a test changed are
- * not counted, so the figure errs low.
+ * A statement (statements.cjs) is covered if V8 counted at least one run at its first character; a branch
+ * (branches.cjs) as branches.cjs taken() says. Code that the tests run through vm is mapped back to the source by
+ * text: each line of it that belongs to a run of at least two identical consecutive lines of a source file (or to one
+ * long line found once) stands for that source line, and the statements starting on that line are covered if the
+ * line's first character ran; the branches of that code whose anchor is on such a line stand for the source branch
+ * at the same line and column. Lines that a test changed are not counted, so the figures err low.
  */
 
 const crypto = require('crypto');
@@ -27,6 +30,7 @@ const fs = require('fs');
 const path = require('path');
 const { fileURLToPath } = require('url');
 const { statements } = require('./statements.cjs');
+const { branches, taken } = require('./branches.cjs');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const API = 'extension/mcp_server/api.js';
@@ -44,6 +48,8 @@ function targets(root) {
   return [...MAPPED, ...scripts].filter((t) => fs.existsSync(path.join(root, t)));
 }
 
+const branchKey = (kind, line, col) => `${kind}@${line}:${col}`;
+
 function loadTarget(root, rel) {
   const text = fs.readFileSync(path.join(root, rel), 'utf8');
   const lines = text.split('\n');
@@ -53,6 +59,8 @@ function loadTarget(root, rel) {
     if (!byLine.has(line - 1)) byLine.set(line - 1, []);
     byLine.get(line - 1).push(i);
   });
+  const brs = branches(text);
+  const brByKey = new Map(brs.map((b, j) => [branchKey(b.kind, b.line, b.col), j]));
   const index = new Map();
   lines.forEach((l, i) => {
     if (!isCode(l)) return;
@@ -60,7 +68,11 @@ function loadTarget(root, rel) {
     index.get(l).push(i);
   });
   const sha256 = crypto.createHash('sha256').update(fs.readFileSync(path.join(root, rel))).digest('hex');
-  return { rel, text, lines, stmts, byLine, index, sha256, unit: new Uint8Array(stmts.length), lab: new Uint8Array(stmts.length) };
+  return {
+    rel, text, lines, stmts, byLine, brs, brByKey, index, sha256,
+    unit: new Uint8Array(stmts.length), lab: new Uint8Array(stmts.length),
+    brUnit: new Uint8Array(brs.length), brLab: new Uint8Array(brs.length),
+  };
 }
 
 function isCode(line) {
@@ -134,6 +146,15 @@ function scriptPath(url) {
   return path.isAbsolute(url) ? url : null;
 }
 
+// The branches of code run through vm, or none if it does not parse.
+function sliceBranches(code) {
+  try {
+    return branches(code);
+  } catch {
+    return [];
+  }
+}
+
 function addUnit(files, unitDir, root) {
   const bySha = new Map(files.map((f) => [f.sha256, f]));
   const byPath = new Map(files.map((f) => [path.join(root, f.rel), f]));
@@ -147,7 +168,7 @@ function addUnit(files, unitDir, root) {
       }
     }
   }
-  const mapCache = new Map();
+  const sliceCache = new Map();
   let processes = 0;
   const v8Dir = path.join(unitDir, 'v8');
   for (const name of fs.readdirSync(v8Dir).filter((n) => n.endsWith('.json'))) {
@@ -159,18 +180,27 @@ function addUnit(files, unitDir, root) {
       if (target) {
         const cnt = counts(target.text.length, script.functions);
         target.stmts.forEach(([off], i) => { if (cnt[off] > 0) target.unit[i] = 1; });
+        target.brs.forEach((b, j) => { if (taken(b, cnt)) target.brUnit[j] = 1; });
       } else if (path.dirname(p) === path.resolve(slicesDir) && fs.existsSync(p)) {
         const code = fs.readFileSync(p, 'utf8');
         const key = crypto.createHash('sha1').update(code).digest('hex');
-        if (!mapCache.has(key)) mapCache.set(key, mapLines(code.split('\n'), sources));
-        const mapping = mapCache.get(key);
+        if (!sliceCache.has(key)) {
+          sliceCache.set(key, { mapping: mapLines(code.split('\n'), sources), brs: sliceBranches(code), first: firstCharOffsets(code) });
+        }
+        const { mapping, brs, first } = sliceCache.get(key);
         const cnt = counts(code.length, script.functions);
-        const first = firstCharOffsets(code);
         mapping.forEach((m, i) => {
           if (!m || first[i] === null || !(cnt[first[i]] > 0)) return;
           const [src, q] = m;
           for (const s of src.byLine.get(q) || []) src.unit[s] = 1;
         });
+        for (const b of brs) {
+          const m = mapping[b.line - 1];
+          if (!m || !taken(b, cnt)) continue;
+          const [src, q] = m;
+          const j = src.brByKey.get(branchKey(b.kind, q + 1, b.col));
+          if (j !== undefined) src.brUnit[j] = 1;
+        }
       }
     }
   }
@@ -185,8 +215,11 @@ function* resultFiles(dir) {
   }
 }
 
+// The lab bitmap holds the statements of api.js, then its branches.
 function addLab(api, labDir) {
-  const digits = Math.ceil(api.stmts.length / 4);
+  const S = api.stmts.length;
+  const total = S + api.brs.length;
+  const digits = Math.ceil(total / 4);
   let runs = 0;
   let skipped = 0;
   for (const file of resultFiles(labDir)) {
@@ -204,7 +237,12 @@ function addLab(api, labDir) {
     runs++;
     for (let j = 0; j < hex.length; j++) {
       const v = parseInt(hex[j], 16);
-      for (let b = 0; b < 4; b++) if (v >> b & 1 && 4 * j + b < api.lab.length) api.lab[4 * j + b] = 1;
+      for (let b = 0; b < 4; b++) {
+        const k = 4 * j + b;
+        if (!(v >> b & 1) || k >= total) continue;
+        if (k < S) api.lab[k] = 1;
+        else api.brLab[k - S] = 1;
+      }
     }
   }
   return { runs, skipped };
@@ -214,7 +252,7 @@ function pct(n, d) {
   return d ? Math.round(1000 * n / d) / 10 : 100;
 }
 
-// Per-file statements and their unit and lab bits.
+// Per-file statements and branches, with their unit and lab bits.
 function analyze({ root = ROOT, unit, lab } = {}) {
   const files = targets(root).map((rel) => loadTarget(root, rel));
   const processes = addUnit(files, unit, root);
@@ -225,22 +263,32 @@ function analyze({ root = ROOT, unit, lab } = {}) {
 
 function report(options) {
   const { files, processes, api, labInfo } = analyze(options);
+  const sum = (a) => a.reduce((s, v) => s + v, 0);
   const rows = files.map((f) => {
-    const sum = (a) => a.reduce((s, v) => s + v, 0);
-    const both = f.unit.map((v, i) => v | f.lab[i]);
+    const withLab = labInfo && f === api;
     return {
       file: f.rel,
       statements: f.stmts.length,
       unit: sum(f.unit),
-      lab: labInfo && f === api ? sum(f.lab) : null,
-      covered: sum(both),
+      lab: withLab ? sum(f.lab) : null,
+      covered: sum(f.unit.map((v, i) => v | f.lab[i])),
+      branches: f.brs.length,
+      branchesUnit: sum(f.brUnit),
+      branchesLab: withLab ? sum(f.brLab) : null,
+      branchesCovered: sum(f.brUnit.map((v, i) => v | f.brLab[i])),
     };
   });
-  const statementsTotal = rows.reduce((s, r) => s + r.statements, 0);
-  const coveredTotal = rows.reduce((s, r) => s + r.covered, 0);
+  const total = (key) => rows.reduce((s, r) => s + r[key], 0);
   return {
     files: rows,
-    total: { statements: statementsTotal, covered: coveredTotal, percent: pct(coveredTotal, statementsTotal) },
+    total: {
+      statements: total('statements'),
+      covered: total('covered'),
+      percent: pct(total('covered'), total('statements')),
+      branches: total('branches'),
+      branchesCovered: total('branchesCovered'),
+      branchesPercent: pct(total('branchesCovered'), total('branches')),
+    },
     unitProcesses: processes,
     labRuns: labInfo ? labInfo.runs : 0,
     labSkipped: labInfo ? labInfo.skipped : 0,
@@ -248,32 +296,42 @@ function report(options) {
 }
 
 function plainText(r) {
+  const p = (n, d) => `${String(pct(n, d)).padStart(5)}%`;
   const lines = r.files.map((f) => {
-    const lab = f.lab === null ? '' : `  lab ${String(pct(f.lab, f.statements)).padStart(5)}%`;
-    return `${f.file.padEnd(40)} ${String(f.statements).padStart(6)} statements  unit ${String(pct(f.unit, f.statements)).padStart(5)}%${lab}  covered ${String(pct(f.covered, f.statements)).padStart(5)}%`;
+    const lab = f.lab === null ? '' : `  lab ${p(f.lab, f.statements)}`;
+    const brLab = f.branchesLab === null ? '' : `  lab ${p(f.branchesLab, f.branches)}`;
+    return `${f.file.padEnd(40)} ${String(f.statements).padStart(6)} statements  unit ${p(f.unit, f.statements)}${lab}  covered ${p(f.covered, f.statements)}` +
+      ` | ${String(f.branches).padStart(5)} branches  unit ${p(f.branchesUnit, f.branches)}${brLab}  covered ${p(f.branchesCovered, f.branches)}`;
   });
-  lines.push(`${'TOTAL'.padEnd(40)} ${String(r.total.statements).padStart(6)} statements  covered ${r.total.covered} = ${r.total.percent}%`);
+  lines.push(`${'TOTAL'.padEnd(40)} ${String(r.total.statements).padStart(6)} statements  covered ${r.total.covered} = ${r.total.percent}%` +
+    ` | ${r.total.branches} branches  covered ${r.total.branchesCovered} = ${r.total.branchesPercent}%`);
   lines.push(`(${r.unitProcesses} Node processes, ${r.labRuns} lab runs${r.labSkipped ? `, ${r.labSkipped} lab results of another api.js skipped` : ''})`);
   return lines.join('\n');
 }
 
 function markdown(r) {
-  const out = ['### Statement coverage', '', '| file | statements | unit tests | lab | covered |', '|---|---:|---:|---:|---:|'];
+  const out = ['### Statement and branch coverage', '',
+    '| file | statements | unit tests | lab | covered | branches | unit tests | lab | covered |',
+    '|---|---:|---:|---:|---:|---:|---:|---:|---:|'];
   for (const f of r.files) {
-    out.push(`| \`${f.file}\` | ${f.statements} | ${pct(f.unit, f.statements)}% | ${f.lab === null ? '' : `${pct(f.lab, f.statements)}%`} | ${pct(f.covered, f.statements)}% |`);
+    out.push(`| \`${f.file}\` | ${f.statements} | ${pct(f.unit, f.statements)}% | ${f.lab === null ? '' : `${pct(f.lab, f.statements)}%`} | ${pct(f.covered, f.statements)}%` +
+      ` | ${f.branches} | ${pct(f.branchesUnit, f.branches)}% | ${f.branchesLab === null ? '' : `${pct(f.branchesLab, f.branches)}%`} | ${pct(f.branchesCovered, f.branches)}% |`);
   }
-  out.push(`| **total** | **${r.total.statements}** | | | **${r.total.percent}%** |`, '');
+  out.push(`| **total** | **${r.total.statements}** | | | **${r.total.percent}%** | **${r.total.branches}** | | | **${r.total.branchesPercent}%** |`, '');
   out.push(`Unit tests: ${r.unitProcesses} Node processes. Lab: ${r.labRuns} scenario runs in a real Thunderbird.` +
-    ' A statement counts as covered if it ran at least once (scripts/coverage/report.cjs).', '');
+    ' A statement counts as covered if it ran at least once; a branch (both outcomes of every if, ?:, &&, || and ??,' +
+    ' and every case) if it was taken at least once (scripts/coverage/report.cjs).', '');
   return out.join('\n');
 }
+
+const USAGE = 'usage: node scripts/coverage/report.cjs --unit DIR [--lab DIR] [--json FILE] [--markdown FILE] [--min PERCENT] [--min-branches PERCENT]';
 
 function main(argv) {
   const opts = {};
   for (let i = 0; i < argv.length; i++) {
-    const key = { '--unit': 'unit', '--lab': 'lab', '--json': 'json', '--markdown': 'markdown', '--min': 'min' }[argv[i]];
+    const key = { '--unit': 'unit', '--lab': 'lab', '--json': 'json', '--markdown': 'markdown', '--min': 'min', '--min-branches': 'minBranches' }[argv[i]];
     if (!key || i + 1 >= argv.length) {
-      console.error('usage: node scripts/coverage/report.cjs --unit DIR [--lab DIR] [--json FILE] [--markdown FILE] [--min PERCENT]');
+      console.error(USAGE);
       return 2;
     }
     opts[key] = argv[++i];
@@ -286,11 +344,16 @@ function main(argv) {
   console.log(plainText(r));
   if (opts.json) fs.writeFileSync(opts.json, JSON.stringify(r, null, 2) + '\n');
   if (opts.markdown) fs.appendFileSync(opts.markdown, markdown(r));
+  let status = 0;
   if (opts.min !== undefined && r.total.percent < Number(opts.min)) {
     console.error(`statement coverage ${r.total.percent}% is below ${opts.min}%`);
-    return 1;
+    status = 1;
   }
-  return 0;
+  if (opts.minBranches !== undefined && r.total.branchesPercent < Number(opts.minBranches)) {
+    console.error(`branch coverage ${r.total.branchesPercent}% is below ${opts.minBranches}%`);
+    status = 1;
+  }
+  return status;
 }
 
 if (require.main === module) {
