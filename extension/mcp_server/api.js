@@ -1846,6 +1846,16 @@ function eventRangeBounds(startDate, endDate, now) {
   if (endJs === null || isNaN(endJs.getTime())) return { error: `Invalid endDate: ${endDate}` };
   return { startJs, endJs };
 }
+
+// Date arguments of the event, task and search tools. A date-only value is that
+// calendar day in local time, as listEvents reads it: new Date("2026-10-15")
+// would be midnight UTC, which is the day before west of Greenwich. Anything else
+// is read by Date; an impossible day gives an invalid date.
+function parseDateArg(value) {
+  const day = localDayStart(value, 0);
+  if (day === undefined) return new Date(value);
+  return day === null ? new Date(NaN) : day;
+}
 // END EVENT RANGE HELPERS
 
 // BEGIN EVENT REMINDER HELPERS
@@ -6601,7 +6611,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           properties: {
             title: { type: "string", description: "Event title" },
             startDate: { type: "string", description: "Start date/time in ISO 8601 format" },
-            endDate: { type: "string", description: "End date/time in ISO 8601 (defaults to startDate + 1h for timed, +1 day for all-day)" },
+            endDate: { type: "string", description: "End date/time in ISO 8601; all-day: the last day (default: +1h, or the start day)" },
             location: { type: "string", description: "Event location" },
             description: { type: "string", description: "Event description" },
             calendarId: { type: "string", description: "Target calendar ID (from listCalendars, defaults to first writable calendar)" },
@@ -6645,7 +6655,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             calendarId: { type: "string", description: "The calendar ID containing the event (from listEvents results)" },
             title: { type: "string", description: "New event title" },
             startDate: { type: "string", description: "New start date/time (ISO 8601)" },
-            endDate: { type: "string", description: "New end date/time (ISO 8601)" },
+            endDate: { type: "string", description: "New end (ISO 8601; all-day: the last day)" },
             location: { type: "string", description: "New event location" },
             description: { type: "string", description: "New event description" },
             status: { type: "string", description: "New VEVENT STATUS: 'tentative', 'confirmed', or 'cancelled'" },
@@ -10936,14 +10946,16 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              */
             function prepareSearch(args) {
               if (args.format === "legacy" && args.groupBy) return { error: 'format "legacy" cannot be combined with groupBy' };
-              const parsedStart = args.startDate ? new Date(args.startDate).getTime() : null;
-              const parsedEnd = args.endDate ? new Date(args.endDate).getTime() : null;
+              const parsedStart = args.startDate ? parseDateArg(args.startDate).getTime() : null;
+              // Date-only endDate ("2024-01-15") includes the whole day: the range ends at the next local midnight
+              const endIsDateOnly = typeof args.endDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.endDate.trim());
+              const parsedEnd = !args.endDate ? null
+                : endIsDateOnly ? (localDayStart(args.endDate, 1) || new Date(NaN)).getTime()
+                  : new Date(args.endDate).getTime();
               if (parsedStart !== null && isNaN(parsedStart)) return { error: `Invalid startDate: ${args.startDate}` };
               if (parsedEnd !== null && isNaN(parsedEnd)) return { error: `Invalid endDate: ${args.endDate}` };
-              // Date-only endDate ("2024-01-15") includes the whole day
-              const endIsDateOnly = typeof args.endDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.endDate.trim());
               const startDateTs = parsedStart !== null ? parsedStart * 1000 : null;
-              const endDateTs = parsedEnd !== null ? (parsedEnd + (endIsDateOnly ? 86400000 : 0)) * 1000 : null;
+              const endDateTs = parsedEnd !== null ? parsedEnd * 1000 : null;
 
               const requestedLimit = Number(args.maxResults);
               const limit = Math.min(
@@ -11626,12 +11638,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   return { error: "No Thunderbird window found" };
                 }
 
-                const startJs = new Date(startDate);
+                const startJs = parseDateArg(startDate);
                 if (isNaN(startJs.getTime())) {
                   return { error: `Invalid startDate: ${startDate}` };
                 }
 
-                const endJs = endDate ? new Date(endDate) : null;
+                const endJs = endDate ? parseDateArg(endDate) : null;
                 if (endDate && (!endJs || isNaN(endJs.getTime()))) {
                   return { error: `Invalid endDate: ${endDate}` };
                 }
@@ -11667,23 +11679,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
                   const endDt = cal.createDateTime();
                   if (endJs) {
-                    endDt.resetTo(endJs.getFullYear(), endJs.getMonth(), endJs.getDate(), 0, 0, 0, cal.dtz.floating);
+                    // endDate is the last day of the event, as listEvents returns it and updateEvent takes it; the
+                    // iCal DTEND of an all-day event is exclusive: the day after.
+                    const dayAfter = new Date(endJs.getFullYear(), endJs.getMonth(), endJs.getDate());
+                    dayAfter.setDate(dayAfter.getDate() + 1);
+                    endDt.resetTo(dayAfter.getFullYear(), dayAfter.getMonth(), dayAfter.getDate(), 0, 0, 0, cal.dtz.floating);
                     endDt.isDate = true;
-                    // iCal DTEND is exclusive — bump if same as start
-                    if (endDt.compare(startDt) <= 0) {
-                      const bumpedEnd = new Date(endJs.getFullYear(), endJs.getMonth(), endJs.getDate());
-                      bumpedEnd.setDate(bumpedEnd.getDate() + 1);
-                      endDt.resetTo(
-                        bumpedEnd.getFullYear(),
-                        bumpedEnd.getMonth(),
-                        bumpedEnd.getDate(),
-                        0,
-                        0,
-                        0,
-                        cal.dtz.floating
-                      );
-                      endDt.isDate = true;
-                    }
                   } else {
                     const defaultEnd = new Date(startJs.getTime());
                     defaultEnd.setDate(defaultEnd.getDate() + 1);
@@ -11947,7 +11948,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (dueDate === null || dueDate === "") {
                     newItem.dueDate = null;
                   } else {
-                    const js = new Date(dueDate);
+                    const js = parseDateArg(dueDate);
                     if (isNaN(js.getTime())) return { error: `Invalid dueDate: ${dueDate}` };
                     if (/^\d{4}-\d{2}-\d{2}$/.test(dueDate.trim())) {
                       const dt = cal.createDateTime();
@@ -12220,7 +12221,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (title !== undefined) { newItem.title = stripEmailContentMarkers(title); changes.push("title"); }
 
                 if (startDate !== undefined) {
-                  const js = new Date(startDate);
+                  const js = parseDateArg(startDate);
                   if (isNaN(js.getTime())) return { error: `Invalid startDate: ${startDate}` };
                   if (newItem.startDate && newItem.startDate.isDate) {
                     const dt = cal.createDateTime();
@@ -12234,7 +12235,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
 
                 if (endDate !== undefined) {
-                  const js = new Date(endDate);
+                  const js = parseDateArg(endDate);
                   if (isNaN(js.getTime())) return { error: `Invalid endDate: ${endDate}` };
                   if (newItem.endDate && newItem.endDate.isDate) {
                     const dt = cal.createDateTime();
@@ -12431,7 +12432,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               try {
                 let dueDt = null;
                 if (dueDate) {
-                  const js = new Date(dueDate);
+                  const js = parseDateArg(dueDate);
                   if (isNaN(js.getTime())) return { error: `Invalid dueDate: ${dueDate}` };
                   // Date-only string (YYYY-MM-DD) means all-day
                   if (/^\d{4}-\d{2}-\d{2}$/.test(dueDate.trim())) {
@@ -14324,7 +14325,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                                     actualSize = null;
                                   }
 
-                                  if (attachmentSaveLooksWrong(knownSize, actualSize)) {
+                                  // Thunderbird gives an attached message (message/rfc822) the size of its body
+                                  // only, without its headers: the saved message cannot be compared with it.
+                                  const comparableSize = normalizeAttachmentContentType(info.contentType) === "message/rfc822"
+                                    ? null
+                                    : knownSize;
+                                  if (attachmentSaveLooksWrong(comparableSize, actualSize)) {
                                     const recovered = recoverAttachmentFromRawMime(info, knownSize, file);
                                     if (recovered.error) {
                                       info.error = recovered.error;

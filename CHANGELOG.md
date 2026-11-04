@@ -6,6 +6,16 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Fixed
+
+- `createEvent`: the `endDate` of an all-day event is its last day, as `listEvents` returns it and `updateEvent`
+  takes it. An event from 12 to 14 December was stored from 12 to 13.
+- Events, tasks and message searches read a date-only value (`2026-12-12`) as that day in local time, as `listEvents`
+  does. It was read as midnight UTC: west of Greenwich, an all-day event, a move of one or a task due date landed on
+  the day before, and a search range began the evening before.
+- `getMessage` with `saveAttachments` saves an attached message (`message/rfc822`). Thunderbird gives it the size of
+  its body only, without its headers, so the saved file was taken as damaged and refused.
+
 ### Changed
 
 - Statement and branch coverage are measured: `npm run coverage` for the unit tests, and the Coverage workflow, on

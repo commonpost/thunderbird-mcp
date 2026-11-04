@@ -109,6 +109,7 @@ function world({ restricted = true, encryptedAllowed = false } = {}) {
   };
   vm.createContext(sandbox);
   vm.runInContext(`${region("MESSAGE SEARCH HELPERS")}
+${region("EVENT RANGE HELPERS")}
 ${region("ENCRYPTED MESSAGE HELPERS")}
 ${region("RAW MIME PARSING HELPERS")}
 ${region("ATTACHMENT SEARCH HELPERS")}

@@ -612,7 +612,7 @@
           },
           "endDate": {
             "type": "string",
-            "description": "End date/time in ISO 8601 (defaults to startDate + 1h for timed, +1 day for all-day)"
+            "description": "End date/time in ISO 8601; all-day: the last day (default: +1h, or the start day)"
           },
           "location": {
             "type": "string",
@@ -754,7 +754,7 @@
           },
           "endDate": {
             "type": "string",
-            "description": "New end date/time (ISO 8601)"
+            "description": "New end (ISO 8601; all-day: the last day)"
           },
           "location": {
             "type": "string",
