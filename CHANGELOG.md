@@ -4,7 +4,14 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## [Unreleased]
+## [0.18.2] - 2026-11-04
+
+- **Calendar dates fixed.** An all-day event created from 12 to 14 December now ends on the 14th, not the 13th. In
+  the Americas and elsewhere west of Greenwich, a date written without a time (`2026-12-12`) is no longer taken as
+  the day before by the event and task tools, and message searches by date no longer start the evening before.
+  Updating is recommended if you use the calendar or task tools.
+- `getMessage` with `saveAttachments` now saves an attached message (an email forwarded as an attachment).
+- The bridge does not change (0.18.1): nothing to update on that side.
 
 ### Fixed
 
