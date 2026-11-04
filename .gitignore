@@ -3,6 +3,9 @@ dist/
 dist/*.log
 extension/buildinfo.json
 
+# Coverage runs (npm run coverage)
+/coverage/
+
 # OS files
 .DS_Store
 Thumbs.db

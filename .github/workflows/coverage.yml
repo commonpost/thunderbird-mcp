@@ -1,0 +1,93 @@
+name: Coverage
+
+# Statement coverage of the project's own code (scripts/coverage): the unit tests under Node's V8 coverage, plus the
+# public scenarios of the end-to-end lab (commonpost/thunderbird-mcp-lab) run on a copy of the add-on instrumented by
+# scripts/coverage/instrument.cjs, which returns the statements of api.js it ran. LAB_SHA is the lab commit pinned in
+# e2e-lab.yml (test/coverage-report.test.cjs checks that they are the same).
+#
+# Runs on main and every week, never on pull requests: unlike E2E lab, it executes the tree (npm ci, the tests). The
+# figures are in the job summary and in a small JSON artifact; the job fails below 80% of the statements.
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LAB_REPO: commonpost/thunderbird-mcp-lab
+  LAB_SHA: 3a6701f8f2784a0f008f888883c18671991d7513
+
+jobs:
+  coverage:
+    name: Statement coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tree
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.x'
+
+      - name: Install dev dependencies
+        working-directory: tree
+        run: npm ci --ignore-scripts
+
+      - name: Unit tests under coverage
+        working-directory: tree
+        run: node scripts/coverage/run.cjs --out ../cov
+
+      - name: Check out the lab
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.LAB_REPO }}
+          ref: ${{ env.LAB_SHA }}
+          path: lab
+          persist-credentials: false
+
+      - name: Verify the lab commit
+        run: |
+          set -euo pipefail
+          test "$(git -C lab rev-parse HEAD)" = "$LAB_SHA"
+          echo "lab at $LAB_SHA"
+
+      - name: Instrument a copy of the add-on
+        run: |
+          set -euo pipefail
+          mkdir instrumented
+          git -C tree archive HEAD | tar -x -C instrumented
+          node tree/scripts/coverage/instrument.cjs instrumented
+
+      - name: Build the lab image
+        run: docker build -t thunderbird-mcp-lab:coverage lab/harness
+
+      # A failing scenario still returns what it ran; E2E lab is the check that gates on the scenarios.
+      - name: Run the public scenarios on the instrumented add-on
+        working-directory: lab
+        run: ./run-lab.sh --image thunderbird-mcp-lab:coverage --out ../cov-lab ../instrumented scenarios/*.json || echo "::warning::some scenarios failed on the instrumented add-on"
+
+      - name: Report
+        working-directory: tree
+        run: node scripts/coverage/report.cjs --unit ../cov --lab ../cov-lab --json ../coverage-summary.json --markdown "$GITHUB_STEP_SUMMARY" --min 80
+
+      - name: Upload the figures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-summary
+          path: coverage-summary.json
+          retention-days: 90
+          if-no-files-found: warn
