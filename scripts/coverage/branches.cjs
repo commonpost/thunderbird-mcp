@@ -55,7 +55,10 @@ function branches(source) {
 /**
  * Whether a branch ran, from V8's run count at each offset of the script (report.cjs counts()). A branch whose arm is
  * code ran if its first character ran; the implicit else and the short-circuit have no code of their own: they ran if
- * the decision ran more often than its arm (an exception thrown by the condition itself would also count).
+ * the decision ran more often than its arm (an exception thrown by the condition itself would also count). In the
+ * condition of a loop, V8 counts how often the loop was entered, not each test: a short-circuit there is seen only if
+ * the loop was entered more often than the right operand ran, so the unit-test figure errs low (the lab's probes
+ * see every short-circuit).
  */
 function taken(b, cnt) {
   const at = (off) => (cnt[off] > 0 ? cnt[off] : 0);

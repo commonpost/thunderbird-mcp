@@ -190,7 +190,8 @@ connection file 64 KiB in the bridge.
 - **Bridge resource limits.** The bridge does not bound the length of a stdin line or of a response from the add-on;
   a local process that can write to it is already trusted (SECURITY.md).
 - **Coverage.** The Coverage workflow measures statement and branch coverage from the unit tests and the end-to-end
-  lab: 82.6% of the statements and 71.7% of the branches on 2026-11-04 (`api.js`: 80.1% and 70.3%). A branch is one
+  lab: 93.2% of the statements and 87.8% of the branches on 2026-11-04 (`api.js`: 91.9% and 86.7%; `mcp-bridge.cjs`:
+  99.5% and 97.1%), and the workflow fails below 90% or 80%. A branch is one
   outcome of an `if`, `?:`, `&&`, `||` or `??`, or one `case`; default values, loops and optional chaining are not
   counted. Code that the tests run through `vm` is mapped back to `api.js` by text, and lines a test changed are not
   counted; the bench (`npm run test:tb`) is not counted.
