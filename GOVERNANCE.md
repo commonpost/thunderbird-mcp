@@ -33,7 +33,8 @@ Today the project has **one maintainer**. A second one is welcome; see "Becoming
 
 A regular contributor whose pull requests have been merged over several months can be invited by the existing
 maintainers, or can ask in an issue. A new maintainer gets write access first, then the rights to approve releases and
-handle security reports. Maintainers must use two-factor authentication on GitHub.
+handle security reports. Maintainers must use two-factor authentication on GitHub. The maintainers are also listed in
+`glama.json`, which lets them manage the project's entry in the Glama directory of MCP servers.
 
 ## Continuity
 
