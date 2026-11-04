@@ -41,8 +41,12 @@ function makeHdr(messageId) {
 function makeHarness({ templatesFolderUri = "mailbox://n@Local%20Folders/Templates", otherFolderUri = "mailbox://n@Local%20Folders/Archive",
   outboxUri = "mailbox://n@Local%20Folders/Unsent%20Messages" } = {}) {
   const hdr = makeHdr("msg-1@example.test");
+  const mutations = [];
   const sourceFolder = {
-    markMessagesRead() {}, markMessagesFlagged() {}, addKeywordsToMessages() {}, removeKeywordsFromMessages() {},
+    markMessagesRead: (_hdrs, v) => mutations.push(["read", v]),
+    markMessagesFlagged: (_hdrs, v) => mutations.push(["flagged", v]),
+    addKeywordsToMessages: (_hdrs, k) => mutations.push(["addTags", k]),
+    removeKeywordsFromMessages: (_hdrs, k) => mutations.push(["removeTags", k]),
   };
   const db = { getMsgHdrForMessageID: (id) => (id === hdr.messageId ? hdr : null), enumerateMessages: () => [] };
   const templatesFolder = { URI: templatesFolderUri, getFlag: (f) => (f & TEMPLATES_FLAG) !== 0 };
@@ -60,7 +64,7 @@ function makeHarness({ templatesFolderUri = "mailbox://n@Local%20Folders/Templat
     },
     MailServices: { copy: { copyMessages: (...args) => copyCalls.push(args) } },
   };
-  return { updateMessage: loadUpdateMessage(deps), copyCalls, hdr };
+  return { updateMessage: loadUpdateMessage(deps), copyCalls, hdr, mutations };
 }
 
 describe("updateMessage: moveTo a Templates folder", () => {
@@ -97,5 +101,32 @@ describe("updateMessage: moveTo the Outbox", () => {
       undefined, undefined, "mailbox://n@Local%20Folders/Unsent%20Messages", undefined);
     assert.match(result.error, /Outbox/);
     assert.equal(copyCalls.length, 0);
+  });
+});
+
+describe("updateMessage: a refused move changes nothing", () => {
+  const INBOX = "mailbox://n@Local%20Folders/Inbox";
+  for (const [label, moveTo, trash, error] of [
+    ["into a Templates folder", "mailbox://n@Local%20Folders/Templates", undefined, /Templates folder/],
+    ["into the Outbox", "mailbox://n@Local%20Folders/Unsent%20Messages", undefined, /Outbox/],
+    ["into an unknown folder", "mailbox://n@Local%20Folders/Nowhere", undefined, /Folder not found/],
+    ["to a missing Trash", undefined, true, /Trash folder not found/],
+  ]) {
+    it(`read, flag and tags are not applied when the move ${label} is refused`, () => {
+      const { updateMessage, copyCalls, mutations } = makeHarness();
+      const result = updateMessage("msg-1@example.test", undefined, INBOX, true, true, ["$label1"], ["$label2"], moveTo, trash);
+      assert.match(result.error, error);
+      assert.deepEqual(mutations, []);
+      assert.equal(copyCalls.length, 0);
+    });
+  }
+
+  it("applies them, then moves, when the destination is accepted", () => {
+    const { updateMessage, copyCalls, mutations } = makeHarness();
+    const result = updateMessage("msg-1@example.test", undefined, INBOX, true, true, ["$label1"], undefined,
+      "mailbox://n@Local%20Folders/Archive", undefined);
+    assert.equal(result.success, true, JSON.stringify(result));
+    assert.deepEqual(mutations, [["read", true], ["flagged", true], ["addTags", "$label1"]]);
+    assert.equal(copyCalls.length, 1);
   });
 });

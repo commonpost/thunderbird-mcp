@@ -100,3 +100,21 @@ describe("searchContacts tokenization", () => {
     assert.equal(table.contacts.rows.length, 1);
   });
 });
+
+describe("searchContacts: hasMore only when a match was left out", () => {
+  const plain = (r) => JSON.parse(JSON.stringify(r));
+  it("exactly as many matches as maxResults: the whole list, not marked truncated", () => {
+    const r = plain(search("Smith", 1));
+    assert.ok(Array.isArray(r), JSON.stringify(r));
+    assert.deepEqual(r.map((c) => c.displayName), ["Smith, John"]);
+  });
+  it("more matches than maxResults: the first ones, with hasMore", () => {
+    const r = plain(search("", 2));
+    assert.equal(r.hasMore, true);
+    assert.equal(r.contacts.length, 2);
+  });
+  it("same rule for the table format", () => {
+    assert.equal(plain(search("Smith", 1, "table")).hasMore, undefined);
+    assert.equal(plain(search("", 2, "table")).hasMore, true);
+  });
+});

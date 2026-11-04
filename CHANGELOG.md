@@ -27,6 +27,13 @@ project is kept in this repository.
 
 ### Fixed
 
+- `reorderFilters` moving a rule down put it one place too high: `toIndex` is now its final position in both
+  directions (moving rule 0 to 1 did nothing, and no rule could reach the last place).
+- `searchContacts` said `hasMore` when the matches were exactly `maxResults`; it now says so only when a match was
+  left out.
+- `updateMessage` with `moveTo` or `trash` changed read, flagged and tags before it checked the destination, so a
+  refused move (Templates, Outbox, unknown folder, no Trash) still changed the message. The destination is now
+  checked first.
 - Options page: "Saved." now stays visible after saving the account or tool access (the reload that followed the save
   erased it at once), and unchecking `getMessages` no longer blocks the save on an invalid limit in its disabled field
   (the stored limit is kept).
