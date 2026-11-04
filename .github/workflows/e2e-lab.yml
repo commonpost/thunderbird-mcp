@@ -28,7 +28,7 @@ concurrency:
 
 env:
   LAB_REPO: commonpost/thunderbird-mcp-lab
-  LAB_SHA: 79dbd8a98753bd2a6e3b97496c2c4158130028b9
+  LAB_SHA: 3a6701f8f2784a0f008f888883c18671991d7513
 
 jobs:
   lab:
