@@ -313,7 +313,7 @@ describe(".mcpb build: success", () => {
 describe(".mcpb build: what it refuses", () => {
   it("refuses an input file that is missing, and names it", () => {
     for (const rel of ["mcpb/manifest.json", "mcp-bridge.cjs", "LICENSE", "extension/icons/icon-128.png"]) {
-      refused(buildMcpb(mcpbTree({ omit: [rel] })), new RegExp(`build-mcpb-reproducible: cannot read ${rel.replace(/[./]/g, "\\$&")}: ENOENT`));
+      refused(buildMcpb(mcpbTree({ omit: [rel] })), new RegExp(`build-mcpb-reproducible: cannot read ${rel.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}: ENOENT`));
     }
   });
 
