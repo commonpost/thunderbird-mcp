@@ -487,6 +487,32 @@ describe("getMessage recovering an attachment from the raw MIME", () => {
     assert.equal(savedBytes(env, "report.pdf"), content);
   });
 
+  it("saves an attached message as fetched: Thunderbird gives it the size of its body only", async () => {
+    const inner = "From: Inner <inner@example.com>\r\nSubject: Inner message\r\n\r\nInner body text.\n";
+    const entry = attachmentEntry("inner.eml", "Inner body text.\n".length, { contentType: "message/rfc822" });
+    const { result, env } = await run({
+      saveAttachments: true,
+      mime: mimeTree([entry]),
+      fetches: { [entry.url]: { data: inner } },
+    });
+    assert.equal(result.attachments[0].error, undefined);
+    assert.equal(result.attachments[0].filePath, `${SAVED_DIR}/inner.eml`);
+    assert.equal(savedBytes(env, "inner.eml"), inner);
+    assert.equal(env.rawOpens, 0, "the size of an attached message is not compared, so nothing is recovered");
+  });
+
+  it("still names an attached message whose saved copy is empty", async () => {
+    const entry = attachmentEntry("inner.eml", 17, { contentType: "message/rfc822" });
+    const { result } = await run({
+      saveAttachments: true,
+      mime: mimeTree([entry]),
+      raw: rawMessage([textPart]),
+      fetches: { [entry.url]: { data: "" } },
+    });
+    assert.equal(result.attachments[0].filePath, undefined);
+    assert.match(result.attachments[0].error, /^attachment body not recoverable from raw MIME/);
+  });
+
   it("reads the raw message once for several attachments", async () => {
     const one = attachmentEntry("one.pdf", 3, { url: "mailbox:///Inbox?number=4&part=1.2" });
     const two = attachmentEntry("two.pdf", 3, { url: "mailbox:///Inbox?number=4&part=1.3" });

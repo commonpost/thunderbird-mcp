@@ -73,6 +73,7 @@ function loadTools(accessible) {
   };
   vm.createContext(sandbox);
   vm.runInContext(`${helpersSource}
+${slice("// BEGIN EVENT RANGE HELPERS", "// END EVENT RANGE HELPERS")}
 ${slice("async function createEvent(", "async function getCalendarItems(")}
 ${slice("async function createTask(", "// BEGIN RAW MIME PARSING HELPERS")}
 this.api = { createEvent, createTask };`, sandbox);
