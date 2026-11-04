@@ -306,6 +306,28 @@ args = ["/absolute/path/to/mcp-bridge.cjs"]
 
 The bridge normally finds Thunderbird's connection file by itself, so no environment variable is needed. Only if it cannot, set `COMMONPOST_MCP_CONNECTION_FILE` to the file's real path in the server's environment: an `"env": { ... }` object next to `args` in the JSON formats, a `[mcp_servers.commonpost-mail.env]` table for Codex (see [Sandbox-aware connection discovery](#sandbox-aware-connection-discovery); on Windows the file must be under the bridge's own `%TEMP%`). A path set there replaces the automatic discovery, so never leave a placeholder in it. Client formats change; if one of these no longer matches, follow the client's own MCP documentation and keep the same command and arguments.
 
+### From another computer (SSH)
+
+To use Thunderbird from an MCP client on another computer, run the bridge on the computer where Thunderbird runs and
+carry its standard input and output over SSH. The add-on keeps listening on localhost only, and the mail crosses the
+network inside the encrypted SSH connection:
+
+```json
+{
+  "mcpServers": {
+    "commonpost-mail": {
+      "command": "ssh",
+      "args": ["-o", "BatchMode=yes", "you@thunderbird-host", "node", "/absolute/path/to/mcp-bridge.cjs"]
+    }
+  }
+}
+```
+
+The SSH login must work without a prompt (a key, and the host already in `known_hosts`): the client cannot answer
+one, and `BatchMode=yes` makes it fail at once instead of waiting. `node` must be on the PATH of a non-interactive SSH
+session on that computer, which can be Windows (OpenSSH Server) as well as Linux or macOS. Prefer this to "Listen on
+all interfaces", which sends the token and the mail over the network as plain HTTP.
+
 ### Sandbox-aware connection discovery
 
 The bridge re-discovers `connection.json` on every cache miss. It tries these locations in order:
@@ -352,7 +374,7 @@ Both add-ons can be installed at the same time: they use different ids, preferen
 - **Dynamic port**: Tries ports 8780-8789, records the actual port in the connection file. No hardcoded port dependency.
 - **Account access control**: Restrict which email accounts are visible to MCP clients via the settings page. Changes take effect immediately.
 - **Tool access control**: Disable specific tools via the settings page. Disabled tools are hidden from `tools/list` and blocked at dispatch.
-- **Localhost only**: By default, the server binds to localhost only. The "Listen on all interfaces" option in settings binds to all IPv4 interfaces for WSL, Docker, or remote access. **This exposes the MCP server to every device on your local network.** Only enable on trusted networks. Auth token is always required.
+- **Localhost only**: By default, the server binds to localhost only. The "Listen on all interfaces" option in settings binds to all IPv4 interfaces for WSL, Docker, or remote access. **This exposes the MCP server to every device on your local network, over plain HTTP: the token and the mail are not encrypted.** Only enable on trusted networks. Auth token is always required. From another computer, run the bridge over SSH instead ([From another computer (SSH)](#from-another-computer-ssh)).
 - **Auto-update integrity**: Auto-update is a code-delivery channel whose integrity depends on continued control of the GitHub repository, the GitHub Actions token, and the `commonpost` GitHub organization.
 - **Bridge version**: the bridge announces its version on every request (`X-Commonpost-Bridge` header). The add-on warns about bridges older than it recommends and can refuse bridges below a security floor written in its code (shipped disarmed); nothing is checked or downloaded over the Internet. The header is self-declared: the token, not the header, protects the server. See [SECURITY.md](SECURITY.md).
 

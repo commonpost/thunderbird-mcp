@@ -173,7 +173,8 @@ connection file 64 KiB in the bridge.
 - **Same-user processes are trusted.** Any program running as the user can read the token and call every enabled tool.
   The optional stable token is stored in a Thunderbird preference, in the profile.
 - **"Listen on all interfaces"** exposes the port to the network over plain HTTP: the token and the mail content
-  travel unencrypted, and the `Host` header is not checked. Only the token protects it.
+  travel unencrypted, and the `Host` header is not checked. Only the token protects it. It is off by default; the
+  README recommends running the bridge over SSH instead, which keeps the port on localhost.
 - **Account restriction is per handler.** A handler that forgot it would bypass it. Pre-existing filters with
   cross-account move or copy targets are not restricted (README, "Known issues").
 - **Encrypted messages in listings.** The cheap envelope check used in searches and listings fails open when the raw
