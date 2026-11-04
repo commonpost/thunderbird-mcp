@@ -9,9 +9,10 @@ project is kept in this repository.
 ### Changed
 
 - Statement and branch coverage are measured: `npm run coverage` for the unit tests, and the Coverage workflow, on
-  main and every week, for the unit tests plus the end-to-end lab in a real Thunderbird (82.6% of the statements and
-  71.7% of the branches on 2026-11-04; the workflow fails below 80% of the statements or 70% of the branches). See
-  CONTRIBUTING.md.
+  main and every week, for the unit tests plus the end-to-end lab in a real Thunderbird. About 1,000 new unit tests
+  (raw MIME and attachments, compose and identities, server and configuration, folders, filters, the bridge and the
+  build scripts) raise it to 93.2% of the statements and 87.8% of the branches on 2026-11-04; the workflow fails below
+  90% of the statements or 80% of the branches. See CONTRIBUTING.md.
 
 ## [0.18.1] - 2026-11-04
 

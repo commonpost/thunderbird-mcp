@@ -46,7 +46,7 @@ with test code: `scripts/coverage/preload.cjs` gives that code a file name, and 
 by runs of identical lines, leaving out lines a test changed. The Coverage workflow adds the end-to-end lab: it runs
 the public scenarios of [commonpost/thunderbird-mcp-lab](https://github.com/commonpost/thunderbird-mcp-lab) on a copy
 of the add-on instrumented by `scripts/coverage/instrument.cjs`, counts the statements and branches of `api.js` they
-ran in a real Thunderbird, and fails below 80% of all statements or 70% of all branches.
+ran in a real Thunderbird, and fails below 90% of all statements or 80% of all branches.
 
 ### Tests on a real Thunderbird
 

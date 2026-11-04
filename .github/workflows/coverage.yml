@@ -6,7 +6,7 @@ name: Coverage
 # e2e-lab.yml (test/coverage-report.test.cjs checks that they are the same).
 #
 # Runs on main and every week, never on pull requests: unlike E2E lab, it executes the tree (npm ci, the tests). The
-# figures are in the job summary and in a small JSON artifact; the job fails below 80% of the statements or 70% of
+# figures are in the job summary and in a small JSON artifact; the job fails below 90% of the statements or 80% of
 # the branches.
 
 on:
@@ -82,7 +82,7 @@ jobs:
 
       - name: Report
         working-directory: tree
-        run: node scripts/coverage/report.cjs --unit ../cov --lab ../cov-lab --json ../coverage-summary.json --markdown "$GITHUB_STEP_SUMMARY" --min 80 --min-branches 70
+        run: node scripts/coverage/report.cjs --unit ../cov --lab ../cov-lab --json ../coverage-summary.json --markdown "$GITHUB_STEP_SUMMARY" --min 90 --min-branches 80
 
       - name: Upload the figures
         if: always()
