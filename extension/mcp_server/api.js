@@ -16673,7 +16673,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 return { error: reason };
               }
               const summary = summarizeFilterConfirmation({
-                operation: plan.operation, rule: plan.display.rule, contextRules, folder: plan.display.folder,
+                operation: plan.operation, rule: plan.display.rule, context: contextRules, folder: plan.display.folder,
               });
               const opened = store.open({ operation: kind, accountId: args.accountId, ttlMs, summary });
               if (opened.error) return { error: describeConfirmationRefusal(opened.error) };

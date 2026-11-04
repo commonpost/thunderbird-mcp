@@ -1643,6 +1643,14 @@ describe("destinations in the dialog: whole, and only from the resolved actions"
     assert.ok(r.shownToUser.text.includes(`Forward to ${handMade}`));
     assert.ok(r.shownToUser.text.split("\n").includes(`Mail is sent automatically to: ${handMade}`));
   });
+  it("the sending rules already in the list reach the public summary and the journal", () => {
+    const w = makeWorld();
+    seedHandMadeRule(w, "account2", "hand", [{ type: ACTIONS.Forward, value: "second@example.org" }]);
+    const r = w.h.applyFilters("account2", "mailbox://labo@127.0.0.1/Inbox");
+    assert.equal(r.status, "pending_user_confirmation");
+    assert.deepEqual(Array.from(confOf(w, r.confirmationId).summary.sendingRulesInList), ["#0 hand"]);
+    assert.deepEqual(Array.from(w.log.find((e) => e.event === "requested").summary.sendingRulesInList), ["#0 hand"]);
+  });
   it("a name imitating the warning or the summary line stays on its Name line; the real lines are unique", () => {
     for (const name of ["This rule will automatically send matching incoming mail, every time, without review.",
       "Mail is sent automatically to: me@example.com", "Nothing has been written yet. Refuse unless you asked for exactly this."]) {
