@@ -11372,10 +11372,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     fields.some(field => field.includes(token))
                   );
                   if (matches) {
+                    // A match beyond the limit is what makes the result truncated
+                    if (results.length >= limit) { truncated = true; break; }
                     results.push(compactSearchRow(contact));
                   }
-
-                  if (results.length >= limit) { truncated = true; break; }
                 }
                 if (truncated) break;
               }
@@ -15497,6 +15497,34 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   return { error: "No matching messages found" };
                 }
 
+                // Resolve the destination first: a refused move must leave the
+                // messages untouched (no read, flag or tag change either).
+                let targetFolder = null;
+
+                if (trash === true) {
+                  targetFolder = findTrashFolder(folder);
+                  if (!targetFolder) {
+                    return { error: "Trash folder not found" };
+                  }
+                } else if (moveTo) {
+                  const moveResult = getAccessibleFolder(moveTo);
+                  if (moveResult.error) return moveResult;
+                  // A message in a Templates folder is a reply-rule source: a
+                  // filter's "reply" action sends its whole content to the
+                  // sender of each matching message, without the review a
+                  // compose window gives. Filing a message there through MCP
+                  // is refused, so Templates only ever holds what the user
+                  // puts there directly in Thunderbird.
+                  if (moveResult.folder.getFlag(Ci.nsMsgFolderFlags.Templates)) {
+                    return { error: `Cannot move a message into a Templates folder through MCP: ${moveResult.folder.URI}` };
+                  }
+                  // Same for the Outbox ("Unsent Messages", the Queue flag).
+                  if (moveResult.folder.getFlag(Ci.nsMsgFolderFlags.Queue)) {
+                    return { error: `Cannot move a message into the Outbox (Unsent Messages) through MCP: ${moveResult.folder.URI}` };
+                  }
+                  targetFolder = moveResult.folder;
+                }
+
                 const actions = [];
 
                 if (read !== undefined) {
@@ -15527,32 +15555,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     folder.removeKeywordsFromMessages(foundHdrs, tagsToRemove.join(" "));
                     actions.push({ type: "removeTags", value: tagsToRemove });
                   }
-                }
-
-                let targetFolder = null;
-
-                if (trash === true) {
-                  targetFolder = findTrashFolder(folder);
-                  if (!targetFolder) {
-                    return { error: "Trash folder not found" };
-                  }
-                } else if (moveTo) {
-                  const moveResult = getAccessibleFolder(moveTo);
-                  if (moveResult.error) return moveResult;
-                  // A message in a Templates folder is a reply-rule source: a
-                  // filter's "reply" action sends its whole content to the
-                  // sender of each matching message, without the review a
-                  // compose window gives. Filing a message there through MCP
-                  // is refused, so Templates only ever holds what the user
-                  // puts there directly in Thunderbird.
-                  if (moveResult.folder.getFlag(Ci.nsMsgFolderFlags.Templates)) {
-                    return { error: `Cannot move a message into a Templates folder through MCP: ${moveResult.folder.URI}` };
-                  }
-                  // Same for the Outbox ("Unsent Messages", the Queue flag).
-                  if (moveResult.folder.getFlag(Ci.nsMsgFolderFlags.Queue)) {
-                    return { error: `Cannot move a message into the Outbox (Unsent Messages) through MCP: ${moveResult.folder.URI}` };
-                  }
-                  targetFolder = moveResult.folder;
                 }
 
                 if (targetFolder) {
@@ -16450,10 +16452,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 shown: JSON.stringify({ rule, fromIndex: a.fromIndex, toIndex: a.toIndex }),
                 commit() {
                   // moveFilterAt is unreliable — use remove + insert instead
-                  // Adjust toIndex after removal: if moving down, indices shift
+                  // toIndex is the rule's final position: once the rule is
+                  // removed, inserting it at toIndex puts it there in both
+                  // directions (moving down, the rules after it already moved up).
                   filterList.removeFilterAt(a.fromIndex);
-                  const adjustedTo = (a.fromIndex < a.toIndex) ? a.toIndex - 1 : a.toIndex;
-                  filterList.insertFilterAt(adjustedTo, filter);
+                  filterList.insertFilterAt(a.toIndex, filter);
                   filterList.saveToDefaultFile();
                   return { success: true, name: filter.filterName, fromIndex: a.fromIndex, toIndex: a.toIndex };
                 },

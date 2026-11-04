@@ -1815,3 +1815,29 @@ describe("handlers: an address book condition under a restriction", () => {
     assert.doesNotMatch(JSON.stringify(r), /address book not accessible/);
   });
 });
+
+describe("reorderFilters: toIndex is the final position of the rule", () => {
+  const order = (w) => w.lists.account1.filters.map((f) => f.filterName);
+  function worldWith(names) {
+    const w = makeWorld();
+    for (const n of names) w.lists.account1.filters.push(makeFilter(n));
+    return w;
+  }
+  for (const [from, to, expected] of [
+    [0, 1, ["B", "A", "C", "D"]],
+    [0, 2, ["B", "C", "A", "D"]],
+    [0, 3, ["B", "C", "D", "A"]],
+    [1, 3, ["A", "C", "D", "B"]],
+    [3, 0, ["D", "A", "B", "C"]],
+    [2, 1, ["A", "C", "B", "D"]],
+    [1, 1, ["A", "B", "C", "D"]],
+  ]) {
+    it(`${from} -> ${to}`, () => {
+      const w = worldWith(["A", "B", "C", "D"]);
+      const r = w.h.reorderFilters("account1", from, to);
+      assert.equal(r.success, true, JSON.stringify(r));
+      assert.deepEqual(order(w), expected);
+      assert.equal(order(w)[to], ["A", "B", "C", "D"][from]);
+    });
+  }
+});
