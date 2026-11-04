@@ -28,9 +28,11 @@ function loadResolveFilterTargetFolder(getAccessibleFolder) {
   const end = source.indexOf(close, start);
   assert.ok(end > start, "resolveFilterTargetFolder end marker missing");
 
-  const sandbox = { Ci, getAccessibleFolder };
+  const sandbox = { Ci, getAccessibleFolder, MailServices: { accounts: { allIdentities: [] } } };
   vm.createContext(sandbox);
-  vm.runInContext(`${source.slice(start, end + close.length)}
+  const guards = source.slice(source.indexOf("// BEGIN SPECIAL FOLDER GUARDS"), source.indexOf("// END SPECIAL FOLDER GUARDS"));
+  vm.runInContext(`${guards}
+${source.slice(start, end + close.length)}
 this.resolveFilterTargetFolder = resolveFilterTargetFolder;`, sandbox);
   return sandbox.resolveFilterTargetFolder;
 }

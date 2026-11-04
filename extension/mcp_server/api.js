@@ -3635,7 +3635,7 @@ function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSend
   if (!replaceActions && !onlyDisables && typeof isKeptTargetAllowed === "function") {
     // The rule keeps its move/copy targets, and runs whenever mail arrives or
     // applyFilters is used: a target in an account the restriction does not
-    // allow, or the Outbox, is not kept on its behalf. Deleting the rule stays
+    // allow, the Outbox or a Templates folder, is not kept on its behalf. Deleting the rule stays
     // possible, and so does only disabling it. isKeptTargetAllowed(uri)
     // returns true, or the reason why not.
     let uris;
@@ -3827,9 +3827,10 @@ function assertFilterListGuard(filterList, operation, targetIndex) {
 // the enabled, non-temporary rules marked "Manually Run" (mailCommon.js,
 // cmd_applyFilters). applyFilters does the same, and in addition leaves out a
 // rule that moves or copies to a folder the account restriction does not
-// allow, or to the Outbox.
+// allow, or to the Outbox or a Templates folder.
 const FILTER_TARGET_NOT_ACCESSIBLE = "move/copy target not accessible";
 const FILTER_TARGET_IS_OUTBOX = "move/copy target is the Outbox";
+const FILTER_TARGET_IS_TEMPLATES = "move/copy target is a Templates folder";
 const FILTER_TYPE_MANUAL = resolveXpcomConstant("nsMsgFilterType", "Manual") ?? 0x10;
 const FILTER_FOLDER_TARGET_ACTION_TYPES = ["MoveToFolder", "CopyToFolder"]
   .map((idl) => resolveXpcomConstant("nsMsgFilterAction", idl))
@@ -15515,7 +15516,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   // compose window gives. Filing a message there through MCP
                   // is refused, so Templates only ever holds what the user
                   // puts there directly in Thunderbird.
-                  if (moveResult.folder.getFlag(Ci.nsMsgFolderFlags.Templates)) {
+                  if (moveResult.folder.getFlag(Ci.nsMsgFolderFlags.Templates) || isIdentityTemplatesAddress(moveResult.folder)) {
                     return { error: `Cannot move a message into a Templates folder through MCP: ${moveResult.folder.URI}` };
                   }
                   // Same for the Outbox ("Unsent Messages", the Queue flag).
@@ -15582,6 +15583,236 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // filesystems/protocols; the check errs toward rejecting them).
             const FOLDER_TEXT_NOTE = "it is not a printable, unambiguous folder name";
 
+            // BEGIN SPECIAL FOLDER GUARDS
+            // Thunderbird's special folders hold the mail and the settings it
+            // relies on. It gives a special role by flag (set by the server or
+            // by the identity's Copies & Folders settings) and, when it starts,
+            // by NAME to a top-level folder (Templates, Trash...). Through MCP:
+            //   - a special folder, or a folder holding one, is never renamed,
+            //     moved or deleted;
+            //   - no top-level folder gets a special folder's name, and no
+            //     folder takes the address an identity names for its Sent,
+            //     Drafts, Templates or Archives folder;
+            //   - no folder is created or moved into Templates or the Outbox.
+            // Templates matter most: a filter's "reply" action sends a
+            // template's whole content, so a Templates folder must only ever
+            // hold what the user put there (see resolveReplyTemplate).
+            const SPECIAL_FOLDER_ROLES = [
+              ["Inbox", "Inbox"], ["Trash", "Trash"], ["SentMail", "Sent"], ["Drafts", "Drafts"],
+              ["Templates", "Templates"], ["Queue", "Outbox (Unsent Messages)"], ["Junk", "Junk"], ["Archive", "Archives"],
+            ];
+            const RESERVED_FOLDER_NAMES = ["inbox", "trash", "sent", "drafts", "templates", "unsent messages", "outbox", "junk", "archives"];
+            const SPECIAL_FOLDER_TREE_LIMIT = 10000;
+
+            function specialFolderRole(folder) {
+              const flags = Number(folder?.flags) || 0;
+              for (const [flag, role] of SPECIAL_FOLDER_ROLES) {
+                if (flags & Ci.nsMsgFolderFlags[flag]) return role;
+              }
+              return null;
+            }
+
+            // The role of the folder itself, else of the first folder inside it
+            // that has one. Subfolders that cannot be read, or too many to
+            // walk, count as holding one (fail closed).
+            function specialFolderRoleInTree(folder) {
+              const own = specialFolderRole(folder);
+              if (own) return { role: own, inside: false };
+              const stack = [folder];
+              let seen = 0;
+              while (stack.length) {
+                const f = stack.pop();
+                let subs;
+                try {
+                  subs = f.subFolders == null ? [] : [...f.subFolders];
+                } catch {
+                  return { unreadable: true };
+                }
+                for (const sub of subs) {
+                  if (++seen > SPECIAL_FOLDER_TREE_LIMIT) return { tooMany: true };
+                  const role = specialFolderRole(sub);
+                  if (role) return { role, inside: true };
+                  stack.push(sub);
+                }
+              }
+              return null;
+            }
+
+            function specialFolderRefusal(folder, verb) {
+              const found = specialFolderRoleInTree(folder);
+              if (!found) return null;
+              if (found.unreadable) return `Cannot ${verb} this folder through MCP: its subfolders could not be read to check for special folders`;
+              if (found.tooMany) return `Cannot ${verb} this folder through MCP: it holds too many folders to check for special folders`;
+              return found.inside
+                ? `Cannot ${verb} a folder that holds the ${found.role} folder through MCP`
+                : `Cannot ${verb} the ${found.role} folder through MCP`;
+            }
+
+            function isTopLevel(parent) {
+              try { return !parent || !!parent.isServer || !parent.parent; } catch { return true; }
+            }
+
+            function isImapFolder(folder) {
+              return String(folder?.URI || "").toLowerCase().startsWith("imap://");
+            }
+
+            // The hierarchy delimiter of an IMAP folder, or null when unknown.
+            function imapDelimiter(folder) {
+              try {
+                const imap = typeof folder.QueryInterface === "function" ? folder.QueryInterface(Ci.nsIMsgImapMailFolder) : folder;
+                const d = imap.hierarchyDelimiter;
+                if (typeof d === "string" && d.length === 1) return d;
+              } catch { /* unknown */ }
+              return null;
+            }
+
+            function imapTrashName(folder) {
+              try {
+                const server = folder.server;
+                const imap = typeof server.QueryInterface === "function" ? server.QueryInterface(Ci.nsIImapIncomingServer) : server;
+                if (typeof imap.trashFolderName === "string" && imap.trashFolderName) return imap.trashFolderName;
+              } catch { /* default */ }
+              return "Trash";
+            }
+
+            // IMAP modified UTF-7 (RFC 3501, 5.1.3): how Thunderbird spells a
+            // non-ASCII or "&" folder name in an IMAP URI on servers without UTF-8.
+            const IMAP_UTF7_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+,";
+            function encodeImapUtf7(text) {
+              let out = "";
+              let units = [];
+              const flush = () => {
+                if (units.length === 0) return;
+                let acc = 0;
+                let bits = 0;
+                let encoded = "";
+                for (const u of units) {
+                  for (const byte of [u >> 8, u & 0xff]) {
+                    acc = ((acc << 8) | byte) & 0xffffff;
+                    bits += 8;
+                    while (bits >= 6) {
+                      bits -= 6;
+                      encoded += IMAP_UTF7_ALPHABET[(acc >> bits) & 63];
+                    }
+                  }
+                }
+                if (bits > 0) encoded += IMAP_UTF7_ALPHABET[(acc << (6 - bits)) & 63];
+                out += `&${encoded}-`;
+                units = [];
+              };
+              for (let i = 0; i < text.length; i++) {
+                const c = text.charCodeAt(i);
+                if (c >= 0x20 && c <= 0x7e) {
+                  flush();
+                  out += c === 0x26 ? "&-" : text[i];
+                } else {
+                  units.push(c);
+                }
+              }
+              flush();
+              return out;
+            }
+
+            function normalizedFolderUri(uri) {
+              let text = String(uri || "");
+              try { text = decodeURIComponent(text); } catch { /* keep as is */ }
+              while (text.endsWith("/")) text = text.slice(0, -1);
+              return text.toLowerCase();
+            }
+
+            // The ways Thunderbird may spell the URI of a folder named `name`
+            // under `parent` (percent-escaped on local accounts, raw or modified
+            // UTF-7 on IMAP), normalized like identityFolderUris.
+            function candidateFolderUris(parent, name) {
+              const parentUri = String(parent?.URI || "");
+              let decodedParent = parentUri;
+              try { decodedParent = decodeURIComponent(parentUri); } catch { /* keep as is */ }
+              while (decodedParent.endsWith("/")) decodedParent = decodedParent.slice(0, -1);
+              const spellings = [name, encodeImapUtf7(name)];
+              const uris = new Set([normalizedFolderUri(`${parentUri}/${name}`)]);
+              for (const spelling of spellings) uris.add(`${decodedParent}/${spelling}`.toLowerCase());
+              return uris;
+            }
+
+            const IDENTITY_FOLDER_KEYS = ["fccFolderURI", "fccFolder", "draftsFolderURI", "draftFolder",
+              "templatesFolderURI", "stationeryFolder", "archivesFolderURI", "archiveFolder"];
+            const IDENTITY_TEMPLATES_KEYS = ["templatesFolderURI", "stationeryFolder"];
+
+            // Addresses the identities name for these folders, even when the
+            // folder does not exist yet. Throws when the identities cannot be
+            // read (callers refuse).
+            function identityFolderUris(keys = IDENTITY_FOLDER_KEYS) {
+              const uris = new Set();
+              for (const identity of MailServices.accounts.allIdentities) {
+                for (const key of keys) {
+                  let uri;
+                  try { uri = identity[key] || ""; } catch { uri = ""; }
+                  if (typeof uri === "string" && uri) uris.add(normalizedFolderUri(uri));
+                }
+              }
+              return uris;
+            }
+
+            // True when `folder` is at an address an identity names for its
+            // Templates folder, flagged yet or not (Thunderbird flags it later).
+            // Fails closed: true when the identities cannot be read.
+            function isIdentityTemplatesAddress(folder) {
+              try {
+                return identityFolderUris(IDENTITY_TEMPLATES_KEYS).has(normalizedFolderUri(folder.URI));
+              } catch {
+                return true;
+              }
+            }
+
+            // Why a folder named `name` may not be put directly under `parent`,
+            // or null. `movingTree`: the folder may already hold subfolders
+            // (rename, move), so it may not become an ancestor of an identity's
+            // folder address either.
+            function reservedFolderPlaceError(parent, name, movingTree = false) {
+              const text = String(name);
+              const reserved = `"${text}" is the name of a Thunderbird special folder; choose another name`;
+              const imap = isImapFolder(parent);
+              if (imap) {
+                // The server reads "/" and its own delimiter as folder levels.
+                const delimiter = imapDelimiter(parent);
+                const levels = delimiter && delimiter !== "/" ? ["/", delimiter] : delimiter ? ["/"] : ["/", "."];
+                if (levels.some((ch) => text.includes(ch))) {
+                  return `On this IMAP account a folder name cannot contain ${levels.map((ch) => JSON.stringify(ch)).join(" or ")}: the server would read it as a folder level`;
+                }
+              }
+              if (isTopLevel(parent)) {
+                const parts = text.split("/").map((part) => part.trim().toLowerCase());
+                if (parts.some((part) => RESERVED_FOLDER_NAMES.includes(part))) return reserved;
+              }
+              if (imap && (isTopLevel(parent) || ((Number(parent?.flags) || 0) & Ci.nsMsgFolderFlags.Inbox))) {
+                if (text.trim().toLowerCase() === imapTrashName(parent).toLowerCase()) return reserved;
+              }
+              let identities;
+              try {
+                identities = identityFolderUris();
+              } catch {
+                return "Cannot check the folder's place against the identities' Sent, Drafts, Templates and Archives folders";
+              }
+              const where = `"${text}" is where an identity keeps its Sent, Drafts, Templates or Archives folder; choose another name`;
+              for (const target of candidateFolderUris(parent, text)) {
+                if (identities.has(target)) return where;
+                if (movingTree) {
+                  for (const uri of identities) {
+                    if (uri.startsWith(`${target}/`)) return `"${text}" would hold the place where an identity keeps its Sent, Drafts, Templates or Archives folder; choose another name`;
+                  }
+                }
+              }
+              return null;
+            }
+
+            function noNewFolderInsideError(parent) {
+              const flags = Number(parent?.flags) || 0;
+              if (flags & Ci.nsMsgFolderFlags.Templates) return "Cannot put a folder inside a Templates folder through MCP";
+              if (flags & Ci.nsMsgFolderFlags.Queue) return "Cannot put a folder inside the Outbox (Unsent Messages) through MCP";
+              return null;
+            }
+            // END SPECIAL FOLDER GUARDS
+
             function createFolder(parentFolderPath, name, savedSearch) {
               try {
                 if (typeof parentFolderPath !== "string" || !parentFolderPath) {
@@ -15599,13 +15830,19 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 } catch (e) {
                   return { error: e.message };
                 }
+                // Checked for a saved search too: it takes a name and a place
+                // like any folder.
+                const parentResult = getAccessibleFolder(parentFolderPath);
+                if (!parentResult.error) {
+                  const refusal = noNewFolderInsideError(parentResult.folder) || reservedFolderPlaceError(parentResult.folder, name);
+                  if (refusal) return { error: refusal };
+                }
 
                 if (savedSearch !== undefined && savedSearch !== null) {
                   if (!isPlainObject(savedSearch)) return { error: "savedSearch must be an object" };
                   return createVirtualFolder(name, parentFolderPath, savedSearch.searchFolderPaths, savedSearch.conditions, savedSearch.searchOnline);
                 }
 
-                const parentResult = getAccessibleFolder(parentFolderPath);
                 if (parentResult.error) return parentResult;
                 const parent = parentResult.folder;
 
@@ -15836,11 +16073,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 } catch (e) {
                   return { error: e.message };
                 }
-
                 const renameResult = getAccessibleFolder(folderPath);
                 if (renameResult.error) return renameResult;
                 const folder = renameResult.folder;
                 const parent = folder.parent;
+                const refusal = specialFolderRefusal(folder, "rename") || reservedFolderPlaceError(parent, newName, true);
+                if (refusal) return { error: refusal };
 
                 folder.rename(newName, null);
 
@@ -15888,6 +16126,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (!parent) {
                   return { error: "Cannot delete a root folder" };
                 }
+                const refusal = specialFolderRefusal(folder, "delete");
+                if (refusal) return { error: refusal };
 
                 // A saved search is a view: remove only the view, never
                 // through Trash.
@@ -16055,10 +16295,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (srcResult.error) return srcResult;
                 const folder = srcResult.folder;
                 const folderName = folderDisplayName(folder) || folder.name || folderPath;
+                const special = specialFolderRefusal(folder, "move");
+                if (special) return { error: special };
 
                 const destResult = getAccessibleFolder(newParentPath);
                 if (destResult.error) return destResult;
                 const newParent = destResult.folder;
+                const refusal = noNewFolderInsideError(newParent) || reservedFolderPlaceError(newParent, folder.name || folderName, true);
+                if (refusal) return { error: refusal };
                 const parentName = folderDisplayName(newParent) || newParent.name || newParentPath;
 
                 if (folder.parent && folder.parent.URI === newParent.URI) {
@@ -16124,7 +16368,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             function resolveFilterTargetFolder(uri) {
               const result = getAccessibleFolder(uri);
               if (result.error) return result;
-              if (result.folder.getFlag(Ci.nsMsgFolderFlags.Templates)) {
+              if (result.folder.getFlag(Ci.nsMsgFolderFlags.Templates) || isIdentityTemplatesAddress(result.folder)) {
                 return { error: `Cannot target a Templates folder from a filter rule: ${result.folder.URI}` };
               }
               if (result.folder.getFlag(Ci.nsMsgFolderFlags.Queue)) {
@@ -16134,13 +16378,16 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
 
             // A target a rule already has (kept by updateFilter, run by
-            // applyFilters): the account restriction and the Outbox apply, not
-            // the Templates guard that concerns rules written through MCP.
-            // Returns true, or the reason why the target is not allowed.
+            // applyFilters): the account restriction applies, and neither the
+            // Outbox nor a Templates folder is kept or run through MCP (see
+            // resolveReplyTemplate). Returns true, or the reason why not.
             function checkExistingFilterTarget(uri) {
               const result = getAccessibleFolder(uri);
               if (result.error) return FILTER_TARGET_NOT_ACCESSIBLE;
               if (result.folder.getFlag(Ci.nsMsgFolderFlags.Queue)) return FILTER_TARGET_IS_OUTBOX;
+              if (result.folder.getFlag(Ci.nsMsgFolderFlags.Templates) || isIdentityTemplatesAddress(result.folder)) {
+                return FILTER_TARGET_IS_TEMPLATES;
+              }
               return true;
             }
 

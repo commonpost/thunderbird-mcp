@@ -1057,7 +1057,7 @@ function makeWorld({ prefs = { [P_BLOCK]: false } } = {}) {
       return { PromptUtils: { objectToPropBag: bagOf } };
     } },
     MailServices: {
-      accounts: { getAccount: (k) => accounts[k] || null },
+      accounts: { getAccount: (k) => accounts[k] || null, allIdentities: [] },
       filters: {
         // A temporary list, as Thunderbird's own "Run Filters on Folder" builds it.
         getTempFilterList: () => makeFilterList(),
@@ -1083,6 +1083,7 @@ function makeWorld({ prefs = { [P_BLOCK]: false } } = {}) {
   };
   vm.createContext(sandbox);
   vm.runInContext(`${HELPER_BLOCKS}
+${SPECIAL_FOLDER_GUARDS}
 const FILTER_PREFS = __prefs;
 function filterSendRulePolicy() { return resolveFilterSendRulePolicy(FILTER_PREFS).policy; }
 let __store = null;
@@ -1114,6 +1115,13 @@ this.h = { listFilters, createFilter, updateFilter, deleteFilter, reorderFilters
   };
   return w;
 }
+
+const SPECIAL_FOLDER_GUARDS = (() => {
+  const start = apiSource.indexOf("// BEGIN SPECIAL FOLDER GUARDS");
+  const end = apiSource.indexOf("// END SPECIAL FOLDER GUARDS", start);
+  assert.ok(start >= 0 && end > start, "special folder guards not found in api.js");
+  return apiSource.slice(start, end);
+})();
 
 const COND = [{ attrib: "subject", op: "contains", value: "facture" }];
 const FWD = [{ type: "forward", value: "target@example.net" }];
