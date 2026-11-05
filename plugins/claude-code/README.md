@@ -30,8 +30,9 @@ also run it as `/commonpost-mcp:thunderbird-mail`. The add-on itself is installe
 
 - **Credentials.** The bridge reads no API key and no token from environment variables: the only `COMMONPOST_MCP_*`
   variables it reads are `COMMONPOST_MCP_CONNECTION_FILE` (a path), `COMMONPOST_MCP_PACKAGING`, `COMMONPOST_MCP_PROFILE`,
-  `COMMONPOST_MCP_READ_ONLY` (reading tools only, when `1` or `true`) and `COMMONPOST_MCP_DEBUG`. The one secret it handles is the session token in the add-on's connection file
-  (`commonpost-mcp/connection.json` in the temporary directory), which it sends to `127.0.0.1` only.
+  `COMMONPOST_MCP_READ_ONLY` (reading tools only, when `1` or `true`) and `COMMONPOST_MCP_DEBUG`. The one secret it
+  handles is the session token in the add-on's connection file (`commonpost-mcp/connection.json` in the temporary
+  directory), which it sends to `127.0.0.1` only.
 - **Other processes' environment.** On Linux, when Thunderbird runs as a Snap, the bridge reads `/proc/<pid>/environ`
   of processes whose executable is under `/snap/thunderbird/`, only to find their `TMPDIR` (the Snap keeps its
   temporary directory, and the connection file, under `~/snap/thunderbird/`). Nothing read there is kept or sent.
