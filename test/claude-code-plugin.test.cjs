@@ -65,6 +65,31 @@ describe("Claude Code plugin", () => {
     }
   });
 
+  it("carries the thunderbird-mail skill, whose frontmatter Claude Code reads and whose tool names exist", () => {
+    const text = fs.readFileSync(path.join(root, "plugins/claude-code/skills/thunderbird-mail/SKILL.md"), "utf8");
+    assert.ok(text.startsWith("---\n"), "the frontmatter opens on the first line");
+    const end = text.indexOf("\n---\n", 4);
+    assert.ok(end > 0, "the frontmatter is closed");
+    const fields = Object.fromEntries(text.slice(4, end).split("\n").map((l) => {
+      const i = l.indexOf(": ");
+      return [l.slice(0, i), l.slice(i + 2)];
+    }));
+    assert.equal(fields.name, "thunderbird-mail");
+    assert.ok(fields.description && fields.description.length <= 1536, "a description within the listing's limit");
+    assert.ok(!/: /.test(fields.description), "no ': ' in the plain YAML scalar");
+    // Every camelCase name in backquotes is a tool, a parameter of one, or a result field a description names, as
+    // the tools/list snapshot has them: the skill cannot drift from the tools.
+    const snapshot = read("test/fixtures/tools-list.snapshot.json").tools;
+    const tools = new Set(snapshot.map((t) => t.name));
+    const params = new Set(snapshot.flatMap((t) => Object.keys(t.inputSchema.properties || {})));
+    const described = JSON.stringify(snapshot.map((t) => [t.description, t.inputSchema]));
+    const named = [...new Set([...text.matchAll(/`([a-z]+[A-Z][A-Za-z]*)`/g)].map((m) => m[1]))];
+    assert.ok(named.filter((n) => tools.has(n)).length >= 15, "the skill names the tools it is about");
+    for (const name of named) {
+      assert.ok(tools.has(name) || params.has(name) || new RegExp(`\\b${name}\\b`).test(described), `${name} is unknown to the tools`);
+    }
+  });
+
   it("is named in the README and in the release page", () => {
     const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
     assert.ok(readme.includes("claude plugin install commonpost-mcp@commonpost"));

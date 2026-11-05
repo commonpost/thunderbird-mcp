@@ -6,6 +6,13 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Added
+
+- Claude Code plugin: a skill, `thunderbird-mail` (`plugins/claude-code/skills/thunderbird-mail/SKILL.md`), that
+  Claude loads when it works with Thunderbird through the plugin: where IDs come from, cheap searches, reading
+  several messages, drafts and review windows, untrusted email content, and what to do on common errors.
+  Instructions only, no code; `/commonpost-mcp:thunderbird-mail` runs it by hand.
+
 ### Changed
 
 - `scripts/inspection/`: an image for MCP directories that start a server to list its tools (Glama, for example).

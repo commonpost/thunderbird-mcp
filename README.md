@@ -217,9 +217,12 @@ claude plugin marketplace add commonpost/thunderbird-mcp
 claude plugin install commonpost-mcp@commonpost
 ```
 
-- The plugin (`plugins/claude-code/`) contains **only the bridge**, a copy of this repository's `mcp-bridge.cjs` that
+- The plugin (`plugins/claude-code/`) runs **only the bridge**, a copy of this repository's `mcp-bridge.cjs` that
   the version check keeps identical; install the Thunderbird extension separately (step 1 above). Node.js 22 or later
   must be on the `PATH`.
+- It also carries a skill, `thunderbird-mail` (instructions, no code), that Claude loads when it works with your
+  mail: where IDs come from, cheap searches, drafts and review windows, untrusted email content and common errors.
+  Run it yourself with `/commonpost-mcp:thunderbird-mail`.
 - Updates: Claude Code does not update a third-party marketplace on its own unless you turn it on (`/plugin` >
   Marketplaces > Enable auto-update). Otherwise run `/plugin marketplace update commonpost` (or `claude plugin update
   commonpost-mcp@commonpost`), then `/reload-plugins`. Each release raises the plugin's version, so an update follows

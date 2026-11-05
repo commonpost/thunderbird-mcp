@@ -78,7 +78,9 @@ The bridge is the same file in every packaging:
 - **the Claude Desktop bundle** (`.mcpb`, built from `mcpb/manifest.json`): contains only the bridge, an icon and the
   licences, and sets `COMMONPOST_MCP_PACKAGING=mcpb`;
 - **the Claude Code plugin** (`plugins/claude-code/`, listed by `.claude-plugin/marketplace.json`): a copy of
-  `mcp-bridge.cjs` that `scripts/check-versions.cjs` keeps identical to the one at the repository root.
+  `mcp-bridge.cjs` that `scripts/check-versions.cjs` keeps identical to the one at the repository root, and a skill
+  (`skills/thunderbird-mail/SKILL.md`, instructions without code) that `test/claude-code-plugin.test.cjs` checks
+  against the tools/list snapshot.
 
 None of them contains the add-on. The bridge is not updated automatically; the add-on tells the user when to replace
 it (see "Versions" below).
