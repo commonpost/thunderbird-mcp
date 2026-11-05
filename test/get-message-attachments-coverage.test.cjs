@@ -255,7 +255,8 @@ installStubs(sandbox);
 vm.createContext(sandbox);
 vm.runInContext(`"use strict";
 ${["STRIP HELPERS", "INLINE IMAGE CONTENT HELPERS", "ENCRYPTED MESSAGE HELPERS", "RAW MIME PARSING HELPERS",
-  "RAW MIME ATTACHMENT HELPERS", "OUTBOUND ATTACHMENT LIMITS", "OUTBOUND ATTACHMENT CONVERSION"].map(region).join("\n")}
+  "RAW MIME ATTACHMENT HELPERS", "OUTBOUND ATTACHMENT LIMITS", "OUTBOUND ATTACHMENT CONVERSION",
+  "AUTHENTICATION RESULTS"].map(region).join("\n")}
 ${source.slice(getMessageStart, getMessageEnd)}
 Object.assign(this, { getMessage, buildToolResultContent });`, sandbox);
 
@@ -454,6 +455,30 @@ describe("getMessage saving attachments from the stored message", () => {
     assert.deepEqual(pathsOf(result), [`${SAVED_DIR}/same.pdf`, `${SAVED_DIR}/same-1.pdf`]);
     assert.equal(savedBytes(env, "same.pdf"), "abc");
     assert.equal(savedBytes(env, "same-1.pdf"), "xyz");
+  });
+});
+
+describe("getMessage reporting the receiving server's authentication results", () => {
+  it("reads the topmost Authentication-Results header only", async () => {
+    const mime = mimeTree([]);
+    mime.headers = {
+      "authentication-results": [
+        "mx.provider.example; spf=pass smtp.mailfrom=news@shop.example; dkim=pass header.d=shop.example header.s=k1; dmarc=pass header.from=shop.example",
+        "mx.forged.example; dkim=pass header.d=bank.example",
+      ],
+    };
+    const { result } = await run({ mime });
+    assert.deepEqual(plain(result.authentication), {
+      authservId: "mx.provider.example",
+      spf: { result: "pass", domain: "shop.example" },
+      dkim: [{ result: "pass", domain: "shop.example", selector: "k1" }],
+      dmarc: { result: "pass", domain: "shop.example" },
+    });
+  });
+
+  it("leaves the field out without the header", async () => {
+    const { result } = await run({ mime: mimeTree([]) });
+    assert.equal("authentication" in result, false);
   });
 });
 
