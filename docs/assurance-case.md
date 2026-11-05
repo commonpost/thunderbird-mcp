@@ -69,7 +69,8 @@ marked as such.
 - *Block filter forward/reply* is on by default; "Ask me each time" needs a confirmation in a Thunderbird dialog, and
   no answer within ten minutes writes nothing (`filterSendRulePolicy`; `test/commonpost-filter-confirm.test.cjs`).
 - A malformed account preference blocks every account; a malformed tool preference disables every tool
-  (`getAllowedAccountIds`, `getDisabledTools`).
+  (`getAllowedAccountIds`, `resolveToolAccess`). Once the user has disabled a tool, a tool added by a later update
+  stays disabled until the user enables it (`knownTools`; `test/tool-access.test.cjs`).
 - An address book or calendar that names a restricted account, or a remote one that names none, is refused
   (`isCollectionAllowed`).
 - The server listens on loopback unless the user enables "Listen on all interfaces".

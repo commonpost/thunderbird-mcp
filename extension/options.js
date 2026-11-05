@@ -22,6 +22,7 @@ const saveStatus = document.getElementById("saveStatus");
 const toolList = document.getElementById("toolList");
 const saveToolsBtn = document.getElementById("saveToolsBtn");
 const saveToolsStatus = document.getElementById("saveToolsStatus");
+const newToolsNote = document.getElementById("newToolsNote");
 
 const currentAuthTokenInput = document.getElementById("currentAuthToken");
 const copyAuthTokenBtn = document.getElementById("copyAuthTokenBtn");
@@ -370,6 +371,11 @@ async function loadToolAccess() {
     const data = await browser.commonpostMcp.getToolAccessConfig();
     currentTools = data.tools || [];
     const groupLabels = data.groups || {};
+    const newTools = Array.isArray(data.newTools) ? data.newTools : [];
+    newToolsNote.textContent = newTools.length
+      ? `Added by an update and disabled because you restricted the tools: ${newTools.join(", ")}. Check and save to enable.`
+      : "";
+    newToolsNote.hidden = newTools.length === 0;
 
     if (currentTools.length === 0) {
       toolList.innerHTML = "<li>No tools found.</li>";
@@ -441,6 +447,12 @@ async function loadToolAccess() {
         lockSpan.className = "account-type";
         lockSpan.textContent = "required";
         label.appendChild(lockSpan);
+      }
+      if (tool.isNew) {
+        const newSpan = document.createElement("span");
+        newSpan.className = "account-type";
+        newSpan.textContent = "new";
+        label.appendChild(newSpan);
       }
 
       li.appendChild(checkbox);

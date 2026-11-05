@@ -22,6 +22,12 @@ project is kept in this repository.
 
 ### Changed
 
+- Tool access: once you have disabled any tool in the options page, a tool added by a later update starts disabled
+  too, until you check it and save; the page marks it "new" and names it above the list. With no tool disabled, new
+  tools are enabled as before. The tools the page listed at your last save are kept in the
+  `extensions.commonpost-mcp.knownTools` preference (for a restriction saved before this version: the 40 tools of
+  0.18.2). A disabled-tools preference that holds anything but tool names now disables every tool in the options page
+  as it already did for the server.
 - `scripts/inspection/`: an image for MCP directories that start a server to list its tools (Glama, for example).
   The bridge answers `tools/list` only once Thunderbird runs, so `setup.sh` installs a real Thunderbird (checked as
   in the lab: Mozilla's GPG signature, then SHA-512), Xvfb and the add-on of the checkout in a throw-away profile,
