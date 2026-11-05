@@ -54,8 +54,8 @@ function isToolEnabled(toolName, prefValue, knownValue = "") {
 /**
  * Mirrors tools/list filtering.
  */
-function filterTools(allTools, prefValue) {
-  return allTools.filter(t => isToolEnabled(t.name, prefValue));
+function filterTools(allTools, prefValue, knownValue = "") {
+  return allTools.filter(t => isToolEnabled(t.name, prefValue, knownValue));
 }
 
 /**
@@ -119,6 +119,7 @@ const ALL_TOOLS = [
   { name: "createTask", group: "calendar", crud: "create" },
   { name: "listTasks", group: "calendar", crud: "read" },
   { name: "updateTask", group: "calendar", crud: "update" },
+  { name: "deleteTask", group: "calendar", crud: "delete" },
   { name: "updateEvent", group: "calendar", crud: "update" },
   { name: "deleteEvent", group: "calendar", crud: "delete" },
   { name: "listFilters", group: "filters", crud: "read" },
@@ -208,13 +209,22 @@ describe("Tool access: tools/list filtering", () => {
 
   it("hides disabled tools from the list", () => {
     const pref = JSON.stringify(["sendMail", "deleteMessages"]);
-    const result = filterTools(ALL_TOOLS, pref);
+    // The user saw every tool when saving (knownTools)
+    const result = filterTools(ALL_TOOLS, pref, JSON.stringify(ALL_TOOLS.map(t => t.name)));
     const names = result.map(t => t.name);
     assert.ok(!names.includes("sendMail"));
     assert.ok(!names.includes("deleteMessages"));
     assert.ok(names.includes("searchMessages"));
     assert.ok(names.includes("getMessage"));
+    assert.ok(names.includes("deleteTask"));
     assert.equal(result.length, ALL_TOOLS.length - 2);
+  });
+
+  it("restricted before deleteTask existed: deleteTask is hidden too", () => {
+    const names = filterTools(ALL_TOOLS, JSON.stringify(["sendMail"])).map(t => t.name);
+    assert.ok(!names.includes("deleteTask"));
+    assert.ok(!names.includes("sendMail"));
+    assert.equal(names.length, ALL_TOOLS.length - 2);
   });
 
   it("undisableable tools always appear in list", () => {

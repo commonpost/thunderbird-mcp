@@ -8,6 +8,9 @@ project is kept in this repository.
 
 ### Added
 
+- `deleteTask`, the 41st tool: deletes a task by `taskId` + `calendarId` (from `listTasks`) with no review dialog,
+  like `deleteEvent`, and the whole series of a recurring task. An event's id is refused. If you have disabled any
+  tool in the options page, `deleteTask` starts disabled until you enable it there.
 - `getMessage` (and `getMessages` without `headersOnly`) return `authentication`: the SPF, DKIM and DMARC results of
   the topmost `Authentication-Results` header (RFC 8601), the one the receiving mail server adds, with the domains
   they name and `authservId`, the server that wrote it. Absent when the message has no such header. Reported as the
@@ -52,6 +55,11 @@ project is kept in this repository.
   all servers combined, Cursor now loads tool descriptions only when needed, and VS Code allows 128 tools per request.
 - OpenSSF Best Practices answers: coverage figures of the Coverage run of 2026-11-05 (95.4% of the statements,
   90.9% of the branches).
+
+### Fixed
+
+- `updateTask` refuses the id of an event (`Task not found`) instead of changing the event: Thunderbird looks up
+  events and tasks by the same ids.
 
 ## [0.18.2] - 2026-11-04
 

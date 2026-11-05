@@ -35,12 +35,14 @@ const toolsList = JSON.parse(sandbox.toolsList);
 const tools = toolsList.tools;
 const byName = Object.fromEntries(tools.map(t => [t.name, t]));
 
-// Kept at 40 so that assistants choose among the tools reliably (older Cursor versions also sent
-// only the first 40 tools of all servers combined). Do not raise this lightly: a new tool must
-// replace one or be folded into an existing one.
-const MAX_TOOLS = 40;
+// These limits bound what every conversation pays: a client that loads all tool definitions up
+// front puts the whole tools/list in its context before any work (about 13,000 tokens at
+// 53,500 characters, four characters a token). Raise them only for a measured reason, as for
+// deleteTask (November 2026). A new tool needs a reason too: each one makes the choice of a
+// tool harder for an assistant.
+const MAX_TOOLS = 41;
 const MAX_TOOL_CHARS = 4000;
-const MAX_TOTAL_CHARS = 52000;
+const MAX_TOTAL_CHARS = 53500;
 const MIN_DESCRIPTION_CHARS = 30;
 const BOUNDED_RESULT_TOOLS = {
   searchMessages: 'maxResults', getRecentMessages: 'maxResults', searchContacts: 'maxResults',

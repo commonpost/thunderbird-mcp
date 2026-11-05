@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/commonpost/thunderbird-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/commonpost/thunderbird-mcp/actions/workflows/ci.yml)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14985/badge)](https://www.bestpractices.dev/projects/14985)
-[![Tools](https://img.shields.io/badge/40_Tools-email%2C_compose%2C_filters%2C_calendar%2C_contacts-blue.svg)](#what-you-can-do)
+[![Tools](https://img.shields.io/badge/41_Tools-email%2C_compose%2C_filters%2C_calendar%2C_contacts-blue.svg)](#what-you-can-do)
 [![Localhost Only](https://img.shields.io/badge/Privacy-localhost_only-green.svg)](#security)
 [![Thunderbird](https://img.shields.io/badge/Thunderbird-140%2B-0a84ff.svg)](https://www.thunderbird.net/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-grey.svg)](LICENSE)
@@ -71,7 +71,7 @@ Snap, Flatpak and macOS need no extra step in most cases; see [Sandbox-aware con
 
 ## Why?
 
-Thunderbird has no official API for AI tools. Your AI assistant can't read your email, can't help you draft replies, can't organize your inbox. This extension fixes that -- it exposes 40 tools over MCP so any compatible AI (Claude, GPT, local models) can work with your mail the way you'd expect. The list is kept to 40 tools so that assistants choose among them reliably; older Cursor versions also sent an agent only the first 40 tools of all servers combined (since January 2026 Cursor loads tool descriptions only when needed), and VS Code allows 128 tools per request.
+Thunderbird has no official API for AI tools. Your AI assistant can't read your email, can't help you draft replies, can't organize your inbox. This extension fixes that -- it exposes 41 tools over MCP so any compatible AI (Claude, GPT, local models) can work with your mail the way you'd expect. The list is kept to about 40 tools so that assistants choose among them reliably; older Cursor versions also sent an agent only the first 40 tools of all servers combined (since January 2026 Cursor loads tool descriptions only when needed), and VS Code allows 128 tools per request.
 
 Mail sends and event/task creation require review by default because **Block `skipReview`** starts enabled. `skipReview: true` is honored only after you explicitly disable that safety setting. **By default, nothing is sent or created without your review.**
 
@@ -167,6 +167,7 @@ OpenPGP and S/MIME messages are not decrypted for the assistant by default: `get
 | `createTask` | Open a pre-filled task dialog for review; direct creation via `skipReview` requires explicitly disabling the default safety block |
 | `listTasks` | List tasks/to-dos from calendars -- filter by completion status, due date, or calendar. Supports `maxResults` and `format: "table"`. |
 | `updateTask` | Update a task's title, due date, description, priority, completion status, or percent complete |
+| `deleteTask` | Delete a task by `taskId` + `calendarId` (from `listTasks`), with no review dialog, like `deleteEvent`; a recurring task is deleted with its whole series, and an event's id is refused. To keep a task as done, use `updateTask` with `completed: true` instead. |
 | `listCategories` | List the calendar category names defined in Thunderbird, to use exactly in events and tasks |
 
 ### Access Control
