@@ -6,6 +6,12 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Security
+
+- `updateEvent` and `deleteEvent` refuse the id of a task (`Event not found`). Thunderbird looks up events and tasks
+  by the same ids, so they changed or deleted a task given its id, even when the tool settings kept `updateTask` or
+  `deleteTask` disabled. They now find events only, as `updateTask` and `deleteTask` find tasks only since 0.19.0.
+
 ## [0.19.0] - 2026-11-05
 
 - New tool `deleteTask` (41 tools). If you have disabled any tool in the options page, it starts disabled until you

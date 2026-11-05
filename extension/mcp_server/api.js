@@ -12076,6 +12076,19 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return items;
             }
 
+            // An event of `calendar` by id: direct lookup first, then a scan of its events. An item found by id that
+            // is not an event (a task) does not count: getItem looks up tasks too, and updateEvent or deleteEvent
+            // must not change or delete a task that the tool settings may keep from updateTask and deleteTask.
+            async function findEventItem(calendar, eventId) {
+              let item = null;
+              if (typeof calendar.getItem === "function") {
+                try { item = await calendar.getItem(eventId); } catch {}
+              }
+              if (item && typeof item.isEvent === "function") return item.isEvent() ? item : null;
+              const all = await getCalendarItems(calendar, null, null);
+              return all.find(i => i.id === eventId) || null;
+            }
+
             function calDateToISO(dt) {
               if (!dt) return null;
               try { return new Date(dt.nativeTime / 1000).toISOString(); }
@@ -12476,16 +12489,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (!calendar) return { error: `Calendar not found: ${calendarId}` };
                 if (calendar.readOnly) return { error: `Calendar is read-only: ${calendar.name}` };
 
-                // Use getItem API if available, else scan
-                let oldItem = null;
-                if (typeof calendar.getItem === "function") {
-                  try { oldItem = await calendar.getItem(eventId); } catch {}
-                }
-                if (!oldItem) {
-                  // Fallback: scan all events
-                  const all = await getCalendarItems(calendar, null, null);
-                  oldItem = all.find(i => i.id === eventId) || null;
-                }
+                const oldItem = await findEventItem(calendar, eventId);
                 if (!oldItem) return { error: `Event not found: ${eventId}` };
 
                 const newItem = oldItem.clone();
@@ -12631,14 +12635,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (!calendar) return { error: `Calendar not found: ${calendarId}` };
                 if (calendar.readOnly) return { error: `Calendar is read-only: ${calendar.name}` };
 
-                let item = null;
-                if (typeof calendar.getItem === "function") {
-                  try { item = await calendar.getItem(eventId); } catch {}
-                }
-                if (!item) {
-                  const all = await getCalendarItems(calendar, null, null);
-                  item = all.find(i => i.id === eventId) || null;
-                }
+                const item = await findEventItem(calendar, eventId);
                 if (!item) return { error: `Event not found: ${eventId}` };
 
                 const isRecurring = !!item.recurrenceInfo;
