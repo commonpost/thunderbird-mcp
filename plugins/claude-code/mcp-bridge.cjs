@@ -1771,7 +1771,7 @@ async function handleMessage(line) {
           protocolVersion: negotiated,
           capabilities: { tools: {} },
           serverInfo: SERVER_INFO,
-          instructions: SERVER_INSTRUCTIONS,
+          instructions: READ_ONLY ? `${SERVER_INSTRUCTIONS}\n${READ_ONLY_INSTRUCTIONS}` : SERVER_INSTRUCTIONS,
         },
       };
     }
@@ -1786,6 +1786,12 @@ async function handleMessage(line) {
       return { jsonrpc: '2.0', id: message.id, result: { resources: [] } };
     case 'prompts/list':
       return { jsonrpc: '2.0', id: message.id, result: { prompts: [] } };
+  }
+
+  // Read-only mode refuses a tool that may change something before anything else, file reads included.
+  if (READ_ONLY && message.method === 'tools/call') {
+    const refusal = await readOnlyRefusal(message);
+    if (refusal) return refusal;
   }
 
   // For mail-sending tools, inline any attachments passed as file paths.
@@ -1820,6 +1826,9 @@ async function handleMessage(line) {
     if (message.method === 'tools/list' && response?.result) {
       // Warm the version probe so the first tools/call does not wait for it.
       startVersionProbe();
+      if (READ_ONLY && Array.isArray(response.result.tools)) {
+        response.result.tools = readOnlyToolList(response.result.tools);
+      }
     }
     return response;
   }
@@ -2102,6 +2111,91 @@ const PROFILE = (() => {
   return null;
 })();
 const BRIDGE_HEADER = `${versionCore(BRIDGE_VERSION) ?? '0.0.0'}; packaging=${PACKAGING}` + (PROFILE ? `; profile=${PROFILE}` : '');
+
+// COMMONPOST_MCP_READ_ONLY=1 (or true), set in the MCP client's configuration: read-only mode. tools/list keeps the
+// tools the add-on marks read-only (readOnlyHint), plus getMessage and getMessages without saveAttachments, their
+// only write; tools/call refuses any other tool here, before anything reaches Thunderbird. A defence in depth: the
+// add-on's own account and tool settings stay the authority. "", "0" and "false" leave it off. Any other value, an
+// unexpanded ${...} placeholder included, leaves it off too, with a line on stderr even without COMMONPOST_MCP_DEBUG:
+// a typo must not pass for read-only mode in silence. The value itself is never logged.
+const READ_ONLY = (() => {
+  const value = process.env.COMMONPOST_MCP_READ_ONLY;
+  if (value === undefined || value === '' || value === '0' || value === 'false') return false;
+  if (value === '1' || value === 'true') return true;
+  process.stderr.write('[commonpost-mcp] COMMONPOST_MCP_READ_ONLY ignored: 1 or true turns read-only mode on; ' +
+    'read-only mode is OFF\n');
+  return false;
+})();
+// Read tools whose saveAttachments writes files: kept in read-only mode, without that parameter.
+const ATTACHMENT_SAVING_READ_TOOLS = new Set(['getMessage', 'getMessages']);
+const READ_ONLY_TOOL_NOTE = 'Read-only mode (COMMONPOST_MCP_READ_ONLY): saveAttachments is not available.';
+const READ_ONLY_INSTRUCTIONS = 'Read-only mode: only tools that change nothing are available; ' +
+  'mail, drafts, contacts, calendars and filters cannot be changed through this server.';
+const TOOL_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+
+// The tools of a tools/list result that read-only mode keeps, the attachment-saving read tools without
+// saveAttachments.
+function readOnlyToolList(tools) {
+  if (!Array.isArray(tools)) return [];
+  const kept = [];
+  for (const tool of tools) {
+    if (!tool || typeof tool !== 'object' || typeof tool.name !== 'string') continue;
+    if (ATTACHMENT_SAVING_READ_TOOLS.has(tool.name)) {
+      kept.push(withoutSaveAttachments(tool));
+    } else if (tool.annotations?.readOnlyHint === true) {
+      kept.push(tool);
+    }
+  }
+  return kept;
+}
+
+function withoutSaveAttachments(tool) {
+  const schema = tool.inputSchema && typeof tool.inputSchema === 'object' ? tool.inputSchema : { type: 'object' };
+  const properties = { ...(schema.properties && typeof schema.properties === 'object' ? schema.properties : {}) };
+  delete properties.saveAttachments;
+  const inputSchema = { ...schema, properties };
+  if (Array.isArray(schema.required)) inputSchema.required = schema.required.filter((n) => n !== 'saveAttachments');
+  return {
+    ...tool,
+    description: typeof tool.description === 'string' ? `${tool.description} ${READ_ONLY_TOOL_NOTE}` : READ_ONLY_TOOL_NOTE,
+    inputSchema,
+    // Without saveAttachments these tools only read.
+    annotations: { ...(tool.annotations || {}), readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  };
+}
+
+// In read-only mode, the response that replaces a tools/call the mode does not allow, or null when the call may go
+// on. The add-on is asked for its tool list on every call, so a new add-on version or a tool turned off counts at
+// once; any doubt refuses the call.
+async function readOnlyRefusal(message) {
+  const name = message.params?.name;
+  let tools;
+  try {
+    const listed = await forwardToThunderbird({ jsonrpc: '2.0', id: 'commonpost-read-only-check', method: 'tools/list', params: {} });
+    tools = listed?.result?.tools;
+    if (!Array.isArray(tools)) {
+      throw new Error(listed?.error?.message ? String(listed.error.message) : 'the add-on did not list its tools');
+    }
+  } catch (e) {
+    return toolErrorResponse(message.id,
+      `Read-only mode (COMMONPOST_MCP_READ_ONLY) could not check this tool, so the call was not made: ${e.message}`);
+  }
+  const shown = typeof name === 'string' && TOOL_NAME_PATTERN.test(name) ? name : null;
+  if (!shown || !readOnlyToolList(tools).some((tool) => tool.name === shown)) {
+    return toolErrorResponse(message.id,
+      `${shown ? `The tool ${shown}` : 'This tool'} is not available: the bridge runs in read-only mode ` +
+      '(COMMONPOST_MCP_READ_ONLY), which allows only tools that change nothing. Only the user can turn it off, ' +
+      "in the MCP client's configuration.");
+  }
+  const saveAttachments = message.params?.arguments?.saveAttachments;
+  if (ATTACHMENT_SAVING_READ_TOOLS.has(shown) && saveAttachments !== undefined && saveAttachments !== null
+      && saveAttachments !== false) {
+    return toolErrorResponse(message.id,
+      'saveAttachments is not available: the bridge runs in read-only mode (COMMONPOST_MCP_READ_ONLY). ' +
+      'Call again without it.');
+  }
+  return null;
+}
 
 // The connection (port, token, pid) that last answered a request.
 let lastServed = null;
@@ -2400,6 +2494,8 @@ module.exports = {
   validateAttachmentStat,
   versionCore,
   BRIDGE_HEADER,
+  READ_ONLY,
+  readOnlyToolList,
   MIN_EXTENSION_VERSION,
   isDirectSendCall,
   isDraftCall,

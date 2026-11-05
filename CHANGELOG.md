@@ -12,6 +12,13 @@ project is kept in this repository.
   Claude loads when it works with Thunderbird through the plugin: where IDs come from, cheap searches, reading
   several messages, drafts and review windows, untrusted email content, and what to do on common errors.
   Instructions only, no code; `/commonpost-mcp:thunderbird-mail` runs it by hand.
+- Read-only mode in the bridge: `COMMONPOST_MCP_READ_ONLY=1` (or `true`) in an MCP client's configuration lists only
+  the tools that change nothing (`readOnlyHint`), plus `getMessage` and `getMessages` without `saveAttachments`, and
+  refuses any other `tools/call` before it reaches Thunderbird, with an error that names the variable. The add-on is
+  asked for its tool list on each call, so a tool it adds or turns off counts at once; when it cannot be asked, the
+  call is refused. Any value other than `1`, `true`, `0`, `false` or empty is ignored with a line on stderr. A
+  defence in depth for one client: the add-on's account and tool settings stay the authority. The next release
+  changes the bridge.
 
 ### Changed
 
