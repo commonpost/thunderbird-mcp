@@ -68,7 +68,10 @@ dependencies (`package.json` lists only `devDependencies`). It:
 - for `sendMail`, `saveDraft`, `replyToMessage` and `forwardMessage`, reads attachments given as file paths, refuses
   sensitive ones, and sends their content inline as base64 (`inlineAttachmentPaths`);
 - waits 30 s for an ordinary call and 180 s for a call that may send directly or save a draft
-  (`requestOptionsFor`).
+  (`requestOptionsFor`);
+- with `COMMONPOST_MCP_READ_ONLY` set to `1` or `true`, lists only the tools the add-on marks `readOnlyHint`, plus
+  `getMessage` and `getMessages` without `saveAttachments` (`readOnlyToolList`), and refuses any other `tools/call`
+  before the attachment step, after asking the add-on for its current tool list (`readOnlyRefusal`).
 
 ### Packagings of the bridge
 
