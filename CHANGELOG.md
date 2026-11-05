@@ -26,6 +26,17 @@ project is kept in this repository.
   The bridge answers `tools/list` only once Thunderbird runs, so `setup.sh` installs a real Thunderbird (checked as
   in the lab: Mozilla's GPG signature, then SHA-512), Xvfb and the add-on of the checkout in a throw-away profile,
   and `start.sh` starts them, then the bridge on standard input and output. Not for real mail.
+- Tool descriptions tell an assistant more of what it needs to pick and call a tool: which other tool to use instead,
+  where each ID comes from, what is changed or deleted and what is kept, and what comes back. The weakest ones
+  (`getMessage`, `listEvents`, `updateEvent`, `deleteContact`, `updateTask`, `listFolders`, `createFolder`,
+  `emptyTrash`, `emptyJunk` and others) are rewritten; the longest (the filter tools) are shorter, so `tools/list`
+  stays within its budget of 52,000 characters. No tool, parameter or behavior changes. `deleteMessages` no longer
+  suggests that it deletes mail outside Drafts for good: like Thunderbird's Delete key, it moves it to Trash.
+- README: the requirements (Windows, macOS or Linux; Thunderbird 140 or later; Node.js 22 or later) are at the top of
+  Quick install, and the 40-tool limit is explained as it is: older Cursor versions sent only the first 40 tools of
+  all servers combined, Cursor now loads tool descriptions only when needed, and VS Code allows 128 tools per request.
+- OpenSSF Best Practices answers: coverage figures of the Coverage run of 2026-11-05 (95.4% of the statements,
+  90.9% of the branches).
 
 ## [0.18.2] - 2026-11-04
 
