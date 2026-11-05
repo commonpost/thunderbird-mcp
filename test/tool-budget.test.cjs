@@ -35,8 +35,9 @@ const toolsList = JSON.parse(sandbox.toolsList);
 const tools = toolsList.tools;
 const byName = Object.fromEntries(tools.map(t => [t.name, t]));
 
-// Cursor loads at most 40 tools per MCP server. Do not raise this lightly: a new tool
-// must replace one or be folded into an existing one.
+// Kept at 40 so that assistants choose among the tools reliably (older Cursor versions also sent
+// only the first 40 tools of all servers combined). Do not raise this lightly: a new tool must
+// replace one or be folded into an existing one.
 const MAX_TOOLS = 40;
 const MAX_TOOL_CHARS = 4000;
 const MAX_TOTAL_CHARS = 52000;

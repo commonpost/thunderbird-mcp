@@ -21,6 +21,8 @@ Give your AI assistant full access to Thunderbird -- search mail, compose messag
 
 ## Quick install (about 3 minutes)
 
+Requirements: Windows, macOS or Linux, with Thunderbird 140 or later and Node.js 22 or later. On Windows, attach files through the bridge (see [Attachments refused](#attachments-refused)).
+
 1. Install the extension. Download `commonpost-mcp-v<version>.xpi` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest). In Thunderbird: Tools > Add-ons and Themes > gear menu > Install Add-on From File. Restart Thunderbird.
 2. Download `mcp-bridge.cjs` from the **same release** and put it in a folder you will keep, for example `~/commonpost-mcp/`. The bridge is a single file and needs nothing else: the release does not ship a `package.json`. (The bridge carries its own version; it reads no `package.json`.)
 3. Check Node.js: `node --version` must show 22 or later.
@@ -69,7 +71,7 @@ Snap, Flatpak and macOS need no extra step in most cases; see [Sandbox-aware con
 
 ## Why?
 
-Thunderbird has no official API for AI tools. Your AI assistant can't read your email, can't help you draft replies, can't organize your inbox. This extension fixes that -- it exposes 40 tools over MCP so any compatible AI (Claude, GPT, local models) can work with your mail the way you'd expect. It stays within Cursor's limit of 40 tools per server.
+Thunderbird has no official API for AI tools. Your AI assistant can't read your email, can't help you draft replies, can't organize your inbox. This extension fixes that -- it exposes 40 tools over MCP so any compatible AI (Claude, GPT, local models) can work with your mail the way you'd expect. The list is kept to 40 tools so that assistants choose among them reliably; older Cursor versions also sent an agent only the first 40 tools of all servers combined (since January 2026 Cursor loads tool descriptions only when needed), and VS Code allows 128 tools per request.
 
 Mail sends and event/task creation require review by default because **Block `skipReview`** starts enabled. `skipReview: true` is honored only after you explicitly disable that safety setting. **By default, nothing is sent or created without your review.**
 
@@ -101,7 +103,7 @@ The Thunderbird extension embeds a local HTTP server with session-scoped auth to
 | `getRecentMessages` | Recent messages newest first from all folders (Trash/Junk skipped) or one folder -- `daysBack` (default 7), unread/flagged filters, `includeTrash`, pagination. Same envelope, rows and `format` as `searchMessages`. |
 | `displayMessage` | Open a message in Thunderbird's GUI -- `3pane` (default), `tab`, or `window` mode |
 | `updateMessage` | Mark read/unread, flag/unflag, add/remove tags, move between folders, or trash -- supports bulk via `messageIds` |
-| `deleteMessages` | Delete messages -- drafts are safely moved to Trash |
+| `deleteMessages` | Delete messages as Thunderbird's Delete key does: moved to Trash, except in Trash itself (deleted for good) and on IMAP accounts set not to move deleted mail (their setting applies) |
 | `createFolder` | Create new subfolders to organize your mail, or a saved search (virtual folder: a live view, nothing moved) with `savedSearch` |
 | `renameFolder` | Rename an existing mail folder; returns its new URI as `path` |
 | `deleteFolder` | Delete a folder (moves to Trash, or permanently deletes if already in Trash); a saved search is removed as a view, no mail deleted |
