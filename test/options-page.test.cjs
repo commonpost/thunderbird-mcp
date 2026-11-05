@@ -985,6 +985,33 @@ describe("options page: tool access", () => {
     assert.equal(optional.children[1].children.length, 0);
   });
 
+  it("marks the tools added by an update since the tools were restricted, and names them above the list", async () => {
+    const page = await openPage({
+      getToolAccessConfig: {
+        ...TOOL_CONFIG,
+        newTools: ["deleteTask"],
+        tools: [
+          ...TOOL_CONFIG.tools,
+          { name: "deleteTask", group: "calendar", crud: "delete", enabled: false, isNew: true },
+        ],
+      },
+    });
+    const boxes = toolCheckboxes(page);
+    const box = boxes.find((b) => b.value === "deleteTask");
+    assert.equal(box.checked, false);
+    assert.equal(box.disabled, false);
+    const row = page.$("toolList").children.find((li) => li.children[0] === box);
+    assert.equal(row.children[1].children[0].textContent, "new");
+    assert.equal(page.$("newToolsNote").hidden, false);
+    assert.match(page.$("newToolsNote").textContent, /deleteTask/);
+  });
+
+  it("hides the new-tools note when no tool is new", async () => {
+    const page = await openPage();
+    assert.equal(page.$("newToolsNote").hidden, true);
+    assert.equal(page.$("newToolsNote").textContent, "");
+  });
+
   it("capitalizes the group and CRUD names it has no label for", async () => {
     const page = await openPage({
       getToolAccessConfig: {

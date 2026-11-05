@@ -6,35 +6,49 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-// ── Helpers that mirror production logic ──────────────────────────────
+// ── The production logic (TOOL ACCESS HELPERS region of api.js) ──────
 
-const UNDISABLEABLE_TOOLS = new Set(["listAccounts", "listFolders", "getAccountAccess"]);
+const vm = require("node:vm");
+const API_SOURCE = fs.readFileSync(path.join(__dirname, "..", "extension", "mcp_server", "api.js"), "utf8");
+
+function apiRegion(name) {
+  const start = API_SOURCE.indexOf(`// BEGIN ${name}`);
+  const end = API_SOURCE.indexOf(`// END ${name}`, start);
+  assert.ok(start >= 0 && end > start, `${name} markers missing`);
+  return API_SOURCE.slice(start, end);
+}
+
+function apiConst(name) {
+  const start = API_SOURCE.indexOf(`const ${name} =`);
+  assert.ok(start >= 0, `${name} not found in api.js`);
+  return API_SOURCE.slice(start, API_SOURCE.indexOf(";", start) + 1);
+}
+
+const ACCESS = vm.createContext({});
+vm.runInContext(`${apiConst("UNDISABLEABLE_TOOLS")}
+${apiRegion("TOOL ACCESS HELPERS")}
+this.UNDISABLEABLE_TOOLS = UNDISABLEABLE_TOOLS;
+this.KNOWN_TOOLS_BASELINE = KNOWN_TOOLS_BASELINE;
+this.resolveToolAccess = resolveToolAccess;
+this.isNewToolFor = isNewToolFor;
+this.isToolOffFor = isToolOffFor;`, ACCESS);
+const { UNDISABLEABLE_TOOLS, KNOWN_TOOLS_BASELINE, resolveToolAccess, isNewToolFor, isToolOffFor } = ACCESS;
 
 /**
- * Mirrors the production getDisabledTools() fail-closed behavior.
- * @param {string} prefValue - raw preference string (simulates Services.prefs)
+ * The disabled tools as the old getDisabledTools() returned them: ["__all__"] when the preference is corrupt.
+ * @param {string} prefValue - raw preference string (simulates Services.prefs); null or undefined = unset
  */
 function getDisabledTools(prefValue) {
-  try {
-    if (!prefValue) return [];
-    const parsed = JSON.parse(prefValue);
-    if (!Array.isArray(parsed)) {
-      return ["__all__"];
-    }
-    return parsed;
-  } catch {
-    return ["__all__"];
-  }
+  const access = resolveToolAccess(prefValue ?? "", "");
+  return access.corrupt ? ["__all__"] : [...access.disabled];
 }
 
 /**
- * Mirrors the production isToolEnabled() logic.
+ * isToolEnabled() of api.js for a disabledTools preference (and knownTools, unset by default).
  */
-function isToolEnabled(toolName, prefValue) {
+function isToolEnabled(toolName, prefValue, knownValue = "") {
   if (UNDISABLEABLE_TOOLS.has(toolName)) return true;
-  const disabled = getDisabledTools(prefValue);
-  if (disabled.includes("__all__")) return false;
-  return !disabled.includes(toolName);
+  return !isToolOffFor(resolveToolAccess(prefValue ?? "", knownValue), toolName);
 }
 
 /**
@@ -264,8 +278,10 @@ describe("Tool access: adversarial inputs", () => {
     const pref = JSON.stringify(["constructor"]);
     // "constructor" is not undisableable, so it should be blocked
     assert.ok(!isToolEnabled("constructor", pref));
-    // But __proto__ is not in the disabled list
-    assert.ok(isToolEnabled("__proto__", pref));
+    // __proto__ is not in the disabled list, but it is no tool the user has seen: off once the tools are restricted
+    assert.ok(!isToolEnabled("__proto__", pref));
+    assert.ok(isToolEnabled("__proto__", ""));
+    assert.ok(isToolEnabled("sendMail", pref));
   });
 
   it("disabled list with __proto__ and constructor entries", () => {
@@ -308,19 +324,20 @@ describe("Tool access: adversarial inputs", () => {
     assert.ok(!isToolEnabled("SENDMAIL", pref));
   });
 
-  it("pref with nested arrays (not flat strings)", () => {
-    // JSON.parse will succeed, Array.isArray will pass, but includes() works on elements
+  it("FAIL-CLOSED: pref with nested arrays (not flat strings)", () => {
+    // Not a list of tool names: corrupt, every regular tool is off
     const pref = JSON.stringify([["sendMail"], "deleteMessages"]);
-    // The nested array element won't match string comparison
-    assert.ok(isToolEnabled("sendMail", pref));
-    // But the string entry does match
+    assert.deepStrictEqual(getDisabledTools(pref), ["__all__"]);
+    assert.ok(!isToolEnabled("sendMail", pref));
     assert.ok(!isToolEnabled("deleteMessages", pref));
+    assert.ok(isToolEnabled("listAccounts", pref));
   });
 
-  it("pref with null and number entries", () => {
+  it("FAIL-CLOSED: pref with null and number entries", () => {
     const pref = JSON.stringify([null, 42, "sendMail"]);
+    assert.deepStrictEqual(getDisabledTools(pref), ["__all__"]);
     assert.ok(!isToolEnabled("sendMail", pref));
-    assert.ok(isToolEnabled("deleteMessages", pref));
+    assert.ok(!isToolEnabled("deleteMessages", pref));
   });
 
   it("very large disabled list", () => {
@@ -364,6 +381,69 @@ describe("Tool access: adversarial inputs", () => {
     const pref = JSON.stringify(["sendMail", "__all__", "deleteMessages"]);
     assert.ok(!isToolEnabled("searchContacts", pref));
     assert.ok(!isToolEnabled("getMessage", pref));
+  });
+});
+
+describe("Tool access: tools added by an update (knownTools)", () => {
+  const RESTRICTED = JSON.stringify(["emptyTrash"]);
+
+  it("the baseline is the 40 tools of 0.18.2, infrastructure tools included", () => {
+    assert.equal(KNOWN_TOOLS_BASELINE.length, 40);
+    assert.equal(new Set(KNOWN_TOOLS_BASELINE).size, 40);
+    for (const name of UNDISABLEABLE_TOOLS) assert.ok(KNOWN_TOOLS_BASELINE.includes(name), name);
+    assert.ok(Object.isFrozen(KNOWN_TOOLS_BASELINE));
+  });
+
+  it("without a restriction, a tool unknown to knownTools is on", () => {
+    assert.ok(isToolEnabled("deleteTask", ""));
+    assert.ok(isToolEnabled("deleteTask", "[]"));
+    assert.ok(isToolEnabled("deleteTask", "", JSON.stringify(["sendMail"])));
+    assert.equal(isNewToolFor(resolveToolAccess("", ""), "deleteTask"), false);
+  });
+
+  it("upgrade: a restriction saved before knownTools existed keeps a later tool off", () => {
+    const access = resolveToolAccess(RESTRICTED, "");
+    assert.ok(isNewToolFor(access, "deleteTask"));
+    assert.ok(!isToolEnabled("deleteTask", RESTRICTED));
+    // The 0.18.2 tools follow disabledTools
+    assert.ok(isToolEnabled("sendMail", RESTRICTED));
+    assert.ok(!isToolEnabled("emptyTrash", RESTRICTED));
+    assert.equal(isNewToolFor(access, "sendMail"), false);
+  });
+
+  it("a tool the user saw when saving (in knownTools) follows disabledTools", () => {
+    const known = JSON.stringify([...KNOWN_TOOLS_BASELINE, "deleteTask"]);
+    assert.ok(isToolEnabled("deleteTask", RESTRICTED, known));
+    assert.ok(!isToolEnabled("deleteTask", JSON.stringify(["deleteTask"]), known));
+    assert.equal(isNewToolFor(resolveToolAccess(RESTRICTED, known), "deleteTask"), false);
+  });
+
+  it("knownTools unreadable, corrupt or empty: the baseline, never more tools on", () => {
+    for (const known of [null, "not json", "{}", JSON.stringify([1, 2]), "[]"]) {
+      const access = resolveToolAccess(RESTRICTED, known);
+      assert.equal(access.corrupt, false, String(known));
+      assert.ok(isToolOffFor(access, "deleteTask"), String(known));
+      assert.equal(isToolOffFor(access, "sendMail"), false, String(known));
+    }
+  });
+
+  it("infrastructure tools are never new and never off", () => {
+    const access = resolveToolAccess(RESTRICTED, JSON.stringify(["sendMail"]));
+    for (const name of UNDISABLEABLE_TOOLS) {
+      assert.equal(isNewToolFor(access, name), false, name);
+      assert.equal(isToolOffFor(access, name), false, name);
+    }
+  });
+
+  it("a corrupt or unreadable disabledTools turns every regular tool off, and none is reported new", () => {
+    for (const disabled of [null, "not json", JSON.stringify(["__all__"])]) {
+      const access = resolveToolAccess(disabled, "");
+      assert.equal(access.corrupt, true, String(disabled));
+      assert.ok(isToolOffFor(access, "sendMail"), String(disabled));
+      assert.ok(isToolOffFor(access, "deleteTask"), String(disabled));
+      assert.equal(isNewToolFor(access, "deleteTask"), false, String(disabled));
+      assert.equal(isToolOffFor(access, "listAccounts"), false, String(disabled));
+    }
   });
 });
 

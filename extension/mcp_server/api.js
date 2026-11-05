@@ -2717,6 +2717,7 @@ function pageTextField(result, field, offset, maxChars) {
 let _tempFileCounter = 0;
 const PREF_ALLOWED_ACCOUNTS = "extensions.commonpost-mcp.allowedAccounts";
 const PREF_DISABLED_TOOLS = "extensions.commonpost-mcp.disabledTools";
+const PREF_KNOWN_TOOLS = "extensions.commonpost-mcp.knownTools";
 const PREF_BLOCK_SKIPREVIEW = "extensions.commonpost-mcp.blockSkipReview";
 const PREF_BRIDGE_UPDATE_ALERT = "extensions.commonpost-mcp.bridgeUpdateAlert";
 const PREF_STABLE_AUTH_TOKEN = "extensions.commonpost-mcp.stableAuthToken";
@@ -2730,6 +2731,61 @@ const VALID_CRUD = ["create", "read", "update", "delete"];
 const CRUD_ORDER = { read: 0, create: 1, update: 2, delete: 3 };
 // Tools that cannot be disabled via the settings page (infrastructure tools)
 const UNDISABLEABLE_TOOLS = new Set(["listAccounts", "listFolders", "getAccountAccess"]);
+
+// BEGIN TOOL ACCESS HELPERS
+// Which tools are off. disabledTools (a JSON list) holds the tools the user turned off in the options page, and
+// knownTools the tools that page listed when the user last saved a restriction. A tool added by an update since then
+// is off for a user who restricted the tools, until they turn it on and save; a user who restricted nothing gets it
+// like the others. Before knownTools existed, a restriction was saved over the 40 tools of 0.18.2.
+const KNOWN_TOOLS_BASELINE = Object.freeze([
+  "listAccounts", "listFolders", "searchMessages", "getMessage", "getMessages", "sendMail", "saveDraft",
+  "listCalendars", "createEvent", "listEvents", "updateEvent", "deleteEvent", "createTask", "listCategories",
+  "listTasks", "updateTask", "searchContacts", "getContact", "createContact", "updateContact", "deleteContact",
+  "replyToMessage", "forwardMessage", "getRecentMessages", "displayMessage", "deleteMessages", "updateMessage",
+  "createFolder", "renameFolder", "deleteFolder", "emptyTrash", "emptyJunk", "moveFolder", "listFilters",
+  "createFilter", "updateFilter", "deleteFilter", "reorderFilters", "applyFilters", "getAccountAccess",
+]);
+
+// A preference holding a JSON list of tool names: the list, [] when unset, null when it is not such a list.
+function parseToolNamesPref(value) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every(v => typeof v === "string") ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// The raw disabledTools and knownTools values (null when the preference could not be read) as
+// { corrupt, restricted, disabled, known }. corrupt (disabledTools unreadable, not a list of names, or holding the
+// "__all__" sentinel) turns off every tool but the infrastructure ones: fail closed. An unreadable knownTools falls
+// back to KNOWN_TOOLS_BASELINE, which never turns on a tool the user has not seen.
+function resolveToolAccess(disabledPref, knownPref) {
+  const disabled = disabledPref === null ? null : parseToolNamesPref(disabledPref);
+  if (disabled === null || disabled.includes("__all__")) {
+    return { corrupt: true, restricted: true, disabled: new Set(), known: new Set() };
+  }
+  const known = knownPref === null ? null : parseToolNamesPref(knownPref);
+  return {
+    corrupt: false,
+    restricted: disabled.length > 0,
+    disabled: new Set(disabled),
+    known: new Set(known && known.length ? known : KNOWN_TOOLS_BASELINE),
+  };
+}
+
+// A tool the user has not seen in the options page since restricting the tools (off until turned on).
+function isNewToolFor(access, name) {
+  return access.restricted && !access.corrupt && !UNDISABLEABLE_TOOLS.has(name) && !access.known.has(name);
+}
+
+function isToolOffFor(access, name) {
+  if (UNDISABLEABLE_TOOLS.has(name)) return false;
+  if (access.corrupt) return true;
+  return access.disabled.has(name) || isNewToolFor(access, name);
+}
+// END TOOL ACCESS HELPERS
 const DEFAULT_GET_MESSAGES_LIMIT = 10;
 // 20 is a reasonable upper bound for now; adjust later if usage supports it.
 const MAX_GET_MESSAGES_LIMIT = 20;
@@ -6318,6 +6374,18 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
       }
     }
 
+    // The disabledTools and knownTools preferences resolved by resolveToolAccess; one that cannot be read is null.
+    function readToolAccess() {
+      const read = (name) => {
+        try {
+          return Services.prefs.getStringPref(name, "");
+        } catch {
+          return null;
+        }
+      };
+      return resolveToolAccess(read(PREF_DISABLED_TOOLS), read(PREF_KNOWN_TOOLS));
+    }
+
     // BEGIN TOOL SCHEMA BUILDER
     function buildTools() {
       const getMessagesLimit = getConfiguredGetMessagesLimit();
@@ -7742,35 +7810,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
 
             /**
-             * Get the list of disabled tool names from preferences.
-             * Returns an empty array if no tools are disabled (all enabled).
-             * Fails closed: corrupt pref disables all tools.
-             */
-            function getDisabledTools() {
-              try {
-                const pref = Services.prefs.getStringPref(PREF_DISABLED_TOOLS, "");
-                if (!pref) return [];
-                const parsed = JSON.parse(pref);
-                if (!Array.isArray(parsed) || !parsed.every(v => typeof v === "string")) {
-                  console.error("commonpost-mcp: disabled tools pref is invalid, disabling all tools");
-                  return ["__all__"];
-                }
-                return parsed;
-              } catch (e) {
-                console.error("commonpost-mcp: failed to parse disabled tools pref, disabling all tools:", e);
-                return ["__all__"];
-              }
-            }
-
-            /**
-             * Check if a tool is enabled.
+             * Check if a tool is enabled (resolveToolAccess: fails closed on a corrupt disabledTools preference, and
+             * keeps a tool added by an update off for a user who restricted the tools).
              * Undisableable tools (listAccounts, listFolders, getAccountAccess) always return true.
              */
             function isToolEnabled(toolName) {
               if (UNDISABLEABLE_TOOLS.has(toolName)) return true;
-              const disabled = getDisabledTools();
-              if (disabled.includes("__all__")) return false;
-              return !disabled.includes(toolName);
+              const access = readToolAccess();
+              if (access.corrupt) console.error("commonpost-mcp: disabled tools pref is invalid, disabling all tools");
+              return !isToolOffFor(access, toolName);
             }
 
             /**
@@ -17995,23 +18043,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         },
 
         getToolAccessConfig: async function() {
-          // Use same fail-closed parsing as getDisabledTools() so the UI
-          // accurately reflects the server's actual state on corrupt prefs
+          // The same resolution as isToolEnabled, so the page shows what the server does
+          const access = readToolAccess();
           let disabled = [];
-          let corrupt = false;
-          try {
-            const pref = Services.prefs.getStringPref(PREF_DISABLED_TOOLS, "");
-            if (pref) {
-              const parsed = JSON.parse(pref);
-              if (!Array.isArray(parsed)) {
-                corrupt = true;
-              } else {
-                disabled = parsed;
-              }
-            }
-          } catch {
-            corrupt = true;
-          }
+          if (!access.corrupt) disabled = [...access.disabled];
 
           // Build tool list with group/crud metadata, sorted by group then CRUD order
           const getMessagesLimit = getConfiguredGetMessagesLimit();
@@ -18020,8 +18055,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               name: t.name,
               group: t.group,
               crud: t.crud,
-              enabled: corrupt ? UNDISABLEABLE_TOOLS.has(t.name) : !disabled.includes(t.name),
+              enabled: !isToolOffFor(access, t.name),
               undisableable: UNDISABLEABLE_TOOLS.has(t.name),
+              ...(isNewToolFor(access, t.name) ? { isNew: true } : {}),
               ...(t.name === "getMessages" ? {
                 getMessagesLimit,
                 getMessagesLimitMin: 1,
@@ -18035,15 +18071,16 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return (CRUD_ORDER[a.crud] ?? 99) - (CRUD_ORDER[b.crud] ?? 99);
             });
           const result = {
-            mode: corrupt ? "error" : (disabled.length === 0 ? "all" : "restricted"),
+            mode: access.corrupt ? "error" : (access.restricted ? "restricted" : "all"),
             disabledTools: disabled,
+            newTools: toolList.filter(t => t.isNew).map(t => t.name),
             groups: GROUP_LABELS,
             getMessagesLimit,
             getMessagesLimitMin: 1,
             getMessagesLimitMax: MAX_GET_MESSAGES_LIMIT,
             tools: toolList,
           };
-          if (corrupt) {
+          if (access.corrupt) {
             result.error = "Disabled tools preference is corrupt. All non-infrastructure tools are blocked. Save to reset.";
           }
           return result;
@@ -18080,8 +18117,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
           if (disabledTools.length === 0) {
             try { Services.prefs.clearUserPref(PREF_DISABLED_TOOLS); } catch { /* ignore */ }
+            try { Services.prefs.clearUserPref(PREF_KNOWN_TOOLS); } catch { /* ignore */ }
           } else {
+            // The page listed every tool of this version: a tool added later stays off until the user turns it on.
+            // disabledTools first: if the second write failed, a tool left unchecked would still be off.
             Services.prefs.setStringPref(PREF_DISABLED_TOOLS, JSON.stringify(disabledTools));
+            Services.prefs.setStringPref(PREF_KNOWN_TOOLS, JSON.stringify(buildTools().map(t => t.name)));
           }
           if (requestedLimit !== null) {
             if (requestedLimit === DEFAULT_GET_MESSAGES_LIMIT) {

@@ -135,7 +135,9 @@ it (see "Versions" below).
   - *account access*: an allow-list of accounts; an empty list means all accounts, an unreadable or malformed value
     blocks all of them;
   - *tool access*: a list of disabled tools, hidden from `tools/list` and refused at dispatch; a malformed value
-    disables all tools; `listAccounts`, `listFolders` and `getAccountAccess` cannot be disabled;
+    disables all tools; `listAccounts`, `listFolders` and `getAccountAccess` cannot be disabled. Once a tool is
+    disabled, a tool added by a later update is disabled too until the user enables it: `knownTools` holds the tools
+    the options page listed at the last save (the 40 tools of 0.18.2 when it is not set);
   - *Block `skipReview`* (on by default): compose tools and `createEvent` / `createTask` open a review window or
     dialog; direct sending or creation is refused while it is on;
   - *Block filter forward/reply* (on by default), or *Ask me each time*: filter rules that would send mail are refused,

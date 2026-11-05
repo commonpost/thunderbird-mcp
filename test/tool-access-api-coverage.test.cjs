@@ -16,12 +16,20 @@ const vm = require("node:vm");
 const apiSource = fs.readFileSync(path.resolve(__dirname, "../extension/mcp_server/api.js"), "utf8");
 
 const PREF_DISABLED_TOOLS = "extensions.commonpost-mcp.disabledTools";
+const PREF_KNOWN_TOOLS = "extensions.commonpost-mcp.knownTools";
 const PREF_GET_MESSAGES_LIMIT = "extensions.commonpost-mcp.getMessagesLimit";
 
 function constSource(name) {
   const start = apiSource.indexOf(`const ${name} =`);
   assert.ok(start >= 0, `${name} not found in api.js`);
   return apiSource.slice(start, apiSource.indexOf(";", start) + 1);
+}
+
+function regionSource(name) {
+  const start = apiSource.indexOf(`// BEGIN ${name}`);
+  const end = apiSource.indexOf(`// END ${name}`, start);
+  assert.ok(start >= 0 && end > start, `${name} markers missing`);
+  return apiSource.slice(start, end);
 }
 
 function functionSource(name, indent) {
@@ -83,15 +91,18 @@ function makeWorld({ tools = TOOLS } = {}) {
   vm.createContext(sandbox);
   vm.runInContext([
     constSource("PREF_DISABLED_TOOLS"),
+    constSource("PREF_KNOWN_TOOLS"),
     constSource("PREF_GET_MESSAGES_LIMIT"),
     constSource("CRUD_ORDER"),
     constSource("UNDISABLEABLE_TOOLS"),
+    regionSource("TOOL ACCESS HELPERS"),
     constSource("DEFAULT_GET_MESSAGES_LIMIT"),
     constSource("MAX_GET_MESSAGES_LIMIT"),
     constSource("GROUP_ORDER"),
     constSource("GROUP_LABELS"),
     functionSource("normalizeGetMessagesLimit", "    "),
     functionSource("getConfiguredGetMessagesLimit", "    "),
+    functionSource("readToolAccess", "    "),
     `this.api = {\n${methodSource("getToolAccessConfig")}${methodSource("setToolAccess")}};`,
   ].join("\n"), sandbox);
   return { api: sandbox.api, store, unreadable, cleared };
@@ -156,11 +167,43 @@ describe("getToolAccessConfig", () => {
   it("lists the disabled tools as disabled and reports the restricted mode", async () => {
     const { api, store } = makeWorld();
     store.set(PREF_DISABLED_TOOLS, JSON.stringify(["sendMail", "emptyTrash"]));
+    store.set(PREF_KNOWN_TOOLS, JSON.stringify(TOOLS.map((t) => t.name)));
     const config = plain(await api.getToolAccessConfig());
     assert.equal(config.mode, "restricted");
     assert.deepEqual(config.disabledTools, ["sendMail", "emptyTrash"]);
     assert.deepEqual(config.tools.filter((t) => !t.enabled).map((t) => t.name).sort(), ["emptyTrash", "sendMail"]);
+    assert.deepEqual(config.newTools, []);
+    assert.ok(config.tools.every((t) => t.isNew === undefined));
     assert.equal(config.error, undefined);
+  });
+
+  it("restricted: a tool the user has not seen (not in knownTools) is off and reported new", async () => {
+    const { api, store } = makeWorld();
+    store.set(PREF_DISABLED_TOOLS, JSON.stringify(["sendMail"]));
+    store.set(PREF_KNOWN_TOOLS, JSON.stringify(TOOLS.map((t) => t.name).filter((n) => n !== "getMessages")));
+    const config = plain(await api.getToolAccessConfig());
+    assert.equal(config.mode, "restricted");
+    assert.deepEqual(config.disabledTools, ["sendMail"]);
+    assert.deepEqual(config.newTools, ["getMessages"]);
+    const byName = Object.fromEntries(config.tools.map((t) => [t.name, t]));
+    assert.equal(byName.getMessages.enabled, false);
+    assert.equal(byName.getMessages.isNew, true);
+    assert.equal(byName.deleteMessages.enabled, true);
+    assert.equal(byName.sendMail.isNew, undefined);
+  });
+
+  it("upgrade: with no knownTools, the tools outside the 0.18.2 list are new when restricted, not otherwise", async () => {
+    const restricted = makeWorld();
+    restricted.store.set(PREF_DISABLED_TOOLS, JSON.stringify(["sendMail"]));
+    const config = plain(await restricted.api.getToolAccessConfig());
+    // The test tools that 0.18.2 did not have; the infrastructure tools are never new
+    assert.deepEqual([...config.newTools].sort(), ["lateMystery", "mysteryTool", "oddOne", "oddTwo"]);
+    assert.ok(config.tools.filter((t) => t.isNew).every((t) => !t.enabled));
+
+    const open = makeWorld();
+    const all = plain(await open.api.getToolAccessConfig());
+    assert.deepEqual(all.newTools, []);
+    assert.ok(all.tools.every((t) => t.enabled));
   });
 
   it("an empty preference means nothing is disabled", async () => {
@@ -174,6 +217,7 @@ describe("getToolAccessConfig", () => {
   for (const [label, setup] of [
     ["text that is not JSON", (w) => w.store.set(PREF_DISABLED_TOOLS, "{not json")],
     ["JSON that is not a list", (w) => w.store.set(PREF_DISABLED_TOOLS, JSON.stringify({ sendMail: true }))],
+    ["a list holding something other than names", (w) => w.store.set(PREF_DISABLED_TOOLS, JSON.stringify(["sendMail", 7]))],
     ["a preference that cannot be read", (w) => w.unreadable.add(PREF_DISABLED_TOOLS)],
   ]) {
     it(`fails closed on ${label}: error mode, only the infrastructure tools stay enabled`, async () => {
@@ -228,9 +272,34 @@ describe("setToolAccess", () => {
 
     const stubborn = makeWorld();
     stubborn.unreadable.add(`clear:${PREF_DISABLED_TOOLS}`);
+    stubborn.unreadable.add(`clear:${PREF_KNOWN_TOOLS}`);
     const again = plain(await stubborn.api.setToolAccess([]));
     assert.equal(again.success, true);
-    assert.deepEqual(stubborn.cleared, [PREF_DISABLED_TOOLS]);
+    assert.deepEqual(stubborn.cleared, [PREF_DISABLED_TOOLS, PREF_KNOWN_TOOLS]);
+  });
+
+  it("an empty list also forgets knownTools: with no restriction, tools added later are on", async () => {
+    const world = makeWorld();
+    world.store.set(PREF_DISABLED_TOOLS, '["sendMail"]');
+    world.store.set(PREF_KNOWN_TOOLS, '["sendMail"]');
+    await world.api.setToolAccess([]);
+    assert.equal(world.store.has(PREF_KNOWN_TOOLS), false);
+  });
+
+  it("a restriction records every tool of this version as seen, so only later tools become new", async () => {
+    const world = makeWorld();
+    await world.api.setToolAccess(["sendMail"]);
+    assert.deepEqual(JSON.parse(world.store.get(PREF_KNOWN_TOOLS)), TOOLS.map((t) => t.name));
+    const config = plain(await world.api.getToolAccessConfig());
+    assert.deepEqual(config.newTools, []);
+    assert.deepEqual(config.tools.filter((t) => !t.enabled).map((t) => t.name), ["sendMail"]);
+
+    const later = makeWorld({ tools: [...TOOLS, { name: "deleteTask", group: "calendar", crud: "delete" }] });
+    later.store.set(PREF_DISABLED_TOOLS, world.store.get(PREF_DISABLED_TOOLS));
+    later.store.set(PREF_KNOWN_TOOLS, world.store.get(PREF_KNOWN_TOOLS));
+    const after = plain(await later.api.getToolAccessConfig());
+    assert.deepEqual(after.newTools, ["deleteTask"]);
+    assert.equal(after.tools.find((t) => t.name === "deleteTask").enabled, false);
   });
 
   it("does not touch the limit when none is given (undefined, null or an empty string)", async () => {
