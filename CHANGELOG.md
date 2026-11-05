@@ -6,6 +6,12 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-11-05
+
+- **Security fix:** `updateEvent` and `deleteEvent` no longer change or delete a task given its id. They did so even
+  when `updateTask` or `deleteTask` was disabled in the options page. Updating is recommended.
+- The bridge does not change (0.19.0).
+
 ### Security
 
 - `updateEvent` and `deleteEvent` refuse the id of a task (`Event not found`). Thunderbird looks up events and tasks
