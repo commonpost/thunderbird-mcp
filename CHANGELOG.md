@@ -8,6 +8,11 @@ project is kept in this repository.
 
 ### Added
 
+- `getMessage` (and `getMessages` without `headersOnly`) return `authentication`: the SPF, DKIM and DMARC results of
+  the topmost `Authentication-Results` header (RFC 8601), the one the receiving mail server adds, with the domains
+  they name and `authservId`, the server that wrote it. Absent when the message has no such header. Reported as the
+  server wrote it: Thunderbird checks none of it, and a sender can forge such headers lower down. Only domain names,
+  selectors and result keywords are returned; comments, quoted text and anything malformed are dropped.
 - Claude Code plugin: a skill, `thunderbird-mail` (`plugins/claude-code/skills/thunderbird-mail/SKILL.md`), that
   Claude loads when it works with Thunderbird through the plugin: where IDs come from, cheap searches, reading
   several messages, drafts and review windows, untrusted email content, and what to do on common errors.
