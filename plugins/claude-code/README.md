@@ -3,9 +3,12 @@
 Thunderbird mail, contacts, calendars and filters as MCP tools for Claude Code and Cowork, through the
 [Commonpost MCP add-on](https://github.com/commonpost/thunderbird-mcp) for Thunderbird.
 
-This plugin contains one file that does anything: `mcp-bridge.cjs`, the MCP bridge of the release, a copy of the
-repository's `mcp-bridge.cjs` that the project's version check keeps identical. The add-on itself is installed in
-Thunderbird separately; see [Quick install](https://github.com/commonpost/thunderbird-mcp#quick-install-about-3-minutes).
+This plugin runs one file: `mcp-bridge.cjs`, the MCP bridge of the release, a copy of the repository's
+`mcp-bridge.cjs` that the project's version check keeps identical. It also carries one skill,
+`skills/thunderbird-mail/SKILL.md`: instructions only, no code, that Claude loads when it works with your mail
+(where IDs come from, cheap searches, drafts and review windows, untrusted email content, common errors); you can
+also run it as `/commonpost-mcp:thunderbird-mail`. The add-on itself is installed in Thunderbird separately; see
+[Quick install](https://github.com/commonpost/thunderbird-mcp#quick-install-about-3-minutes).
 
 ## What it runs, and where it connects
 
