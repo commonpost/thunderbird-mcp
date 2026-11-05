@@ -2260,6 +2260,9 @@ const SEARCH_COLLECTION_CAP = 10000;
 const SEARCH_PREVIEW_CHARS = 120;
 const SEARCH_FIELD_OPERATORS = { from: "author", subject: "subject", to: "recipients", cc: "ccList", participant: "participant" };
 const SEARCH_ROW_COLUMNS = ["id", "folderPath", "date", "author", "recipients", "ccList", "subject", "read", "flagged", "tags", "preview", "dupLocations"];
+// The columns `fields` of searchMessages / getRecentMessages can choose. id and folderPath are always returned, and
+// so are the columns an option or a state adds (attachments, linkedBy, encrypted...).
+const SEARCH_FIELD_CHOICES = SEARCH_ROW_COLUMNS.filter(c => c !== "id" && c !== "folderPath");
 
 /**
  * Parse a search query into { terms: [{ field, value }], failed }.
@@ -2634,10 +2637,30 @@ function groupSearchRows(rows, groupBy, sortOrder) {
   return out;
 }
 
+// The error for a `fields` argument that cannot apply, or null. Unknown names are refused by the schema (enum).
+function searchFieldsRefusal(args) {
+  if (args.fields === undefined || args.fields === null) return null;
+  if (!Array.isArray(args.fields)) return "fields must be an array of column names";
+  const other = args.countOnly ? "countOnly" : args.groupBy ? "groupBy" : args.format === "legacy" ? 'format "legacy"' : null;
+  if (other) return `fields cannot be combined with ${other}`;
+  const unknown = args.fields.filter(f => !SEARCH_FIELD_CHOICES.includes(f));
+  return unknown.length ? `Unknown fields: ${unknown.join(", ")} (valid: ${SEARCH_FIELD_CHOICES.join(", ")})` : null;
+}
+
+// A compact row cut to `fields` (null: the whole row).
+function projectSearchRow(row, fields) {
+  if (!fields) return row;
+  const out = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (!SEARCH_FIELD_CHOICES.includes(key) || fields.includes(key)) out[key] = value;
+  }
+  return out;
+}
+
 // One page of sorted rows (or groups) in the fixed search envelope.
-function buildSearchPage(rows, { offset, limit, format, incomplete, key = "messages" }) {
+function buildSearchPage(rows, { offset, limit, format, incomplete, fields = null, key = "messages" }) {
   const start = offset > 0 ? Math.floor(offset) : 0;
-  const page = rows.slice(start, start + limit).map(r => compactSearchRow(r));
+  const page = rows.slice(start, start + limit).map(r => projectSearchRow(compactSearchRow(r), fields));
   const out = {
     [key]: format === "table" ? rowsToTable(page) : page,
     [key === "groups" ? "totalGroups" : "totalMatches"]: rows.length,
@@ -6568,6 +6591,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
     // BEGIN TOOL SCHEMA BUILDER
     function buildTools() {
       const getMessagesLimit = getConfiguredGetMessagesLimit();
+      // searchMessages and getRecentMessages (searchFieldsRefusal, projectSearchRow)
+      const searchFields = {
+        type: "array",
+        items: { type: "string", enum: SEARCH_FIELD_CHOICES },
+        description: "Only these row columns (id, folderPath and option columns always); not with countOnly, groupBy or legacy",
+      };
       const contactFieldProperties = {
         email: { type: "string", description: "Primary email address" },
         emails: {
@@ -6655,7 +6684,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "searchMessages",
         group: "messages", crud: "read",
         title: "Search Mail",
-        description: "Search message headers across accounts (Trash/Junk skipped). Returns { messages, totalMatches, offset, limit, hasMore }; each row has id + folderPath for getMessage/getMessages. For a company use query 'participant:@domain' with groupBy.",
+        description: "Search message headers across accounts (Trash/Junk skipped); for the latest mail with no query, getRecentMessages. Returns { messages, totalMatches, offset, limit, hasMore }; each row has id + folderPath for getMessage/getMessages. For a company use query 'participant:@domain' with groupBy.",
         inputSchema: {
           type: "object",
           properties: {
@@ -6688,6 +6717,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             dedupByMessageId: { type: "boolean", default: true, description: "Collapse copies of one message in several folders into one row with dupLocations" },
             attachmentName: { type: "string", description: "Only messages with an attachment whose filename contains this (any case); rows list them" },
             attachmentType: { type: "string", description: "Same for a MIME type or prefix ('application/pdf', 'image/'). Reads local copies, 500 at most; attachmentSearch counts skipped ones" },
+            fields: searchFields,
           },
           required: ["query"],
         },
@@ -7171,7 +7201,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "getRecentMessages",
         group: "messages", crud: "read",
         title: "Get Recent Messages",
-        description: "Recent messages newest-first from all folders of all accounts (Trash/Junk skipped) or from one folder. Same envelope and row format as searchMessages.",
+        description: "Recent messages newest-first from all folders of all accounts (Trash/Junk skipped) or from one folder, with no query. Same envelope and row format as searchMessages; to filter by words, sender or dates, use searchMessages.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7184,6 +7214,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             includeSubfolders: { type: "boolean", default: true, description: "Include subfolders of folderPath" },
             includeTrash: { type: "boolean", default: false, description: "Also include Trash and Junk" },
             format: { type: "string", enum: ["objects", "table", "legacy"], description: "'table' returns messages as { columns, rows }. 'legacy' (deprecated): the 0.10 output, as in searchMessages" },
+            fields: searchFields,
           },
         },
       },
@@ -11182,6 +11213,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              */
             function prepareSearch(args) {
               if (args.format === "legacy" && args.groupBy) return { error: 'format "legacy" cannot be combined with groupBy' };
+              const fieldsRefusal = searchFieldsRefusal(args);
+              if (fieldsRefusal) return { error: fieldsRefusal };
               const parsedStart = args.startDate ? parseDateArg(args.startDate).getTime() : null;
               // Date-only endDate ("2024-01-15") includes the whole day: the range ends at the next local midnight
               const endIsDateOnly = typeof args.endDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.endDate.trim());
@@ -11232,7 +11265,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
               const dir = prepared.sortOrder === "asc" ? 1 : -1;
               finalRows.sort((a, b) => dir * (a._dateTs - b._dateTs));
-              const pageOpts = { offset: args.offset, limit: prepared.limit, format: args.format, incomplete };
+              const pageOpts = { offset: args.offset, limit: prepared.limit, format: args.format, incomplete, fields: args.fields ?? null };
               if (args.format === "legacy") return legacySearchPage(finalRows, pageOpts);
               if (args.groupBy === "sender" || args.groupBy === "thread") {
                 if (args.groupBy === "thread") assignThreadKeys(finalRows);
@@ -15601,6 +15634,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 includeSubfolders: args.includeSubfolders,
                 includeTrash: args.includeTrash,
                 format: args.format,
+                fields: args.fields,
               }, { listEncrypted: true });
             }
             // END RECENT MESSAGES

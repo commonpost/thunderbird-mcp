@@ -62,7 +62,7 @@
     {
       "name": "searchMessages",
       "title": "Search Mail",
-      "description": "Search message headers across accounts (Trash/Junk skipped). Returns { messages, totalMatches, offset, limit, hasMore }; each row has id + folderPath for getMessage/getMessages. For a company use query 'participant:@domain' with groupBy.",
+      "description": "Search message headers across accounts (Trash/Junk skipped); for the latest mail with no query, getRecentMessages. Returns { messages, totalMatches, offset, limit, hasMore }; each row has id + folderPath for getMessage/getMessages. For a company use query 'participant:@domain' with groupBy.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -179,6 +179,25 @@
           "attachmentType": {
             "type": "string",
             "description": "Same for a MIME type or prefix ('application/pdf', 'image/'). Reads local copies, 500 at most; attachmentSearch counts skipped ones"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "date",
+                "author",
+                "recipients",
+                "ccList",
+                "subject",
+                "read",
+                "flagged",
+                "tags",
+                "preview",
+                "dupLocations"
+              ]
+            },
+            "description": "Only these row columns (id, folderPath and option columns always); not with countOnly, groupBy or legacy"
           }
         },
         "required": [
@@ -1678,7 +1697,7 @@
     {
       "name": "getRecentMessages",
       "title": "Get Recent Messages",
-      "description": "Recent messages newest-first from all folders of all accounts (Trash/Junk skipped) or from one folder. Same envelope and row format as searchMessages.",
+      "description": "Recent messages newest-first from all folders of all accounts (Trash/Junk skipped) or from one folder, with no query. Same envelope and row format as searchMessages; to filter by words, sender or dates, use searchMessages.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1731,6 +1750,25 @@
               "legacy"
             ],
             "description": "'table' returns messages as { columns, rows }. 'legacy' (deprecated): the 0.10 output, as in searchMessages"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "date",
+                "author",
+                "recipients",
+                "ccList",
+                "subject",
+                "read",
+                "flagged",
+                "tags",
+                "preview",
+                "dupLocations"
+              ]
+            },
+            "description": "Only these row columns (id, folderPath and option columns always); not with countOnly, groupBy or legacy"
           }
         }
       },
