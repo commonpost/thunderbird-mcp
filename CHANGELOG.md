@@ -6,6 +6,19 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-05
+
+- New tool `deleteTask` (41 tools). If you have disabled any tool in the options page, it starts disabled until you
+  enable it there, and so does every tool a later update adds.
+- `getMessage` reports the SPF, DKIM and DMARC results that your mail provider wrote in the message, and
+  `searchMessages` and `getRecentMessages` can return only the columns you ask for (`fields`).
+- Clearer tool descriptions, so that assistants pick and call the right tool more often. `deleteMessages` no longer
+  suggests that it deletes mail for good: like Thunderbird's Delete key, it moves it to Trash.
+- Fixed: `updateTask` given the id of an event no longer changes that event.
+- Claude Code plugin: a `thunderbird-mail` skill on how to use the tools well.
+- **Bridge 0.19.0:** adds a read-only mode (`COMMONPOST_MCP_READ_ONLY=1`). Updating it is optional: a 0.17.1 bridge
+  or later keeps working. Nothing in this release is urgent.
+
 ### Added
 
 - `searchMessages` and `getRecentMessages` take `fields`, the row columns to return (`date`, `author`,
@@ -30,8 +43,8 @@ project is kept in this repository.
   refuses any other `tools/call` before it reaches Thunderbird, with an error that names the variable. The add-on is
   asked for its tool list on each call, so a tool it adds or turns off counts at once; when it cannot be asked, the
   call is refused. Any value other than `1`, `true`, `0`, `false` or empty is ignored with a line on stderr. A
-  defence in depth for one client: the add-on's account and tool settings stay the authority. The next release
-  changes the bridge.
+  defence in depth for one client: the add-on's account and tool settings stay the authority. This is
+  the change in bridge 0.19.0.
 
 ### Changed
 
@@ -53,7 +66,7 @@ project is kept in this repository.
   where each ID comes from, what is changed or deleted and what is kept, and what comes back. The weakest ones
   (`getMessage`, `listEvents`, `updateEvent`, `deleteContact`, `updateTask`, `listFolders`, `createFolder`,
   `emptyTrash`, `emptyJunk` and others) are rewritten; the longest (the filter tools) are shorter, so `tools/list`
-  stays within its budget of 52,000 characters. No tool, parameter or behavior changes. `deleteMessages` no longer
+  stays within its size budget. No tool, parameter or behavior changes. `deleteMessages` no longer
   suggests that it deletes mail outside Drafts for good: like Thunderbird's Delete key, it moves it to Trash.
 - README: the requirements (Windows, macOS or Linux; Thunderbird 140 or later; Node.js 22 or later) are at the top of
   Quick install, and the 40-tool limit is explained as it is: older Cursor versions sent only the first 40 tools of
