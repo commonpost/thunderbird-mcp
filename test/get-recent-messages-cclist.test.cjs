@@ -66,7 +66,7 @@ describe("getRecentMessages result rows", () => {
     assert.deepEqual(
       { ...args, startDate: undefined },
       { query: "", folderPath: folder.URI, startDate: undefined, maxResults: 5, offset: 2, sortOrder: "desc", unreadOnly: true,
-        flaggedOnly: undefined, includeSubfolders: undefined, includeTrash: true, format: "legacy" }
+        flaggedOnly: undefined, includeSubfolders: undefined, includeTrash: true, format: "legacy", fields: undefined }
     );
     // No query: an encrypted message is listed with its content withheld, as getRecentMessages did in 0.10.x.
     assert.deepEqual({ ...searches.options }, { listEncrypted: true });

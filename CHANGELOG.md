@@ -8,6 +8,11 @@ project is kept in this repository.
 
 ### Added
 
+- `searchMessages` and `getRecentMessages` take `fields`, the row columns to return (`date`, `author`,
+  `recipients`, `ccList`, `subject`, `read`, `flagged`, `tags`, `preview`, `dupLocations`), in objects and in table
+  format: fewer tokens for a long list. `id`, `folderPath` and the columns an option adds (`attachments`, `linkedBy`,
+  ...) are always kept. Refused with `countOnly`, `groupBy` (group rows have their own columns) or `format: "legacy"`.
+  Their descriptions now say which of the two to use: `getRecentMessages` for the latest mail with no query.
 - `deleteTask`, the 41st tool: deletes a task by `taskId` + `calendarId` (from `listTasks`) with no review dialog,
   like `deleteEvent`, and the whole series of a recurring task. An event's id is refused. If you have disabled any
   tool in the options page, `deleteTask` starts disabled until you enable it there.
