@@ -948,7 +948,7 @@
     {
       "name": "updateTask",
       "title": "Update Task",
-      "description": "Change an existing task in place: only the fields passed change, saved at once with no review dialog. completed: true sets 100% and the completion date. taskId and calendarId come from listTasks; new task: createTask. No tool deletes a task: mark it completed.",
+      "description": "Change an existing task in place: only the fields passed change, saved at once with no review dialog. completed: true sets 100% and the completion date. taskId and calendarId come from listTasks; new task: createTask. To delete one: deleteTask.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -987,6 +987,34 @@
             "minimum": 0,
             "maximum": 9,
             "description": "Priority: 1=high, 5=normal, 9=low, 0=none"
+          }
+        },
+        "required": [
+          "taskId",
+          "calendarId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "deleteTask",
+      "title": "Delete Task",
+      "description": "Delete a task by taskId + calendarId (from listTasks), at once with no review dialog; a recurring task goes with its whole series. An event id is refused: use deleteEvent. To keep the task as done instead, use updateTask with completed: true.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "description": "Task ID (from listTasks)"
+          },
+          "calendarId": {
+            "type": "string",
+            "description": "Calendar ID of the task (from listTasks)"
           }
         },
         "required": [

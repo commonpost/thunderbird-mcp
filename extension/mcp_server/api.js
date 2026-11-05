@@ -6973,7 +6973,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "updateTask",
         group: "calendar", crud: "update",
         title: "Update Task",
-        description: "Change an existing task in place: only the fields passed change, saved at once with no review dialog. completed: true sets 100% and the completion date. taskId and calendarId come from listTasks; new task: createTask. No tool deletes a task: mark it completed.",
+        description: "Change an existing task in place: only the fields passed change, saved at once with no review dialog. completed: true sets 100% and the completion date. taskId and calendarId come from listTasks; new task: createTask. To delete one: deleteTask.",
         inputSchema: {
           type: "object",
           properties: {
@@ -6985,6 +6985,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             completed: { type: "boolean", description: "true: done, false: reopened; not with percentComplete" },
             percentComplete: { type: "integer", minimum: 0, maximum: 100, description: "Completion percentage" },
             priority: { type: "integer", minimum: 0, maximum: 9, description: "Priority: 1=high, 5=normal, 9=low, 0=none" },
+          },
+          required: ["taskId", "calendarId"],
+        },
+      },
+      {
+        name: "deleteTask",
+        group: "calendar", crud: "delete",
+        title: "Delete Task",
+        description: "Delete a task by taskId + calendarId (from listTasks), at once with no review dialog; a recurring task goes with its whole series. An event id is refused: use deleteEvent. To keep the task as done instead, use updateTask with completed: true.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            taskId: { type: "string", description: "Task ID (from listTasks)" },
+            calendarId: { type: "string", description: "Calendar ID of the task (from listTasks)" },
           },
           required: ["taskId", "calendarId"],
         },
@@ -12114,6 +12128,30 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               };
             }
 
+            // A task of `calendar` by id: direct lookup first, then a scan of all its tasks. An item found by id
+            // that is not a task (an event) does not count: getItem looks up events too.
+            async function findTaskItem(calendar, taskId) {
+              let item = null;
+              if (typeof calendar.getItem === "function") {
+                try { item = await calendar.getItem(taskId); } catch {}
+              }
+              if (item && typeof item.isTodo === "function") return item.isTodo() ? item : null;
+              const FILTER_TODO = 1 << 2;
+              const COMPLETED_YES = 1 << 0;
+              const COMPLETED_NO = 1 << 1;
+              let items;
+              if (typeof calendar.getItemsAsArray === "function") {
+                items = await calendar.getItemsAsArray(FILTER_TODO | COMPLETED_YES | COMPLETED_NO, 0, null, null);
+              } else {
+                items = [];
+                const stream = cal.iterate.streamValues(calendar.getItems(FILTER_TODO | COMPLETED_YES | COMPLETED_NO, 0, null, null));
+                for await (const chunk of stream) {
+                  for (const i of chunk) items.push(i);
+                }
+              }
+              return items.find(i => i.id === taskId) || null;
+            }
+
             async function updateTask(taskId, calendarId, title, dueDate, description, completed, percentComplete, priority) {
               if (!cal) return { error: "Calendar not available" };
               try {
@@ -12127,27 +12165,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   return { error: `Calendar "${calendar.name}" does not support tasks. Use listCalendars to find one with supportsTasks=true.` };
                 }
 
-                // Try direct lookup first, then fall back to scanning all tasks
-                let oldItem = null;
-                if (typeof calendar.getItem === "function") {
-                  try { oldItem = await calendar.getItem(taskId); } catch {}
-                }
-                if (!oldItem) {
-                  const FILTER_TODO = 1 << 2;
-                  const COMPLETED_YES = 1 << 0;
-                  const COMPLETED_NO = 1 << 1;
-                  let items;
-                  if (typeof calendar.getItemsAsArray === "function") {
-                    items = await calendar.getItemsAsArray(FILTER_TODO | COMPLETED_YES | COMPLETED_NO, 0, null, null);
-                  } else {
-                    items = [];
-                    const stream = cal.iterate.streamValues(calendar.getItems(FILTER_TODO | COMPLETED_YES | COMPLETED_NO, 0, null, null));
-                    for await (const chunk of stream) {
-                      for (const i of chunk) items.push(i);
-                    }
-                  }
-                  oldItem = items.find(i => i.id === taskId) || null;
-                }
+                const oldItem = await findTaskItem(calendar, taskId);
                 if (!oldItem) return { error: `Task not found: ${taskId}` };
 
                 const newItem = oldItem.clone();
@@ -12595,6 +12613,34 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 const result = { success: true, deleted: eventId };
                 if (isRecurring) {
                   result.warning = "This was a recurring event -- the entire series was deleted.";
+                }
+                return result;
+              } catch (e) {
+                return { error: e.toString() };
+              }
+            }
+
+            async function deleteTask(taskId, calendarId) {
+              if (!cal) return { error: "Calendar not available" };
+              try {
+                if (!taskId) return { error: "taskId is required" };
+                if (!calendarId) return { error: "calendarId is required" };
+
+                const calendar = getAccessibleCalendars().find(c => c.id === calendarId);
+                if (!calendar) return { error: `Calendar not found: ${calendarId}` };
+                if (calendar.readOnly) return { error: `Calendar is read-only: ${calendar.name}` };
+                if (calendar.getProperty("capabilities.tasks.supported") === false) {
+                  return { error: `Calendar "${calendar.name}" does not support tasks. Use listCalendars to find one with supportsTasks=true.` };
+                }
+
+                const item = await findTaskItem(calendar, taskId);
+                if (!item) return { error: `Task not found: ${taskId}` };
+
+                const isRecurring = !!item.recurrenceInfo;
+                await calendar.deleteItem(item);
+                const result = { success: true, deleted: taskId };
+                if (isRecurring) {
+                  result.warning = "This was a recurring task -- the entire series was deleted.";
                 }
                 return result;
               } catch (e) {
@@ -17745,6 +17791,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   return listResultAsTable(await listTasks(args.calendarId, args.completed, args.dueBefore, args.maxResults), args.format);
                 case "updateTask":
                   return await updateTask(args.taskId, args.calendarId, args.title, args.dueDate, args.description, args.completed, args.percentComplete, args.priority);
+                case "deleteTask":
+                  return await deleteTask(args.taskId, args.calendarId);
                 case "sendMail":
                   return withRecipientWarning(await composeMail(args.to, args.subject, args.body, args.cc, args.bcc, args.isHtml, args.from, args.attachments, args.skipReview, args.dryRun), args.to, args.cc, args.bcc);
                 case "saveDraft":
