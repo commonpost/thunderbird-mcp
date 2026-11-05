@@ -27,6 +27,10 @@ project is kept in this repository.
 
 ### Changed
 
+- `tools/list` is 350 characters shorter, with no change to what a tool takes or does. Most parameter descriptions
+  no longer say "(optional)" (the schema's `required` list says it), "(from listTasks results)" becomes "(from
+  listTasks)", and most schemas with no required parameter leave out `"required": []` (optional in MCP and JSON
+  Schema).
 - Tool access: once you have disabled any tool in the options page, a tool added by a later update starts disabled
   too, until you check it and save; the page marks it "new" and names it above the list. With no tool disabled, new
   tools are enabled as before. The tools the page listed at your last save are kept in the

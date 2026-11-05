@@ -6632,7 +6632,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         group: "system", crud: "read",
         title: "List Accounts",
         description: "List the accounts MCP clients may use, with id (the accountId of other tools), name, type and identities (id, email, name, isDefault: the from of compose tools). Accounts the user hid are left out (getAccountAccess).",
-        inputSchema: { type: "object", properties: {}, required: [] },
+        inputSchema: { type: "object", properties: {} },
       },
       {
         name: "listFolders",
@@ -6649,7 +6649,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             savedSearches: { type: "boolean", description: "If true, return only saved searches (virtual folders) with their folders and conditions" },
             refresh: { type: "boolean", description: "With folderPath: first fetch its new mail from the mail server (waits up to 20 s); returns { refresh, folders }" },
           },
-          required: [],
         },
       },
       {
@@ -6806,8 +6805,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             keepAttachments: { type: "boolean", default: true, description: "With draftId: keep the draft's attachments (new ones are added)" },
             keepQuote: { type: "boolean", default: true, description: "With draftId and body: replace only the typed text, keeping cite line, quote, forwarded message and signature" },
             to: { type: "string", description: "Recipient email address(es), comma-separated. Optional -- a draft can have no recipient." },
-            subject: { type: "string", description: "Email subject line (optional)" },
-            body: { type: "string", description: "Email body (optional)" },
+            subject: { type: "string", description: "Email subject line" },
+            body: { type: "string", description: "Email body" },
             cc: { type: "string", description: "CC recipients (comma-separated)" },
             bcc: { type: "string", description: "BCC recipients (comma-separated)" },
             isHtml: { type: "boolean", description: "Set to true if body contains HTML markup (default: false). With draftId the draft keeps its format; isHtml changes it only when the whole body is replaced" },
@@ -6838,7 +6837,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               },
             },
           },
-          required: [],
         },
       },
       {
@@ -6846,7 +6844,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         group: "calendar", crud: "read",
         title: "List Calendars",
         description: "List calendars: id, name, readOnly, disabled, supportsEvents, supportsTasks. The id is the calendarId of the event and task tools. A disabled calendar is turned off in Thunderbird: it lists nothing, and createEvent/createTask refuse it until the user turns it on.",
-        inputSchema: { type: "object", properties: {}, required: [] },
+        inputSchema: { type: "object", properties: {} },
       },
       {
         name: "createEvent",
@@ -6937,11 +6935,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           type: "object",
           properties: {
             title: { type: "string", description: "Task title" },
-            dueDate: { type: "string", description: "Due date in ISO 8601 format (optional)" },
+            dueDate: { type: "string", description: "Due date in ISO 8601 format" },
             calendarId: { type: "string", description: "Target calendar ID (from listCalendars, must have supportsTasks=true)" },
-            description: { type: "string", description: "Task description/body (optional)" },
-            priority: { type: "integer", minimum: 0, maximum: 9, description: "Priority: 1=high, 5=normal, 9=low (optional)" },
-            categories: { type: "array", items: { type: "string" }, description: "Category labels (optional). Use listCategories to get exact existing names before setting." },
+            description: { type: "string", description: "Task description/body" },
+            priority: { type: "integer", minimum: 0, maximum: 9, description: "Priority: 1=high, 5=normal, 9=low" },
+            categories: { type: "array", items: { type: "string" }, description: "Category labels. Use listCategories to get exact existing names before setting." },
             skipReview: { type: "boolean", description: "Request direct saving without a review dialog. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)." },
           },
           required: ["title"],
@@ -6979,8 +6977,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         inputSchema: {
           type: "object",
           properties: {
-            taskId: { type: "string", description: "Task ID (from listTasks results)" },
-            calendarId: { type: "string", description: "Calendar ID containing the task (from listTasks results)" },
+            taskId: { type: "string", description: "Task ID (from listTasks)" },
+            calendarId: { type: "string", description: "Calendar ID containing the task (from listTasks)" },
             title: { type: "string", description: "New task title" },
             dueDate: { type: "string", description: "New due date, ISO 8601 (date only: all-day); '' clears it" },
             description: { type: "string", description: "New task description" },
@@ -7030,7 +7028,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             ...contactFieldProperties,
             addressBookId: { type: "string", description: "Address book ID (addressBookId of searchContacts rows)" },
           },
-          required: [],
         },
       },
       {
@@ -7055,7 +7052,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         inputSchema: {
           type: "object",
           properties: {
-            contactId: { type: "string", description: "Contact UID (from searchContacts results)" },
+            contactId: { type: "string", description: "Contact UID (from searchContacts)" },
           },
           required: ["contactId"],
         },
@@ -7068,7 +7065,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         inputSchema: {
           type: "object",
           properties: {
-            messageId: { type: "string", description: "The message ID to reply to (from searchMessages results)" },
+            messageId: { type: "string", description: "The message ID to reply to (from searchMessages)" },
             folderPath: { type: "string", description: "Folder URI (from searchMessages)" },
             body: { type: "string", description: "Reply body text" },
             replyAll: { type: "boolean", description: "Reply to all recipients (default: false)" },
@@ -7117,10 +7114,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         inputSchema: {
           type: "object",
           properties: {
-            messageId: { type: "string", description: "The message ID to forward (from searchMessages results)" },
+            messageId: { type: "string", description: "The message ID to forward (from searchMessages)" },
             folderPath: { type: "string", description: "Folder URI (from searchMessages)" },
             to: { type: "string", description: "Recipient email address (required with mode send)" },
-            body: { type: "string", description: "Additional text to prepend (optional)" },
+            body: { type: "string", description: "Additional text to prepend" },
             mode: { type: "string", enum: ["window", "draft", "send"], description: "window (default), draft or send" },
             isHtml: { type: "boolean", description: "The body is HTML (default: false)" },
             cc: { type: "string", description: "CC recipients (comma-separated)" },
@@ -7174,7 +7171,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             includeTrash: { type: "boolean", default: false, description: "Also include Trash and Junk" },
             format: { type: "string", enum: ["objects", "table", "legacy"], description: "'table' returns messages as { columns, rows }. 'legacy' (deprecated): the 0.10 output, as in searchMessages" },
           },
-          required: [],
         },
       },
       {
@@ -7201,7 +7197,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           type: "object",
           properties: {
             messageIds: { type: "array", items: { type: "string" }, description: "Array of message IDs to delete" },
-            folderPath: { type: "string", description: "The folder URI containing the messages (from listFolders or searchMessages results)" },
+            folderPath: { type: "string", description: "The folder URI containing the messages (from listFolders or searchMessages)" },
           },
           required: ["messageIds", "folderPath"],
         },
@@ -7214,15 +7210,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         inputSchema: {
           type: "object",
           properties: {
-            messageId: { type: "string", description: "A single message ID (from searchMessages results). Required unless messageIds is provided." },
+            messageId: { type: "string", description: "A single message ID (from searchMessages). Required unless messageIds is provided." },
             messageIds: { type: "array", items: { type: "string" }, description: "Array of message IDs for bulk operations. Required unless messageId is provided." },
-            folderPath: { type: "string", description: "The folder URI containing the message(s) (from searchMessages results)" },
-            read: { type: "boolean", description: "Set to true/false to mark read/unread (optional)" },
-            flagged: { type: "boolean", description: "Set to true/false to flag/unflag (optional)" },
+            folderPath: { type: "string", description: "The folder URI containing the message(s) (from searchMessages)" },
+            read: { type: "boolean", description: "Set to true/false to mark read/unread" },
+            flagged: { type: "boolean", description: "Set to true/false to flag/unflag" },
             addTags: { type: "array", items: { type: "string" }, description: "Tag keywords to add (e.g. ['$label1', 'project-x']); built-in: $label1 Important, $label2 Work, $label3 Personal, $label4 To Do, $label5 Later" },
             removeTags: { type: "array", items: { type: "string" }, description: "Tag keywords to remove from the message(s)" },
-            moveTo: { type: "string", description: "Destination folder URI (optional). Cannot be used with trash." },
-            trash: { type: "boolean", description: "Set to true to move message to Trash (optional). Cannot be used with moveTo." },
+            moveTo: { type: "string", description: "Destination folder URI. Cannot be used with trash." },
+            trash: { type: "boolean", description: "Set to true to move message to Trash. Cannot be used with moveTo." },
           },
           required: ["folderPath"],
         },
@@ -7301,7 +7297,6 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           properties: {
             accountId: { type: "string", description: "Account ID (from listAccounts). If omitted, empties Junk for all accessible accounts." },
           },
-          required: [],
         },
       },
       {
@@ -7385,12 +7380,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           properties: {
             accountId: { type: "string", description: "Account ID" },
             filterIndex: { type: "number", description: "Filter index (from listFilters)" },
-            name: { type: "string", description: "New filter name (optional)" },
-            enabled: { type: "boolean", description: "Enable/disable (optional)" },
-            type: { type: "number", description: "New filter type bitmask (optional)" },
+            name: { type: "string", description: "New filter name" },
+            enabled: { type: "boolean", description: "Enable/disable" },
+            type: { type: "number", description: "New filter type bitmask" },
             conditions: {
               type: "array",
-              description: "Replace all conditions (optional, same format as createFilter)",
+              description: "Replace all conditions (same format as createFilter)",
               items: {
                 type: "object",
                 properties: {
@@ -7404,7 +7399,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             },
             actions: {
               type: "array",
-              description: "Replace all actions (optional, same format as createFilter)",
+              description: "Replace all actions (same format as createFilter)",
               items: {
                 type: "object",
                 properties: {
@@ -7465,7 +7460,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         group: "system", crud: "read",
         title: "Get Account Access",
         description: "Report the account access setting: mode (all or restricted) and the accounts MCP clients may use (id, name, type). Only the user changes it, in the add-on's Options page; no tool can.",
-        inputSchema: { type: "object", properties: {}, required: [] },
+        inputSchema: { type: "object", properties: {} },
       },
       ];
     }

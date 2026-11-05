@@ -6,8 +6,7 @@
       "description": "List the accounts MCP clients may use, with id (the accountId of other tools), name, type and identities (id, email, name, isDefault: the from of compose tools). Accounts the user hid are left out (getAccountAccess).",
       "inputSchema": {
         "type": "object",
-        "properties": {},
-        "required": []
+        "properties": {}
       },
       "annotations": {
         "readOnlyHint": true,
@@ -51,8 +50,7 @@
             "type": "boolean",
             "description": "With folderPath: first fetch its new mail from the mail server (waits up to 20 s); returns { refresh, folders }"
           }
-        },
-        "required": []
+        }
       },
       "annotations": {
         "readOnlyHint": true,
@@ -490,11 +488,11 @@
           },
           "subject": {
             "type": "string",
-            "description": "Email subject line (optional)"
+            "description": "Email subject line"
           },
           "body": {
             "type": "string",
-            "description": "Email body (optional)"
+            "description": "Email body"
           },
           "cc": {
             "type": "string",
@@ -569,8 +567,7 @@
               ]
             }
           }
-        },
-        "required": []
+        }
       },
       "annotations": {
         "readOnlyHint": false,
@@ -585,8 +582,7 @@
       "description": "List calendars: id, name, readOnly, disabled, supportsEvents, supportsTasks. The id is the calendarId of the event and task tools. A disabled calendar is turned off in Thunderbird: it lists nothing, and createEvent/createTask refuse it until the user turns it on.",
       "inputSchema": {
         "type": "object",
-        "properties": {},
-        "required": []
+        "properties": {}
       },
       "annotations": {
         "readOnlyHint": true,
@@ -851,7 +847,7 @@
           },
           "dueDate": {
             "type": "string",
-            "description": "Due date in ISO 8601 format (optional)"
+            "description": "Due date in ISO 8601 format"
           },
           "calendarId": {
             "type": "string",
@@ -859,20 +855,20 @@
           },
           "description": {
             "type": "string",
-            "description": "Task description/body (optional)"
+            "description": "Task description/body"
           },
           "priority": {
             "type": "integer",
             "minimum": 0,
             "maximum": 9,
-            "description": "Priority: 1=high, 5=normal, 9=low (optional)"
+            "description": "Priority: 1=high, 5=normal, 9=low"
           },
           "categories": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Category labels (optional). Use listCategories to get exact existing names before setting."
+            "description": "Category labels. Use listCategories to get exact existing names before setting."
           },
           "skipReview": {
             "type": "boolean",
@@ -958,11 +954,11 @@
         "properties": {
           "taskId": {
             "type": "string",
-            "description": "Task ID (from listTasks results)"
+            "description": "Task ID (from listTasks)"
           },
           "calendarId": {
             "type": "string",
-            "description": "Calendar ID containing the task (from listTasks results)"
+            "description": "Calendar ID containing the task (from listTasks)"
           },
           "title": {
             "type": "string",
@@ -1210,8 +1206,7 @@
             "type": "string",
             "description": "Address book ID (addressBookId of searchContacts rows)"
           }
-        },
-        "required": []
+        }
       },
       "annotations": {
         "readOnlyHint": false,
@@ -1385,7 +1380,7 @@
         "properties": {
           "contactId": {
             "type": "string",
-            "description": "Contact UID (from searchContacts results)"
+            "description": "Contact UID (from searchContacts)"
           }
         },
         "required": [
@@ -1408,7 +1403,7 @@
         "properties": {
           "messageId": {
             "type": "string",
-            "description": "The message ID to reply to (from searchMessages results)"
+            "description": "The message ID to reply to (from searchMessages)"
           },
           "folderPath": {
             "type": "string",
@@ -1539,7 +1534,7 @@
         "properties": {
           "messageId": {
             "type": "string",
-            "description": "The message ID to forward (from searchMessages results)"
+            "description": "The message ID to forward (from searchMessages)"
           },
           "folderPath": {
             "type": "string",
@@ -1551,7 +1546,7 @@
           },
           "body": {
             "type": "string",
-            "description": "Additional text to prepend (optional)"
+            "description": "Additional text to prepend"
           },
           "mode": {
             "type": "string",
@@ -1709,8 +1704,7 @@
             ],
             "description": "'table' returns messages as { columns, rows }. 'legacy' (deprecated): the 0.10 output, as in searchMessages"
           }
-        },
-        "required": []
+        }
       },
       "annotations": {
         "readOnlyHint": true,
@@ -1772,7 +1766,7 @@
           },
           "folderPath": {
             "type": "string",
-            "description": "The folder URI containing the messages (from listFolders or searchMessages results)"
+            "description": "The folder URI containing the messages (from listFolders or searchMessages)"
           }
         },
         "required": [
@@ -1796,7 +1790,7 @@
         "properties": {
           "messageId": {
             "type": "string",
-            "description": "A single message ID (from searchMessages results). Required unless messageIds is provided."
+            "description": "A single message ID (from searchMessages). Required unless messageIds is provided."
           },
           "messageIds": {
             "type": "array",
@@ -1807,15 +1801,15 @@
           },
           "folderPath": {
             "type": "string",
-            "description": "The folder URI containing the message(s) (from searchMessages results)"
+            "description": "The folder URI containing the message(s) (from searchMessages)"
           },
           "read": {
             "type": "boolean",
-            "description": "Set to true/false to mark read/unread (optional)"
+            "description": "Set to true/false to mark read/unread"
           },
           "flagged": {
             "type": "boolean",
-            "description": "Set to true/false to flag/unflag (optional)"
+            "description": "Set to true/false to flag/unflag"
           },
           "addTags": {
             "type": "array",
@@ -1833,11 +1827,11 @@
           },
           "moveTo": {
             "type": "string",
-            "description": "Destination folder URI (optional). Cannot be used with trash."
+            "description": "Destination folder URI. Cannot be used with trash."
           },
           "trash": {
             "type": "boolean",
-            "description": "Set to true to move message to Trash (optional). Cannot be used with moveTo."
+            "description": "Set to true to move message to Trash. Cannot be used with moveTo."
           }
         },
         "required": [
@@ -1990,8 +1984,7 @@
             "type": "string",
             "description": "Account ID (from listAccounts). If omitted, empties Junk for all accessible accounts."
           }
-        },
-        "required": []
+        }
       },
       "annotations": {
         "readOnlyHint": false,
@@ -2162,19 +2155,19 @@
           },
           "name": {
             "type": "string",
-            "description": "New filter name (optional)"
+            "description": "New filter name"
           },
           "enabled": {
             "type": "boolean",
-            "description": "Enable/disable (optional)"
+            "description": "Enable/disable"
           },
           "type": {
             "type": "number",
-            "description": "New filter type bitmask (optional)"
+            "description": "New filter type bitmask"
           },
           "conditions": {
             "type": "array",
-            "description": "Replace all conditions (optional, same format as createFilter)",
+            "description": "Replace all conditions (same format as createFilter)",
             "items": {
               "type": "object",
               "properties": {
@@ -2203,7 +2196,7 @@
           },
           "actions": {
             "type": "array",
-            "description": "Replace all actions (optional, same format as createFilter)",
+            "description": "Replace all actions (same format as createFilter)",
             "items": {
               "type": "object",
               "properties": {
@@ -2326,8 +2319,7 @@
       "description": "Report the account access setting: mode (all or restricted) and the accounts MCP clients may use (id, name, type). Only the user changes it, in the add-on's Options page; no tool can.",
       "inputSchema": {
         "type": "object",
-        "properties": {},
-        "required": []
+        "properties": {}
       },
       "annotations": {
         "readOnlyHint": true,

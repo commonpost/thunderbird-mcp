@@ -1088,7 +1088,8 @@ describe('Production contact schemas and dispatch', () => {
     assert.deepEqual(Object.keys(getSchema.properties), ['contactId']);
     assert.deepEqual(Array.from(getSchema.required), ['contactId']);
     assert.deepEqual(Object.keys(createSchema.properties), [...contactFields, 'addressBookId']);
-    assert.deepEqual(Array.from(createSchema.required), []);
+    // No parameter is required: the schema leaves `required` out (it is optional in MCP and JSON Schema)
+    assert.equal(createSchema.required, undefined);
     assert.deepEqual(Object.keys(updateSchema.properties), ['contactId', ...contactFields]);
     assert.deepEqual(Array.from(updateSchema.required), ['contactId']);
 
