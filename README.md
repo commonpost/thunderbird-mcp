@@ -239,9 +239,12 @@ claude plugin install commonpost-mcp@commonpost
 - Tool names carry the plugin and server names: `mcp__plugin_commonpost-mcp_commonpost-mail__searchMessages`, for
   example. Permission rules written for a server added by file (`mcp__commonpost-mail__*`) do not match them. The
   options page of the add-on (section Bridge) lists this bridge as a `mcp-bridge.cjs` file.
-- The plugin is fetched from this repository with git (`main`, or a release tag you pin with `claude plugin marketplace
-  add commonpost/thunderbird-mcp#vX.Y.Z`, from v0.17.0 on); it is not signed. The bridge inside it is the
-  `mcp-bridge.cjs` of that commit, the same file every release attests.
+- The plugin comes from a published release, never from work merged since. Claude Code reads the marketplace from
+  this repository's `main` branch, and the marketplace points the plugin at the latest release: the
+  `plugins/claude-code/` folder of that release's tag, pinned to its commit and fetched over https. The marketplace
+  moves to a new release a few minutes after the release is published and checked. The plugin is not signed; the
+  bridge inside it is the `mcp-bridge.cjs` of that release, the same file the release attests. Up to 0.19.2, the
+  marketplace listed the plugin from `main` itself.
 
 ### Claude Desktop (one-click bundle)
 

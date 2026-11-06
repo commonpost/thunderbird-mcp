@@ -8,9 +8,16 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
 const root = path.resolve(__dirname, "..");
 const read = (p) => JSON.parse(fs.readFileSync(path.join(root, p), "utf8"));
+const numbers = (v) => v.split(".").map(Number);
+const notLater = (a, b) => {
+  const [x, y] = [numbers(a), numbers(b)];
+  const i = x.findIndex((n, k) => n !== y[k]);
+  return i === -1 || x[i] < y[i];
+};
 
 describe("Claude Code plugin", () => {
   const plugin = read("plugins/claude-code/.claude-plugin/plugin.json");
@@ -34,10 +41,29 @@ describe("Claude Code plugin", () => {
     assert.equal(marketplace.name, "commonpost");
     assert.equal(marketplace.plugins.length, 1);
     assert.equal(marketplace.plugins[0].name, plugin.name);
-    assert.equal(marketplace.plugins[0].source, "./plugins/claude-code");
+    assert.equal(marketplace.plugins[0].source.path, "plugins/claude-code");
     assert.ok(!fs.existsSync(path.join(root, "plugins/claude-code/package.json")));
     assert.ok(!fs.existsSync(path.join(root, "plugins/claude-code/package-lock.json")));
     assert.equal(marketplace.plugins[0].version, undefined, "the version lives in plugin.json only");
+    assert.equal(marketplace.plugins[0].displayName, plugin.displayName, "shown before install, when plugin.json is not read yet");
+  });
+
+  it("points the plugin at a published release, by its tag and its commit, over https", () => {
+    const source = marketplace.plugins[0].source;
+    assert.equal(source.source, "git-subdir");
+    // An owner/repo shorthand is cloned over SSH (git@github.com), which fails without a GitHub SSH key.
+    assert.equal(source.url, "https://github.com/commonpost/thunderbird-mcp.git");
+    assert.match(source.ref, /^v\d+\.\d+\.\d+$/);
+    assert.match(source.sha, /^[0-9a-f]{40}$/);
+    // The release tool moves the pin once a release is published, so between a version bump and that move it
+    // names the previous release.
+    const pinned = source.ref.slice(1);
+    assert.ok(notLater(pinned, product), `${source.ref} is later than ${product}`);
+    const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
+    assert.ok(changelog.includes(`\n## [${pinned}] - `), `${pinned} is a released version`);
+    // With the tags at hand (a shallow CI checkout has none), the commit is the tag's.
+    const tag = spawnSync("git", ["-C", root, "rev-parse", "--verify", "--quiet", `refs/tags/${source.ref}^{commit}`], { encoding: "utf8" });
+    if (tag.status === 0) assert.equal(tag.stdout.trim(), source.sha);
   });
 
   it("has no bin/ directory and no CLAUDE.md in the plugin (plugin layout rules)", () => {

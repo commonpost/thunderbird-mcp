@@ -8,6 +8,10 @@ project is kept in this repository.
 
 ### Changed
 
+- The Claude Code plugin now comes from the latest published release, not from `main`: the marketplace lists it
+  from the release's tag, pinned to its commit and fetched over https, and moves to each new release once that
+  release is published and checked. Someone who installed the plugin between two releases used to get the bridge of
+  `main`, with work not yet released.
 - README, first start: "Quick install" now offers the `.mcpb` bundle first for Claude Desktop, which needs no
   Node.js of your own. The `claude mcp add` commands use `-s user`, so the server is there in every folder and not
   only in the one the command ran in, and they quote the path. The Codex example sets `startup_timeout_sec = 30`.
