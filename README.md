@@ -25,8 +25,13 @@ Requirements: Windows, macOS or Linux, with Thunderbird 140 or later and Node.js
 
 1. Install the extension. Download `commonpost-mcp-v<version>.xpi` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest). In Thunderbird: Tools > Add-ons and Themes > gear menu > Install Add-on From File. Restart Thunderbird.
 2. Download `mcp-bridge.cjs` from the **same release** and put it in a folder you will keep, for example `~/commonpost-mcp/`. The bridge is a single file and needs nothing else: the release does not ship a `package.json`. (The bridge carries its own version; it reads no `package.json`.)
-3. Check Node.js: `node --version` must show 22 or later.
+3. Check Node.js: `node --version` must show 22 or later. The Claude Desktop bundle needs neither this step nor the
+   previous one (see step 4).
 4. Register the bridge with your MCP client.
+   - Claude Desktop (macOS, Windows): download `commonpost-mcp-v<version>.mcpb` from the same release and open it with
+     Claude Desktop, or use Settings > Extensions > Advanced settings > Install Extension. Claude Desktop runs it with
+     the Node.js it ships with, so there is nothing else to install (see
+     [Claude Desktop](#claude-desktop-one-click-bundle)).
    - Claude Code, with the plugin (no file to download or to update by hand; see [Claude Code plugin](#claude-code-plugin)):
 
      ```
@@ -34,19 +39,20 @@ Requirements: Windows, macOS or Linux, with Thunderbird 140 or later and Node.js
      claude plugin install commonpost-mcp@commonpost
      ```
 
-   - Claude Code, with the file (use the absolute path of the file):
+   - Claude Code, with the file. Use the absolute path of the file, in quotes. `-s user` makes the server available
+     in every folder; without it, Claude Code adds it to the folder you run the command in only.
 
      ```
-     claude mcp add commonpost-mail -- node /absolute/path/to/mcp-bridge.cjs
+     claude mcp add -s user commonpost-mail -- node "/absolute/path/to/mcp-bridge.cjs"
      ```
 
    - Claude Code on Windows, for example:
 
      ```
-     claude mcp add commonpost-mail -- node C:\Users\<you>\commonpost-mcp\mcp-bridge.cjs
+     claude mcp add -s user commonpost-mail -- node "C:\Users\<you>\commonpost-mcp\mcp-bridge.cjs"
      ```
 
-   - Other clients: add this to the client's MCP config (Claude Desktop, VS Code, Cursor, Codex CLI and Gemini CLI have their own file and format: see [Other MCP clients](#other-mcp-clients)). In JSON, write Windows paths with `/` or double the backslashes (`"C:/Users/<you>/commonpost-mcp/mcp-bridge.cjs"`).
+   - Other clients: add this to the client's MCP config (Claude Desktop, VS Code, Cursor, Codex CLI and Gemini CLI have their own file and format: see [Other MCP clients](#other-mcp-clients)). In JSON, write Windows paths with `/` or double the backslashes (`"C:/Users/<you>/commonpost-mcp/mcp-bridge.cjs"`). A JSON file does not expand `~`: write the full path. On macOS, if the client cannot find `node`, set `command` to the full path that `which node` prints.
 
      ```json
      {
@@ -242,7 +248,7 @@ claude plugin install commonpost-mcp@commonpost
 On macOS and Windows, Claude Desktop can install the bridge from a `.mcpb` bundle instead of a hand-edited config file. Download `commonpost-mcp-v<version>.mcpb` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest) and open it with Claude Desktop, then confirm the installation. If the file does not open in Claude Desktop (on Windows it may not be associated with it), use Settings > Extensions > Advanced settings > Install Extension and choose the file.
 
 - The bundle contains **only the bridge** (`mcp-bridge.cjs`). Install the Thunderbird extension separately (step 1 above). The bundle's version is the version of the bridge inside, which changes only when the bridge changes: a release can carry a bundle with a lower number than the add-on, and it is still the current bridge. Claude Desktop never updates a bundle installed from a file: install the new `.mcpb` when the add-on (in a tool result or in its options page, section Bridge) says so.
-- The bundle asks for Node.js 22 or later, like the bridge. It has no settings: if the bridge cannot find the connection file, use the manual configuration in [Other MCP clients](#other-mcp-clients) with `COMMONPOST_MCP_CONNECTION_FILE`.
+- Claude Desktop runs the bundle with the Node.js it ships with, so you do not need Node.js of your own; the bundle declares Node.js 22 or later, like the bridge. It has no settings: if the bridge cannot find the connection file, use the manual configuration in [Other MCP clients](#other-mcp-clients) with `COMMONPOST_MCP_CONNECTION_FILE`.
 - The bundle is not signed. Each release carries a provenance attestation for it (`*.mcpb.sigstore.json`): check it with `gh attestation verify <file>.mcpb --repo commonpost/thunderbird-mcp`. It can be rebuilt byte for byte from the tagged source with `node scripts/build-mcpb-reproducible.cjs`.
 
 ### Other MCP clients
@@ -295,7 +301,10 @@ The bridge is a standard MCP stdio server and is not tied to any client: it work
 [mcp_servers.commonpost-mail]
 command = "node"
 args = ["/absolute/path/to/mcp-bridge.cjs"]
+startup_timeout_sec = 30
 ```
+
+`startup_timeout_sec` leaves room for the bridge's first-start wait: with Thunderbird closed and no tool list cached yet, the first `tools/list` waits up to 20 s for Thunderbird.
 
 **Gemini CLI.** Edit `~/.gemini/settings.json` (or `.gemini/settings.json` in a project). The top-level key is `mcpServers`. Its `env` block expands `$VAR`, `${VAR}` and, on Windows, `%VAR%` references, so a value containing `$` or `%` would be altered.
 
@@ -439,6 +448,10 @@ platform are on the [official Thunderbird site](https://www.thunderbird.net/en-U
 | Problem | Fix |
 |---------|-----|
 | Extension not loading | Check Tools > Add-ons and Themes. Errors: Tools > Developer Tools > Error Console |
+| Claude Code: no Thunderbird tools in another folder | `claude mcp add` without `-s user` adds the server to the folder it was run in only. In that folder, run `claude mcp remove commonpost-mail`, then add it again with `-s user` |
+| `Failed to connect` with `Connection closed`, right after adding the server | The path to `mcp-bridge.cjs` is wrong. Common causes: a path with a space and no quotes around it (`claude mcp get commonpost-mail` shows what was saved), or `~` in a JSON file, where it is not expanded. Write the full path, in quotes on the command line |
+| `Executable not found in $PATH: "node"` (with the plugin, Claude Code may name `"stdio"` instead) | Node.js is not installed, or not on the `PATH` the client sees. Install Node.js 22 or later, or set `command` to the full path of `node` (`which node`; `where node` on Windows). In Claude Desktop, the `.mcpb` bundle needs no Node.js of your own |
+| `claude mcp list` shows `tools fetch failed` with `Request timed out` | Thunderbird is not running: this check gives up after about 5 s, while the bridge waits up to 20 s for Thunderbird on a first start. Start Thunderbird and run the check again |
 | Connection refused | Make sure Thunderbird is running and the extension is enabled |
 | Bridge can't find `connection.json` | Set `COMMONPOST_MCP_CONNECTION_FILE` explicitly if your environment uses a non-standard temp/runtime path |
 | On Windows, bridge finds the file but still refuses it | The file must be under the *bridge process's own* `%TEMP%`. Running the bridge under WSL or in a container gives it a different `%TEMP%` than the one Thunderbird (native Windows) used, even if the file is reachable through `\\wsl.localhost\...` or a mount -- this is a correct refusal, not a bug. Set `COMMONPOST_MCP_CONNECTION_FILE` to the file's real path instead |
@@ -446,7 +459,7 @@ platform are on the [official Thunderbird site](https://www.thunderbird.net/en-U
 | On Windows, an attachment under `%TEMP%` is refused | `%TEMP%` sits under `AppData\Local`, which the deny-list treats like the rest of AppData (it holds credentials and app data for other programs on Windows). Copy the file to another folder first, for example Documents |
 | Missing recent emails | IMAP folders can be stale. Click the folder in Thunderbird to sync, or right-click > Properties > Repair Folder |
 | Tool not found after update | Reconnect MCP (`/mcp` in Claude Code) to pick up new tools |
-| No Thunderbird tools in a client that started before Thunderbird | The bridge lists the tools Thunderbird last listed. With no list cached yet (the bridge has not reached Thunderbird before, or the cache folder was deleted), it waits 20 s for Thunderbird and then lists none: start Thunderbird, then restart the client or reconnect the server (`/mcp` in Claude Code). Claude Desktop and Claude Code do not pick up a new tool list by themselves. The reason is in the client's log of the server |
+| No Thunderbird tools in a client that started before Thunderbird | The bridge lists the tools Thunderbird last listed. With no list cached yet (the bridge has not reached Thunderbird before, or the cache folder was deleted), it waits 20 s for Thunderbird and then lists none: start Thunderbird, then restart the client (quit it completely: on Windows, closing Claude Desktop's window may leave it running in the notification area) or reconnect the server (`/mcp` in Claude Code). Claude Desktop and Claude Code do not pick up a new tool list by themselves. The reason is in the client's log of the server |
 | `searchBody` returns no results | IMAP accounts need offline sync enabled for Gloda to index message bodies |
 | `rawSource` fails on IMAP | Requires local/offline message copy. Enable offline sync or click the message first to cache it. |
 

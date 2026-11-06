@@ -6,6 +6,14 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Changed
+
+- README, first start: "Quick install" now offers the `.mcpb` bundle first for Claude Desktop, which needs no
+  Node.js of your own. The `claude mcp add` commands use `-s user`, so the server is there in every folder and not
+  only in the one the command ran in, and they quote the path. The Codex example sets `startup_timeout_sec = 30`.
+  Troubleshooting gains the messages a first try shows: `Connection closed` (wrong path), `Executable not found`
+  (Node.js), and `tools fetch failed` from `claude mcp list` while Thunderbird is closed.
+
 ## [0.19.2] - 2026-11-06
 
 - Fixed: when your MCP client starts before Thunderbird, at login for example, the server no longer fails to start.
