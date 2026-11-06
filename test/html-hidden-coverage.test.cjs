@@ -51,6 +51,7 @@ function load(DOMParser) {
   vm.createContext(sandbox);
   const slice = (start, end) => source.slice(source.indexOf(start), source.indexOf(end));
   vm.runInContext(`${slice("// BEGIN STRIP HELPERS", "// END STRIP HELPERS")}\n${slice("// BEGIN HTML HIDDEN CONTENT HELPERS", "// END HTML HIDDEN CONTENT HELPERS")}
+const isHiddenElementNode = node => elementHiding(node, typeof node.tagName === "string" ? node.tagName.toLowerCase() : "", VISIBLE_CONTENT).hidden;
 this.api = { stripHtml, isHiddenElementNode, htmlToMarkdown };`, sandbox);
   return sandbox.api;
 }

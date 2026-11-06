@@ -10320,19 +10320,300 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // BEGIN HTML HIDDEN CONTENT HELPERS
             // Ways to keep text out of a human reader's sight while still handing
             // it to whatever reads the raw HTML (an assistant): the `hidden`
-            // attribute, display:none / visibility:hidden / opacity:0 /
+            // attribute, display:none / opacity:0 / visibility:hidden /
             // font-size:0 in an inline style, and <template> (never rendered --
             // its content is not part of the document a browser or mail client
-            // shows). Removed, and counted through `counterRef`, before either
-            // HTML path returns anything. The match is lexical, like the rest of
-            // this file's regex-based HTML handling: a `style` value merely
-            // containing one of these keywords as text (not as CSS) would also
-            // be caught, which errs toward removing too much rather than missing
-            // a real one.
+            // shows). Removed, and counted through `counterRef`, before any
+            // HTML path returns anything.
+            //
+            // The hidden attribute, display:none and an opacity below 0.1 hide an
+            // element with all it contains. font-size and visibility are
+            // inherited instead, and a descendant can undo them: layout
+            // templates such as MJML put font-size:0px on the wrappers of their
+            // columns and give the text inside its own size, and
+            // visibility:visible shows the child of a visibility:hidden element.
+            // With a DOM, those two are judged for each text node (text smaller
+            // than 3px is out of sight, whatever the unit: em and % are shares of
+            // the parent's size), in hiddenContentJudge; without one, see
+            // HIDDEN_HTML_BLOCK.
+
+            // Inline styles are read as Gecko reads them, with one asymmetry. A
+            // declaration that would hide text is read liberally (CSS escapes
+            // decoded, comments dropped, a number however it is written). One
+            // that would show text again -- a later or !important display,
+            // opacity, font-size or visibility -- counts only in a plain form
+            // Gecko surely accepts: no backslash and no comment in it, an exact
+            // CSS number, one of the keywords below, no function. So a
+            // declaration Gecko drops cannot undo one it applies; whatever is
+            // unsure stays hidden.
+            const CSS_GLOBAL_VALUES = new Set(["inherit", "initial", "unset", "revert", "revert-layer"]);
+            // The single display keywords Gecko accepts (Firefox 150, CSS.supports); values of several keywords are
+            // not trusted to show an element again.
+            const CSS_DISPLAY_KEYWORDS = new Set([
+              "none", "contents", "block", "inline", "inline-block", "flow", "flow-root", "list-item", "flex",
+              "inline-flex", "grid", "inline-grid", "table", "inline-table", "table-row-group", "table-header-group",
+              "table-footer-group", "table-row", "table-cell", "table-column-group", "table-column", "table-caption",
+              "ruby", "ruby-base", "ruby-text", "ruby-base-container", "ruby-text-container", "-webkit-box",
+              "-webkit-inline-box", "-webkit-flex", "-webkit-inline-flex",
+            ]);
+            const CSS_VISIBILITY_KEYWORDS = new Set(["visible", "hidden", "collapse"]);
+            const CSS_CONTENT_VISIBILITY_KEYWORDS = new Set(["visible", "auto", "hidden"]);
+            const CSS_WHITESPACE = " \t\n\r\f";
+            const trimCss = text => stripLeading(stripTrailing(text, CSS_WHITESPACE), CSS_WHITESPACE);
+            const CSS_FUNCTION_VALUE = /^[a-z-]+\(/;
+            // Text smaller than this, or under an opacity below MIN_VISIBLE_OPACITY (the product of the opacities of
+            // an element and its ancestors), is out of a reader's sight.
+            const MIN_VISIBLE_FONT_PX = 3;
+            const MIN_VISIBLE_OPACITY = 0.1;
+            const ROOT_FONT_PX = 16;
+            // Form controls take Gecko's font (-moz-button, -moz-field), not the size of their parent
+            const FORM_CONTROL_TAGS = new Set(["button", "input", "select", "textarea"]);
+            const FORM_CONTROL_FONT_PX = 13.333;
+            const FONT_SIZE_KEYWORD_PX = new Map([
+              ["xx-small", 9], ["x-small", 10], ["small", 13], ["medium", 16], ["large", 18], ["x-large", 24],
+              ["xx-large", 32], ["xxx-large", 48], ["initial", 16],
+            ]);
+            const CSS_LENGTH_PX = new Map([["px", 1], ["pt", 4 / 3], ["pc", 16], ["in", 96], ["cm", 96 / 2.54], ["mm", 96 / 25.4], ["q", 96 / 101.6]]);
+            // Viewport units, against a large window (2560 x 1440): text they make small is small in any window
+            const CSS_VIEWPORT_PX = new Map([["vw", 25.6], ["vi", 25.6], ["vmax", 25.6], ["vh", 14.4], ["vb", 14.4], ["vmin", 14.4]]);
+            // Shares of the parent's size (ex and ch taken as half of it)
+            const CSS_LENGTH_EM = new Map([["em", 1], ["%", 0.01], ["ex", 0.5], ["ch", 0.5], ["cap", 0.7], ["ic", 1], ["lh", 1.2]]);
+            const LEGACY_FONT_SIZE_PX = [10, 13, 16, 18, 24, 32, 48];
+            // The size the default style sheet gives some elements, as a share of their parent's
+            const DEFAULT_FONT_SCALE = new Map([
+              ["h1", 2], ["h2", 1.5], ["h3", 1.17], ["h5", 0.83], ["h6", 0.67], ["small", 1 / 1.2], ["sub", 1 / 1.2],
+              ["sup", 1 / 1.2], ["big", 1.2],
+            ]);
+            const SYSTEM_FONTS = new Set(["caption", "icon", "menu", "message-box", "small-caption", "status-bar"]);
+            // One family of a font shorthand: a string, or identifiers that do not start with a digit
+            const FONT_FAMILY = /^(?:"[^"\\]*"|'[^'\\]*'|-?[a-z_][a-z0-9_-]*(?: -?[a-z_][a-z0-9_-]*)*)$/;
+            // What may come before the size in a font shorthand, at most one of each kind ("normal" fits any)
+            const FONT_SHORTHAND_PREFIXES = [
+              new Set(["italic", "oblique"]),
+              new Set(["small-caps"]),
+              new Set(["bold", "bolder", "lighter"]),
+              new Set(["ultra-condensed", "extra-condensed", "condensed", "semi-condensed", "semi-expanded", "expanded",
+                "extra-expanded", "ultra-expanded"]),
+            ];
+            // Elements a mail client never renders, whatever their style
+            const NEVER_RENDERED_TAGS = new Set(["template", "datalist", "noembed", "noframes", "iframe", "title"]);
+
+            function cssUnescape(text) {
+              return text.replace(/\\(?:([0-9a-fA-F]{1,6})[ \t\n\r\f]?|([^\n\r\f]))/g, (match, hex, char) => {
+                if (char !== undefined) return char;
+                const cp = parseInt(hex, 16);
+                return cp > 0 && cp <= 0x10FFFF && (cp < 0xD800 || cp > 0xDFFF) ? String.fromCodePoint(cp) : "\uFFFD";
+              });
+            }
+
+            // Whether the first character from `start` that is not CSS whitespace is a quote
+            function isQuoteAfterWhitespace(text, start) {
+              let i = start;
+              while (i < text.length && CSS_WHITESPACE.includes(text[i])) i++;
+              return text[i] === "\"" || text[i] === "'";
+            }
+
+            // The declarations of an inline style: [{ name, value, important, plain }], with name and value lowercased,
+            // escapes decoded and comments read as spaces; `plain` is false when the declaration holds a backslash or
+            // a comment. Splits on ";" outside strings, url() and blocks, as a CSS parser does: a block closes only on
+            // its own closing bracket, and url (escapes decoded) followed by "(" and no quote is an unquoted url.
+            function cssDeclarations(style) {
+              const text = String(style);
+              const parts = [];
+              const closers = [];
+              let current = "";
+              let plain = true;
+              let ident = ""; // the identifier just before, as written
+              for (let i = 0; i < text.length; i++) {
+                const c = text[i];
+                if (c === "\\") {
+                  plain = false;
+                  current += text.slice(i, i + 2);
+                  ident += text.slice(i, i + 2);
+                  i++;
+                  continue;
+                }
+                if (/[A-Za-z0-9_-]/.test(c) || c > "\x7f") {
+                  current += c;
+                  ident += c;
+                  continue;
+                }
+                const isUrl = c === "(" && ident.length <= 32 && cssUnescape(ident).toLowerCase() === "url";
+                ident = "";
+                if (c === "/" && text[i + 1] === "*") {
+                  const end = text.indexOf("*/", i + 2);
+                  i = end < 0 ? text.length : end + 1;
+                  current += " ";
+                  plain = false;
+                } else if (c === "\"" || c === "'") {
+                  // A string runs to its closing quote, or to the end of the line or of the style
+                  let j = i + 1;
+                  while (j < text.length && text[j] !== c && text[j] !== "\n") {
+                    if (text[j] === "\\") plain = false;
+                    j += text[j] === "\\" ? 2 : 1;
+                  }
+                  current += text.slice(i, j + 1);
+                  i = j;
+                } else if (isUrl && !isQuoteAfterWhitespace(text, i + 1)) {
+                  // An unquoted url( runs to its ")", comment-like text included
+                  let j = i + 1;
+                  while (j < text.length && text[j] !== ")") {
+                    if (text[j] === "\\") plain = false;
+                    j += text[j] === "\\" ? 2 : 1;
+                  }
+                  current += text.slice(i, j + 1);
+                  i = j;
+                } else if (c === "(" || c === "[" || c === "{") {
+                  closers.push(c === "(" ? ")" : c === "[" ? "]" : "}");
+                  current += c;
+                } else if (c === closers[closers.length - 1]) {
+                  closers.pop();
+                  current += c;
+                } else if (c === ";" && closers.length === 0) {
+                  parts.push({ text: current, plain });
+                  current = "";
+                  plain = true;
+                } else {
+                  current += c;
+                }
+              }
+              parts.push({ text: current, plain });
+              const declarations = [];
+              for (const part of parts) {
+                const colon = part.text.indexOf(":");
+                if (colon < 0) continue;
+                // Trimmed before escapes are decoded: an escaped space or tab ("none\\9") is part of the value
+                const name = cssUnescape(trimCss(part.text.slice(0, colon))).toLowerCase();
+                let value = cssUnescape(trimCss(part.text.slice(colon + 1))).toLowerCase();
+                let important = false;
+                if (value.endsWith("important")) {
+                  const before = stripTrailing(value.slice(0, -"important".length), CSS_WHITESPACE);
+                  if (before.endsWith("!")) {
+                    important = true;
+                    value = stripTrailing(before.slice(0, -1), CSS_WHITESPACE);
+                  }
+                }
+                declarations.push({ name, value, important, plain: part.plain });
+              }
+              return declarations;
+            }
+
+            // The declaration that wins among those of `names`: the last one that
+            // counts, one marked !important over the others. A declaration counts
+            // when hides(value, name) says it hides text, when it is plain and
+            // shows(value, name) says Gecko accepts it, or when lowers(value, name,
+            // winner) says it makes the text smaller or fainter than what it would
+            // replace (null: the inherited or default value).
+            function winningDeclaration(declarations, names, hides, shows, lowers = () => false) {
+              let winner;
+              for (const declaration of declarations) {
+                if (!names.includes(declaration.name)) continue;
+                const { value, name } = declaration;
+                if (!hides(value, name) && !(declaration.plain && shows(value, name)) && !lowers(value, name, winner || null)) continue;
+                if (winner && winner.important && !declaration.important) continue;
+                winner = declaration;
+              }
+              return winner;
+            }
+
+            // A CSS number and its unit ("" for none), or null. `exact` takes only
+            // what CSS takes (not "1." or "12.px").
+            function cssNumber(value, exact) {
+              const match = (exact ? /^([+-]?(?:\d*\.\d+|\d+)(?:e[+-]?\d+)?)([a-z]+|%)?$/ : /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)([a-z]+|%)?$/).exec(value);
+              return match ? { n: Number(match[1]), unit: match[2] || "" } : null;
+            }
+
+            // The size in pixels a font-size value gives text, or undefined when
+            // the value is not one: `strict` for a declaration that would show
+            // text (no function, no unitless number).
+            function fontSizePx(value, inherited, strict) {
+              const { fontPx, rootPx } = inherited;
+              if (FONT_SIZE_KEYWORD_PX.has(value)) return FONT_SIZE_KEYWORD_PX.get(value);
+              // revert falls back to the default style sheet, which inherits the size
+              if (CSS_GLOBAL_VALUES.has(value)) return fontPx;
+              if (value === "smaller" || value === "larger") return fontPx * (value === "larger" ? 1.2 : 1 / 1.2);
+              if (CSS_FUNCTION_VALUE.test(value)) return undefined;
+              const number = cssNumber(value, strict);
+              if (!number || number.n < 0) return undefined;
+              const { n, unit } = number;
+              // Unitless: pixels in quirks mode only, so never trusted to show text
+              if (unit === "") return n === 0 ? 0 : strict ? undefined : n;
+              if (CSS_LENGTH_PX.has(unit)) return n * CSS_LENGTH_PX.get(unit);
+              if (unit === "rem") return n * rootPx;
+              if (unit === "rlh") return n * rootPx * 1.2;
+              if (CSS_VIEWPORT_PX.has(unit)) return n * CSS_VIEWPORT_PX.get(unit);
+              if (CSS_LENGTH_EM.has(unit)) return n * fontPx * CSS_LENGTH_EM.get(unit);
+              return undefined;
+            }
+
+            // The size part of a font shorthand ("bold 13px/1.4 Arial": "13px"),
+            // or undefined. `strict`: only a shorthand Gecko accepts (at most one
+            // style, variant, weight and stretch before the size, a family after).
+            function fontShorthandSize(value, strict) {
+              if (CSS_GLOBAL_VALUES.has(value)) return value;
+              if (SYSTEM_FONTS.has(value)) return "small";
+              const tokens = value.split(/[ \t\n\r\f]+/).filter(Boolean);
+              const used = new Set();
+              for (let i = 0; i < tokens.length; i++) {
+                const size = tokens[i].split("/")[0];
+                const number = cssNumber(size, strict);
+                const isSize = FONT_SIZE_KEYWORD_PX.has(size) || size === "smaller" || size === "larger"
+                  || (number !== null && (number.unit !== "" || number.n === 0));
+                if (isSize) {
+                  if (!strict) return size;
+                  // After the size: an optional "/line-height", then a list of families
+                  let rest = trimCss(`${tokens[i].slice(size.length)} ${tokens.slice(i + 1).join(" ")}`);
+                  if (rest.startsWith("/")) {
+                    const lineHeight = trimCss(rest.slice(1)).split(/[ \t\n\r\f]+/)[0];
+                    const lh = cssNumber(lineHeight, true);
+                    if (lineHeight !== "normal" && !(lh && lh.n >= 0 && (lh.unit === "" || CSS_LENGTH_PX.has(lh.unit) || CSS_LENGTH_EM.has(lh.unit) || lh.unit === "rem"))) return undefined;
+                    rest = trimCss(trimCss(rest.slice(1)).slice(lineHeight.length));
+                  }
+                  return rest !== "" && rest.split(",").every(family => FONT_FAMILY.test(trimCss(family))) ? size : undefined;
+                }
+                if (!strict) continue;
+                if (tokens[i] === "normal") continue;
+                const kind = FONT_SHORTHAND_PREFIXES.findIndex(set => set.has(tokens[i]));
+                const weight = kind < 0 && number !== null && number.unit === "" && number.n >= 1 && number.n <= 1000;
+                const key = weight ? 2 : kind;
+                if (key < 0 || used.has(key)) return undefined;
+                used.add(key);
+              }
+              return undefined;
+            }
+
+            // The size a font-size or font declaration gives text, in pixels
+            function fontDeclarationPx(value, name, inherited, strict) {
+              if (name === "font" && SYSTEM_FONTS.has(value)) return FORM_CONTROL_FONT_PX;
+              const size = name === "font" ? fontShorthandSize(value, strict) : value;
+              return size === undefined ? undefined : fontSizePx(size, inherited, strict);
+            }
+
+            // An opacity value as a number from 0 to 1, or undefined
+            function opacityValue(value, inheritedOpacity, strict) {
+              if (value === "inherit") return inheritedOpacity;
+              if (CSS_GLOBAL_VALUES.has(value)) return 1;
+              const number = cssNumber(value, strict);
+              if (!number || (number.unit !== "" && number.unit !== "%")) return undefined;
+              return Math.min(1, Math.max(0, number.unit === "%" ? number.n / 100 : number.n));
+            }
+
+            // Without a DOM (stripHtml), the same rules are matched lexically on
+            // the style attribute, and an element they match goes with all it
+            // contains: display:none, an opacity below 0.1 (0.05, 5%, -1),
+            // font-size 0 and visibility:hidden (content-visibility and
+            // fill-opacity included). Unlike the DOM path, this errs toward
+            // removing: a descendant that sets its own size or visibility again
+            // is removed too (an MJML layout over the DOM size limit loses its
+            // text), while sizes above 0 (font-size:0.1vw) and opacities that
+            // only multiply below 0.1 are not judged. A zero is 0, 00, 0.0 or
+            // .0, never the start of 0.8 or 0.875rem.
+            const CSS_ZERO_SRC = "(?:0+(?:\\.0*)?|\\.0+)";
             const CSS_HIDDEN_STYLE_SRC =
-              "display\\s*:\\s*none\\b|visibility\\s*:\\s*hidden\\b|" +
-              "font-size\\s*:\\s*0(?:\\.0*)?(?:px|pt|%|em|rem)?\\b|opacity\\s*:\\s*0(?:\\.0+)?\\b";
-            const CSS_HIDDEN_STYLE_TEST = new RegExp(CSS_HIDDEN_STYLE_SRC, "i");
+              "display\\s*:\\s*none(?![\\w-])|" +
+              "opacity\\s*:\\s*(?:(?:" + CSS_ZERO_SRC + "|0*\\.0\\d*)(?![\\w.%])|\\d(?:\\.\\d*)?%(?![\\w.%])|-\\s*\\.?\\d)|" +
+              "font-size\\s*:\\s*" + CSS_ZERO_SRC + "(?:px|pt|%|em|rem)?(?![\\w.%])|" +
+              "visibility\\s*:\\s*(?:hidden|collapse)(?![\\w-])";
             // [\s\S]*? is bounded (not left open-ended): unclosed HTML (no
             // matching closing tag anywhere in the rest of the string) would
             // otherwise make the engine scan to the end of the input for
@@ -10357,13 +10638,141 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return html.replace(HIDDEN_HTML_BLOCK, () => { counterRef.n++; return " "; });
             }
 
-            // True when a DOM element itself is hidden this way (walk() calls
-            // this per element; HIDDEN_HTML_BLOCK above does the same job when
-            // there is no DOM, in stripHtml).
-            function isHiddenElementNode(node) {
-              if (node.hasAttribute && node.hasAttribute("hidden")) return true;
+            // Long data: URIs (inline images, fonts) shortened before the DOM
+            // size limit is checked: they are never part of the text, and are the
+            // usual reason a newsletter is over the limit. Only the value of a
+            // src, href or background attribute, or of a url(), and only a payload
+            // with no ";" (which would end a declaration of a style).
+            function shortenDataUris(html) {
+              return String(html).replace(
+                /(\s(?:src|href|background)[ \t\n\r\f]*=[ \t\n\r\f]*["']?|url\([ \t\n\r\f]*["']?)data:([^,"'\s()<>;]{0,200}(?:;[^,"'\s()<>;]{1,64}){0,4}),[^;"'\s()<>]{1000,}/gi,
+                "$1data:$2,");
+            }
+
+            // Lexical patterns of a style, a safety net for one the tokenizer
+            // above could read otherwise than Gecko: in a style that holds a
+            // comment, a string or a bracket (url() included), a match hides,
+            // even when it sits in a string or a later declaration overrides it.
+            const CSS_TRICKY_STYLE = /\/\*|["'([{]/;
+            const CSS_LEXICAL_SUBTREE_HIDDEN = new RegExp(
+              "display\\s*:\\s*none(?![\\w-])|content-visibility\\s*:\\s*hidden(?![\\w-])|(?:^|[^\\w-])opacity\\s*:\\s*(?:(?:" + CSS_ZERO_SRC +
+              "|0*\\.0\\d*)(?![\\w.%])|\\d(?:\\.\\d*)?%(?![\\w.%])|-\\s*\\.?\\d)", "i");
+            const CSS_LEXICAL_FONT_ZERO = new RegExp("(?:^|[^\\w-])font-size\\s*:\\s*" + CSS_ZERO_SRC + "(?:px|pt|%|em|rem)?(?![\\w.%])", "i");
+            const CSS_LEXICAL_INVISIBLE = new RegExp("(?:^|[^\\w-])visibility\\s*:\\s*(?:hidden|collapse)(?![\\w-])", "i");
+            const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+            const SVG_TEXT_TAGS = new Set(["svg", "g", "text", "tspan", "textpath"]);
+
+            // Whether an element hides itself with all it contains: the hidden
+            // attribute, a <dialog> that is not open, an element never rendered,
+            // display:none, content-visibility:hidden, fill-opacity below 0.1, or
+            // an opacity that makes the product below 0.1 (HIDDEN_HTML_BLOCK
+            // above does the same job when there is no DOM, in stripHtml).
+            // Returns { hidden, opacity } (the element's own opacity).
+            function elementHiding(node, tag, inherited) {
+              const has = name => Boolean(node.hasAttribute && node.hasAttribute(name));
+              if (NEVER_RENDERED_TAGS.has(tag) || (tag === "dialog" && !has("open"))) return { hidden: true, opacity: 1 };
+              // hidden="until-found" hides through content-visibility, which a display does not undo
+              if (has("hidden") && String(node.getAttribute("hidden")).toLowerCase() === "until-found") return { hidden: true, opacity: 1 };
               const style = (node.getAttribute && node.getAttribute("style")) || "";
-              return CSS_HIDDEN_STYLE_TEST.test(style);
+              if (!style) return { hidden: has("hidden") || inherited.opacityProduct < MIN_VISIBLE_OPACITY, opacity: 1 };
+              if (CSS_TRICKY_STYLE.test(style) && CSS_LEXICAL_SUBTREE_HIDDEN.test(style)) return { hidden: true, opacity: 1 };
+              const declarations = cssDeclarations(style);
+              const display = winningDeclaration(declarations, ["display"], value => value === "none",
+                value => CSS_DISPLAY_KEYWORDS.has(value) || CSS_GLOBAL_VALUES.has(value));
+              // The hidden attribute is a display:none of the default style sheet: a plain display of the style
+              // (not revert, which goes back to it) shows the element
+              const shownDespiteHidden = display && display.value !== "none" && display.value !== "revert" && display.value !== "revert-layer";
+              if (has("hidden") && !shownDespiteHidden) return { hidden: true, opacity: 1 };
+              const contentVisibility = winningDeclaration(declarations, ["content-visibility"], value => value === "hidden",
+                value => CSS_CONTENT_VISIBILITY_KEYWORDS.has(value) || CSS_GLOBAL_VALUES.has(value));
+              const opacityOf = name => {
+                const read = value => opacityValue(value, inherited.opacity, false);
+                const winner = winningDeclaration(declarations, [name],
+                  value => (read(value) ?? 1) < MIN_VISIBLE_OPACITY,
+                  value => opacityValue(value, inherited.opacity, true) !== undefined,
+                  (value, _name, current) => (read(value) ?? 1) < (current ? read(current.value) : 1));
+                return winner ? read(winner.value) : 1;
+              };
+              const opacity = opacityOf("opacity");
+              // fill-opacity paints SVG text only
+              const svgText = node.namespaceURI === SVG_NAMESPACE || SVG_TEXT_TAGS.has(tag);
+              const hidden = display?.value === "none" || contentVisibility?.value === "hidden"
+                || (svgText && opacityOf("fill-opacity") < MIN_VISIBLE_OPACITY) || inherited.opacityProduct * opacity < MIN_VISIBLE_OPACITY;
+              return { hidden, opacity };
+            }
+
+            // What an element passes on to its content: the size of its text and
+            // of the root's in pixels, the element that made that size too small
+            // to read and the one whose visibility:hidden or collapse it inherits
+            // (null for none), its own opacity and the product of the opacities
+            // down to it.
+            const VISIBLE_CONTENT = Object.freeze({
+              fontPx: ROOT_FONT_PX, rootPx: ROOT_FONT_PX, tinyFont: null, invisible: null, opacity: 1, opacityProduct: 1,
+            });
+
+            // Judges hidden content while a DOM is walked, and counts once each
+            // element that hides some text:
+            // - enter(node, tag, inherited): null when the element is left out
+            //   with all it contains, else what it passes on to its content;
+            // - textHidden(text, inherited, sizeApplies): whether text is out of
+            //   sight by what it inherits (sizeApplies false for an image's alt
+            //   text, which stands for an image that has a size of its own).
+            function hiddenContentJudge(counterRef) {
+              const counted = new Set();
+              return {
+                enter(node, tag, inherited) {
+                  const { hidden, opacity } = elementHiding(node, tag, inherited);
+                  if (hidden) {
+                    // A <template>'s content is not part of the document (textContent is empty)
+                    if (tag === "template" || /\S/.test(node.textContent || "")) counterRef.n++;
+                    return null;
+                  }
+                  const style = (node.getAttribute && node.getAttribute("style")) || "";
+                  const declarations = style ? cssDeclarations(style) : [];
+                  let { fontPx, rootPx, tinyFont, invisible } = inherited;
+                  const read = (value, name) => fontDeclarationPx(value, name, inherited, false);
+                  const size = winningDeclaration(declarations, ["font-size", "font"],
+                    (value, name) => (read(value, name) ?? MIN_VISIBLE_FONT_PX) < MIN_VISIBLE_FONT_PX,
+                    (value, name) => fontDeclarationPx(value, name, inherited, true) !== undefined,
+                    (value, name, current) => (read(value, name) ?? Infinity) < (current ? read(current.value, current.name) : inherited.fontPx));
+                  let px;
+                  if (size) px = fontDeclarationPx(size.value, size.name, inherited, false);
+                  else if (FORM_CONTROL_TAGS.has(tag)) px = FORM_CONTROL_FONT_PX;
+                  else if (DEFAULT_FONT_SCALE.has(tag)) px = fontPx * DEFAULT_FONT_SCALE.get(tag);
+                  else if (tag === "font" && node.hasAttribute && node.hasAttribute("size")) px = legacyFontSizePx(node.getAttribute("size"));
+                  if (px !== undefined) {
+                    fontPx = px;
+                    tinyFont = px < MIN_VISIBLE_FONT_PX ? tinyFont || node : null;
+                  }
+                  const tricky = style !== "" && CSS_TRICKY_STYLE.test(style);
+                  if (tricky && !tinyFont && CSS_LEXICAL_FONT_ZERO.test(style)) tinyFont = node;
+                  if (tag === "html") rootPx = fontPx;
+                  const visibility = winningDeclaration(declarations, ["visibility"], value => value === "hidden" || value === "collapse",
+                    value => CSS_VISIBILITY_KEYWORDS.has(value) || CSS_GLOBAL_VALUES.has(value))?.value;
+                  if (visibility === "hidden" || visibility === "collapse") invisible = invisible || node;
+                  else if (visibility === "visible" || visibility === "initial") invisible = null;
+                  if (tricky && !invisible && CSS_LEXICAL_INVISIBLE.test(style)) invisible = node;
+                  // inherit, unset and revert (the default style sheet inherits it): what the parent passed on
+                  return { fontPx, rootPx, tinyFont, invisible, opacity, opacityProduct: inherited.opacityProduct * opacity };
+                },
+                textHidden(text, inherited, sizeApplies = true) {
+                  const by = inherited.invisible || (sizeApplies ? inherited.tinyFont : null);
+                  if (!by) return false;
+                  if (!counted.has(by) && /\S/.test(text)) {
+                    counted.add(by);
+                    counterRef.n++;
+                  }
+                  return true;
+                },
+              };
+            }
+
+            // The size of <font size="1"> to <font size="7"> (or "+1", "-2": from 3)
+            function legacyFontSizePx(value) {
+              const match = /^\s*([+-]?)(\d+)/.exec(String(value));
+              if (!match) return undefined;
+              const n = match[1] === "+" ? 3 + Number(match[2]) : match[1] === "-" ? 3 - Number(match[2]) : Number(match[2]);
+              return LEGACY_FONT_SIZE_PX[Math.min(7, Math.max(1, n)) - 1];
             }
 
             function stripHtml(html, counterRef = { n: 0 }) {
@@ -10460,25 +10869,39 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              */
             function htmlToMarkdown(html, counterRef = { n: 0 }) {
               if (!html) return "";
+              html = shortenDataUris(html);
               if (htmlExceedsDomLimit(html)) return stripHtml(html, counterRef);
+              const countBefore = counterRef.n;
               try {
                 const doc = new DOMParser().parseFromString(html, "text/html");
+                const hiding = hiddenContentJudge(counterRef);
 
-                function walkChildren(node) {
-                  return Array.from(node.childNodes).map(walk).join("");
+                function walkChildren(node, inherited) {
+                  return Array.from(node.childNodes).map(child => walk(child, inherited)).join("");
                 }
 
-                function walk(node) {
+                // The text of a node's children as textContent gives it (for code
+                // and pre), without what is hidden.
+                function visibleText(node, inherited) {
+                  return Array.from(node.childNodes).map(child => {
+                    if (child.nodeType === 3) return hiding.textHidden(child.textContent, inherited) ? "" : child.textContent;
+                    if (child.nodeType !== 1) return "";
+                    const tag = child.tagName.toLowerCase();
+                    if (tag === "script" || tag === "style") return "";
+                    const childInherited = hiding.enter(child, tag, inherited);
+                    return childInherited ? visibleText(child, childInherited) : "";
+                  }).join("");
+                }
+
+                function walk(node, inherited) {
                   if (node.nodeType === 3) { // Text
-                    return node.textContent.replace(/[ \t]+/g, " ");
+                    return hiding.textHidden(node.textContent, inherited) ? "" : node.textContent.replace(/[ \t]+/g, " ");
                   }
                   if (node.nodeType !== 1) return "";
                   const tag = node.tagName.toLowerCase();
-                  const inner = () => walkChildren(node);
-                  if (tag === "template" || isHiddenElementNode(node)) {
-                    counterRef.n++;
-                    return "";
-                  }
+                  const innerInherited = hiding.enter(node, tag, inherited);
+                  if (!innerInherited) return "";
+                  const inner = () => walkChildren(node, innerInherited);
 
                   switch (tag) {
                     case "script": case "style": case "head": return "";
@@ -10503,6 +10926,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     case "a": {
                       const href = safeEmailUrl(node.getAttribute("href") || "");
                       const text = inner().trim();
+                      // A link whose text is out of sight gives nothing, not its URL
+                      if (!text && (innerInherited.invisible || /\S/.test(node.textContent))) return "";
                       // A link with an unsafe or missing URL is just its text
                       if (!href) return text;
                       if (text && text !== href) return `[${text}](${href})`;
@@ -10517,10 +10942,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       const w = parseInt(node.getAttribute("width"), 10) || 0;
                       const h = parseInt(node.getAttribute("height"), 10) || 0;
                       if ((w > 0 && w <= 3) || (h > 0 && h <= 3)) return "";
-                      return alt;
+                      return hiding.textHidden(alt, innerInherited, false) ? "" : alt;
                     }
-                    case "code": return "`" + node.textContent + "`";
-                    case "pre": return "\n\n```\n" + node.textContent.trim() + "\n```\n\n";
+                    case "code": return "`" + visibleText(node, innerInherited) + "`";
+                    case "pre": return "\n\n```\n" + visibleText(node, innerInherited).trim() + "\n```\n\n";
                     case "blockquote": {
                       const text = inner().trim();
                       return "\n\n" + text.split("\n").map(l => "> " + l).join("\n") + "\n\n";
@@ -10540,13 +10965,53 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   }
                 }
 
-                const body = doc.body || doc.documentElement;
-                let result = walk(body);
+                // From the root, so that a style of <html> counts too (<head> gives nothing)
+                let result = walk(doc.documentElement || doc.body, VISIBLE_CONTENT);
                 // Collapse excessive newlines, trim
                 result = result.replace(/\n{3,}/g, "\n\n").trim();
                 return result;
               } catch {
                 // DOMParser unavailable or parse failure -- fall back to stripHtml
+                counterRef.n = countBefore;
+                return stripHtml(html, counterRef);
+              }
+            }
+
+            /**
+             * The plain text of email HTML, laid out as stripHtml lays it out (a
+             * block element starts a line, any other tag stands for a space), but
+             * read with DOMParser so that hidden content is judged as in
+             * htmlToMarkdown. Falls back to stripHtml without DOMParser, on a
+             * parse failure or above the DOM size limit.
+             */
+            const PLAIN_TEXT_BLOCK_TAGS = new Set(["p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre"]);
+            function emailHtmlToText(html, counterRef = { n: 0 }) {
+              if (!html) return "";
+              html = shortenDataUris(html);
+              if (htmlExceedsDomLimit(html)) return stripHtml(html, counterRef);
+              const countBefore = counterRef.n;
+              try {
+                const doc = new DOMParser().parseFromString(html, "text/html");
+                const hiding = hiddenContentJudge(counterRef);
+                function walk(node, inherited) {
+                  if (node.nodeType === 3) return hiding.textHidden(node.textContent, inherited) ? "" : node.textContent;
+                  if (node.nodeType !== 1) return " ";
+                  const tag = node.tagName.toLowerCase();
+                  if (tag === "script" || tag === "style" || tag === "head") return " ";
+                  const innerInherited = hiding.enter(node, tag, inherited);
+                  if (!innerInherited) return " ";
+                  if (tag === "br") return "\n";
+                  const text = Array.from(node.childNodes).map(child => walk(child, innerInherited)).join("");
+                  return PLAIN_TEXT_BLOCK_TAGS.has(tag) ? "\n" + text + "\n" : " " + text + " ";
+                }
+                let text = walk(doc.documentElement || doc.body, VISIBLE_CONTENT);
+                text = text.replace(/\r\n?/g, "\n").replace(/\u00A0/g, " ");
+                text = text.replace(/[ \t\f\v]+/g, " ");
+                text = text.replace(/ *\n */g, "\n");
+                text = text.replace(/\n{3,}/g, "\n\n");
+                return text.trim();
+              } catch {
+                counterRef.n = countBefore;
                 return stripHtml(html, counterRef);
               }
             }
@@ -10627,14 +11092,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * Uses coerceBodyToPlaintext as fast path, then MIME tree fallback.
              * Used by reply/forward quoting where plain text is appropriate.
              */
-            function extractPlainTextBody(aMimeMsg) {
+            function extractPlainTextBody(aMimeMsg, counterRef = { n: 0 }) {
               if (!aMimeMsg) return "";
               try {
                 const text = aMimeMsg.coerceBodyToPlaintext();
                 if (text) return text;
               } catch { /* fall through */ }
               const { text, isHtml } = extractBodyContent(aMimeMsg);
-              return isHtml ? stripHtml(text) : text;
+              return isHtml ? emailHtmlToText(text, counterRef) : text;
             }
 
             /**
@@ -10644,13 +11109,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              */
             function extractFormattedBody(aMimeMsg, bodyFormat, counterRef = { n: 0 }) {
               if (bodyFormat === "text") {
-                return { body: extractPlainTextBody(aMimeMsg), bodyIsHtml: false };
+                return { body: extractPlainTextBody(aMimeMsg, counterRef), bodyIsHtml: false };
               }
               // For markdown/html: need raw MIME content, not coerced text
               const { text, isHtml } = extractBodyContent(aMimeMsg, true);
               if (!text) {
                 // MIME tree empty -- try coerce as last resort
-                const fallback = extractPlainTextBody(aMimeMsg);
+                const fallback = extractPlainTextBody(aMimeMsg, counterRef);
                 return { body: fallback, bodyIsHtml: false };
               }
               if (!isHtml) return { body: text, bodyIsHtml: false };
@@ -13966,7 +14431,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                                 body = htmlToMarkdown(extracted.text, hiddenElementCounter);
                                 bodyIsHtml = false;
                               } else {
-                                body = stripHtml(extracted.text, hiddenElementCounter);
+                                body = emailHtmlToText(extracted.text, hiddenElementCounter);
                                 bodyIsHtml = false;
                               }
                             } else {

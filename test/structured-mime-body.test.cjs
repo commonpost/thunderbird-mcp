@@ -20,7 +20,7 @@ function loadExtractFormattedBody() {
     htmlToMarkdown: html => `markdown:${html}`,
     // Remove tags until none are left (same loop as the real helpers; a single pass is
     // flagged by code scanning as incomplete multi-character sanitization).
-    stripHtml: html => {
+    emailHtmlToText: html => {
       let previous;
       do {
         previous = html;
