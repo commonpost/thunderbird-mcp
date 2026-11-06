@@ -67,7 +67,8 @@ Support: <https://github.com/commonpost/thunderbird-mcp/issues>. Reviewers: [doc
 ## Updates
 
 Each release of the add-on raises the plugin's version, so updating the plugin always gives you the bridge of the
-release. Claude Code does not update third-party marketplaces on its own: turn on auto-update for the `commonpost`
+release. The marketplace lists the plugin from the latest published release (its tag, pinned to its commit), a few
+minutes after that release is published. Claude Code does not update third-party marketplaces on its own: turn on auto-update for the `commonpost`
 marketplace in `/plugin`, or run `/plugin marketplace update commonpost`, then `/reload-plugins`.
 
 ## Tool names
