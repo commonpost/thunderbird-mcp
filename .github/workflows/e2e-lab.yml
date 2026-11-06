@@ -11,6 +11,10 @@ name: E2E lab
 #
 # Only the summary table is published (job summary and a small artifact): the logs and result JSON are output of the
 # code under test and stay on the runner. Run the lab locally to get them.
+#
+# The scenarios run in SHARDS parallel jobs (every SHARDS-th file in name order, each job with its own image), so that
+# the lab is not the slowest check of a pull request. The "E2E lab" job, which the protect-main ruleset requires,
+# passes only when every shard passed.
 
 on:
   pull_request:
@@ -29,12 +33,17 @@ concurrency:
 env:
   LAB_REPO: commonpost/thunderbird-mcp-lab
   LAB_SHA: e87e04b8822c2607de325b58e99177de8135a4a8
+  SHARDS: 4
 
 jobs:
-  lab:
-    name: E2E lab
+  shard:
+    name: E2E lab shard ${{ matrix.shard }}/4
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]   # 1 to SHARDS
     steps:
       - name: Check out the tree under test (never executed on the runner)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,21 +68,34 @@ jobs:
       - name: Build the lab image
         run: docker build -t thunderbird-mcp-lab:ci lab/harness
 
-      - name: Run the public scenarios
+      - name: Run the public scenarios of this shard
         working-directory: lab
-        run: ./run-lab.sh --image thunderbird-mcp-lab:ci --out ../lab-results ../tree scenarios/*.json
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          all=(scenarios/*.json)
+          picked=()
+          for i in "${!all[@]}"; do
+            if [ $(( i % SHARDS + 1 )) -eq "$SHARD" ]; then picked+=("${all[$i]}"); fi
+          done
+          echo "shard $SHARD/$SHARDS: ${#picked[@]} of ${#all[@]} scenarios"
+          ./run-lab.sh --image thunderbird-mcp-lab:ci --out ../lab-results ../tree "${picked[@]}"
 
       - name: Isolation self-test
-        if: always()
+        if: always() && matrix.shard == 1
         working-directory: lab
         run: selftest/run.sh --image thunderbird-mcp-lab:ci ../tree
 
       - name: Job summary
         if: always()
+        env:
+          SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
           {
-            echo "### E2E lab (\`$LAB_SHA\`)"
+            echo "### E2E lab, shard $SHARD/$SHARDS (\`$LAB_SHA\`)"
             echo
             echo "| scenario | result | pass | fail | xfail | xpass | errors |"
             echo "|---|---|---|---|---|---|---|"
@@ -95,7 +117,21 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: e2e-lab-summary
+          name: e2e-lab-summary-${{ matrix.shard }}
           path: lab-results/run-*/summary.tsv
           retention-days: 14
           if-no-files-found: warn
+
+  lab:
+    name: E2E lab
+    needs: shard
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every shard passed
+        env:
+          RESULT: ${{ needs.shard.result }}
+        run: |
+          echo "shards: $RESULT"
+          test "$RESULT" = success
