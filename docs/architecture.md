@@ -53,12 +53,18 @@ Everything runs on the user's computer. The add-on talks to the bridge only; the
 
 ### The bridge (`mcp-bridge.cjs`)
 
-A single file that uses only Node's built-in modules (`http`, `fs`, `path`, `os`); the project has no production npm
+A single file that uses only Node's built-in modules (`http`, `fs`, `path`, `os`, `crypto`); the project has no production npm
 dependencies (`package.json` lists only `devDependencies`). It:
 
 - reads newline-delimited JSON-RPC from stdin and writes responses to stdout;
 - answers `initialize`, `ping`, `server/discover`, `resources/list` and `prompts/list` itself, so a client can connect
   before Thunderbird is ready;
+- answers `tools/list` from its tool cache when Thunderbird cannot be reached (`listTools`, `loadToolCache`): the last
+  list Thunderbird gave, kept in the user's cache folder (`toolCacheDir`) and written after each new live list
+  (`saveToolCache`). Before the first one, the first `tools/list` waits up to 20 s for Thunderbird and then answers
+  with an empty list. Meanwhile the bridge looks for Thunderbird every 3 s and sends
+  `notifications/tools/list_changed` once Thunderbird lists other tools than the client got
+  (`checkForThunderbird`); `initialize` declares `tools.listChanged`;
 - finds the add-on through its connection file (`discoverConnectionInfo`): `COMMONPOST_MCP_CONNECTION_FILE` if set,
   otherwise the temporary directory and the Snap, Flatpak and macOS locations described in the README. Each candidate
   is checked before it is trusted (`checkConnectionFileSafety`, `checkConnectionDirSafety`,

@@ -32,6 +32,7 @@ function main(argv) {
     .sort()
     .map((f) => path.join('test', f));
   const preload = JSON.stringify(path.join(__dirname, 'preload.cjs'));
+  const isolateCache = JSON.stringify(path.join(ROOT, 'test', 'support', 'isolate-tool-cache.cjs'));
   const run = spawnSync(process.execPath, ['--test', ...tests], {
     cwd: ROOT,
     stdio: 'inherit',
@@ -39,7 +40,7 @@ function main(argv) {
       ...process.env,
       NODE_V8_COVERAGE: path.join(out, 'v8'),
       CP_COVERAGE_SLICES: path.join(out, 'slices'),
-      NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require ${preload}`.trim(),
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require ${preload} --require ${isolateCache}`.trim(),
     },
   });
   if (run.status !== 0) {

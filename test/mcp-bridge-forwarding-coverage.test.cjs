@@ -104,7 +104,7 @@ describe('what the bridge answers itself', () => {
       const response = await handleMessage(line({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: version } }));
       assert.equal(response.result.protocolVersion, version);
       assert.equal(response.result.instructions, SERVER_INSTRUCTIONS);
-      assert.deepEqual(response.result.capabilities, { tools: {} });
+      assert.deepEqual(response.result.capabilities, { tools: { listChanged: true } });
       assert.equal(response.result.serverInfo.name, 'commonpost-mcp');
     }
     const future = await handleMessage(line({ jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: '2099-01-01' } }));

@@ -45,9 +45,13 @@ function isPortInUse(port) {
  */
 function sendToBridge(message, { timeout = 10000 } = {}) {
   return new Promise((resolve, reject) => {
+    // An empty tool cache for each bridge: tools/list answers from it when Thunderbird cannot be reached.
+    const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'commonpost-auth-cache-'));
     const child = spawn(process.execPath, [BRIDGE_PATH], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, COMMONPOST_MCP_CACHE_DIR: cacheDir },
     });
+    child.on('exit', () => { fs.rmSync(cacheDir, { recursive: true, force: true }); });
 
     let stdout = '';
     let stderr = '';
@@ -190,10 +194,12 @@ describe('Auth: connection info file', () => {
 
     // With fail-closed auth, the bridge must refuse to forward requests
     // when it can't find the connection file (no fallback to default port).
+    // Not tools/list: without Thunderbird, it answers from the tool cache
+    // (test/bridge-cold-start.test.cjs).
     const response = await sendToBridge({
       jsonrpc: '2.0',
       id: 2,
-      method: 'tools/list'
+      method: 'completion/complete'
     });
 
     assert.equal(response.id, 2);
@@ -367,6 +373,7 @@ describe('Timing-safe comparison: correctness', () => {
 // CONNECTION FILE EDGE CASES
 // ═══════════════════════════════════════════════════════════════════
 
+// completion/complete, as in the fail-closed test above: a request the bridge forwards.
 describe('Auth: connection file corruption', () => {
   let thunderbirdRunning = false;
   before(async () => {
@@ -383,7 +390,7 @@ describe('Auth: connection file corruption', () => {
     const response = await sendToBridge({
       jsonrpc: '2.0',
       id: 20,
-      method: 'tools/list'
+      method: 'completion/complete'
     });
 
     assert.equal(response.id, 20);
@@ -398,7 +405,7 @@ describe('Auth: connection file corruption', () => {
     const response = await sendToBridge({
       jsonrpc: '2.0',
       id: 21,
-      method: 'tools/list'
+      method: 'completion/complete'
     });
 
     assert.equal(response.id, 21);
@@ -413,7 +420,7 @@ describe('Auth: connection file corruption', () => {
     const response = await sendToBridge({
       jsonrpc: '2.0',
       id: 22,
-      method: 'tools/list'
+      method: 'completion/complete'
     });
 
     assert.equal(response.id, 22);
@@ -429,7 +436,7 @@ describe('Auth: connection file corruption', () => {
     const response = await sendToBridge({
       jsonrpc: '2.0',
       id: 23,
-      method: 'tools/list'
+      method: 'completion/complete'
     });
 
     assert.equal(response.id, 23);
@@ -445,7 +452,7 @@ describe('Auth: connection file corruption', () => {
     const response = await sendToBridge({
       jsonrpc: '2.0',
       id: 24,
-      method: 'tools/list'
+      method: 'completion/complete'
     });
 
     assert.equal(response.id, 24);
@@ -460,7 +467,7 @@ describe('Auth: connection file corruption', () => {
     const response = await sendToBridge({
       jsonrpc: '2.0',
       id: 25,
-      method: 'tools/list'
+      method: 'completion/complete'
     });
 
     assert.equal(response.id, 25);
@@ -475,7 +482,7 @@ describe('Auth: connection file corruption', () => {
     const response = await sendToBridge({
       jsonrpc: '2.0',
       id: 26,
-      method: 'tools/list'
+      method: 'completion/complete'
     });
 
     assert.equal(response.id, 26);
@@ -490,7 +497,7 @@ describe('Auth: connection file corruption', () => {
     const response = await sendToBridge({
       jsonrpc: '2.0',
       id: 27,
-      method: 'tools/list'
+      method: 'completion/complete'
     });
 
     assert.equal(response.id, 27);
