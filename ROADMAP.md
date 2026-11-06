@@ -24,7 +24,8 @@ Follows the plan in [docs/experiment-inventory.md](docs/experiment-inventory.md)
 
 - Keep fixing reported vulnerabilities through private reports and published advisories ([SECURITY.md](SECURITY.md)).
 - Keep the release files reproducible and attested, and pinned dependencies up to date.
-- Reach the OpenSSF Best Practices silver level.
+- Keep the OpenSSF Best Practices silver level, reached in November 2026 by this repository and the lab; the gold
+  level also needs the second maintainer below (two-person review).
 - Find a second maintainer, so that pull requests get a second reviewer and the project no longer depends on one
   person ([GOVERNANCE.md](GOVERNANCE.md)).
 
