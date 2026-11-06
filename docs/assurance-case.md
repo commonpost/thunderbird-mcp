@@ -126,6 +126,7 @@ connection file 64 KiB in the bridge.
 | Resource exhaustion through MIME | Part, depth and header-size limits in the raw MIME parser; encrypted-check walks are bounded and fail closed (`isEncryptedMimeMessage`); HTML over 2 MiB is not parsed into a DOM. | `test/raw-mime-*.test.cjs`, `test/encrypted-outer-subject.test.cjs` |
 | Prototype pollution and unknown arguments | Unknown parameters are rejected using `hasOwnProperty` on the schema (`validateToolArgs`). | `test/validation.test.cjs` |
 | A stale connection file leading the token to another program | Owner-process check in the bridge (`checkConnectionOwnerProcess`). | `test/mcp-bridge.test.cjs` |
+| A planted tool cache, to put instructions in tool descriptions the model reads | The bridge serves its tool cache only when Thunderbird cannot be reached. POSIX: folder created `0700`, refused if a symlink, owned by another user or group/other-writable; file opened with `O_NOFOLLOW`, then owner, mode and size checked by `fstat`; written through a `0600` temporary file and a rename. Windows: the user's own `%LOCALAPPDATA%`, never a UNC or device path. In read-only mode, every call is still checked against the add-on's live list (`readOnlyRefusal`). | `test/bridge-cold-start.test.cjs` |
 
 ## 5. Supply chain and process
 

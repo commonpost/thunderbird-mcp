@@ -12,6 +12,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 
 const THUNDERBIRD_HOSTS = ['127.0.0.1'];
 // Appended to every "can't reach Thunderbird" error; the README section
@@ -1635,6 +1636,10 @@ async function recheckPathAttachments(message, connInfo) {
   record.checkedKeys.add(candidateKey(connInfo));
 }
 
+// Thunderbird could not be reached: no connection file, or nothing answering on
+// the port it records. tools/list then falls back on the tool cache (listTools).
+class ThunderbirdUnreachable extends Error {}
+
 // The connection info, waiting a few seconds for Thunderbird to start;
 // throws when none is found. Never forward requests without authentication.
 async function awaitConnectionInfo() {
@@ -1644,7 +1649,7 @@ async function awaitConnectionInfo() {
     connInfo = readConnectionInfo();
   }
   if (!connInfo) {
-    throw new Error(buildConnectionDiscoveryErrorMessage());
+    throw new ThunderbirdUnreachable(buildConnectionDiscoveryErrorMessage());
   }
   return connInfo;
 }
@@ -1769,7 +1774,8 @@ async function handleMessage(line) {
         id: message.id,
         result: {
           protocolVersion: negotiated,
-          capabilities: { tools: {} },
+          // listChanged: the bridge tells the client when Thunderbird's tools replace those of a cold start (listTools).
+          capabilities: { tools: { listChanged: true } },
           serverInfo: SERVER_INFO,
           instructions: READ_ONLY ? `${SERVER_INSTRUCTIONS}\n${READ_ONLY_INSTRUCTIONS}` : SERVER_INSTRUCTIONS,
         },
@@ -1821,16 +1827,11 @@ async function handleMessage(line) {
     }
   }
 
+  if (message.method === 'tools/list') {
+    return listTools(message);
+  }
   if (message.method !== 'tools/call') {
-    const response = await forwardToThunderbird(message);
-    if (message.method === 'tools/list' && response?.result) {
-      // Warm the version probe so the first tools/call does not wait for it.
-      startVersionProbe();
-      if (READ_ONLY && Array.isArray(response.result.tools)) {
-        response.result.tools = readOnlyToolList(response.result.tools);
-      }
-    }
-    return response;
+    return forwardToThunderbird(message);
   }
   try {
     const response = await forwardToThunderbird(message);
@@ -2197,6 +2198,256 @@ async function readOnlyRefusal(message) {
   return null;
 }
 
+// The MCP client may start before Thunderbird, at login for example. Claude Desktop asks for the tools once and marks
+// the server failed when tools/list fails, and it does not act on notifications/tools/list_changed. So when Thunderbird
+// cannot be reached, tools/list answers with the last list Thunderbird gave (the tool cache below); without one, the
+// first tools/list of the process waits up to coldStart.waitMs for Thunderbird, and then the answer is an empty list.
+// Tool calls fail with "Is Thunderbird running?" until Thunderbird is there. Meanwhile the bridge looks for it every
+// coldStart.watchMs and, once it answers, sends notifications/tools/list_changed if its list differs from the one
+// the client got, for the clients that act on it. A cached list may still show a tool the user has turned off in the
+// add-on since: the add-on refuses the call.
+const coldStart = { waitMs: 20000, watchMs: 3000 };
+// When the first-start wait ends: tools/list calls made meanwhile wait until then, later ones do not wait.
+let coldStartDeadline = null;
+
+// The tool cache: the last tools/list result Thunderbird gave, unfiltered (read-only mode filters it when it is
+// served), in the user's cache folder:
+//   Windows: %LOCALAPPDATA%\commonpost-mcp;
+//   macOS: ~/Library/Caches/commonpost-mcp;
+//   others: $XDG_CACHE_HOME/commonpost-mcp if it is an absolute path, else ~/.cache/commonpost-mcp.
+// COMMONPOST_MCP_CACHE_DIR names another folder, as an absolute path (the tests use it). There is one file for each
+// pair of COMMONPOST_MCP_CONNECTION_FILE and COMMONPOST_MCP_PROFILE, since each may reach another Thunderbird profile.
+// Tool descriptions reach the model, so on POSIX the file and its folder must belong to the current user and be closed
+// to writes by group and others; on Windows, the folder is in the user's own profile, and a UNC or device path turns
+// the cache off. A file that does not parse, has another format or does not hold a tool list is ignored. The list is
+// the add-on's: the bridge version that wrote it (recorded for information) does not matter, so a Claude Desktop
+// bundle and a Claude Code plugin of different versions share one file. Any failure only leaves the cache unused.
+const TOOL_CACHE_FORMAT = 1;
+const MAX_TOOL_CACHE_BYTES = 4 * 1024 * 1024;
+const MAX_CACHED_TOOLS = 1000;
+// The tools last read from or written to the cache, as JSON: an unchanged list is not written again.
+let toolCacheText = null;
+
+function toolCacheDir(context) {
+  const { env, platform, homeDir } = context;
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const absolute = (value) => typeof value === 'string' && value !== '' && p.isAbsolute(value);
+  let dir;
+  if (env.COMMONPOST_MCP_CACHE_DIR !== undefined && env.COMMONPOST_MCP_CACHE_DIR !== '') {
+    dir = absolute(env.COMMONPOST_MCP_CACHE_DIR) ? env.COMMONPOST_MCP_CACHE_DIR : null;
+  } else if (platform === 'win32') {
+    const base = absolute(env.LOCALAPPDATA) ? env.LOCALAPPDATA : absolute(homeDir) ? p.join(homeDir, 'AppData', 'Local') : null;
+    dir = base && p.join(base, COMMONPOST_MCP_SUBDIR);
+  } else if (platform === 'darwin') {
+    dir = absolute(homeDir) ? p.join(homeDir, 'Library', 'Caches', COMMONPOST_MCP_SUBDIR) : null;
+  } else {
+    const base = absolute(env.XDG_CACHE_HOME) ? env.XDG_CACHE_HOME : absolute(homeDir) ? p.join(homeDir, '.cache') : null;
+    dir = base && p.join(base, COMMONPOST_MCP_SUBDIR);
+  }
+  if (dir && platform === 'win32' && isUncOrDevicePath(dir)) return null;
+  return dir;
+}
+
+function toolCacheFile(context) {
+  const dir = toolCacheDir(context);
+  if (!dir) return null;
+  const pinned = context.env.COMMONPOST_MCP_CONNECTION_FILE || '';
+  const name = pinned || PROFILE
+    ? `tools-${crypto.createHash('sha256').update(`${pinned}\n${PROFILE || ''}`).digest('hex').slice(0, 16)}.json`
+    : 'tools.json';
+  return (context.platform === 'win32' ? path.win32 : path.posix).join(dir, name);
+}
+
+// Null when the folder may hold the cache, else the reason it may not.
+function toolCacheDirProblem(dir, context) {
+  if (context.platform === 'win32') return null;
+  let stat;
+  try {
+    stat = context.fsImpl.lstatSync(dir);
+  } catch (err) {
+    return normalizeFsError(err);
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) return 'the folder is not a plain folder';
+  return ownerProblem('folder', stat, context);
+}
+
+function ownerProblem(what, stat, context) {
+  if (context.uid === null || context.uid === undefined) return 'the current user id is unknown';
+  if (stat.uid !== context.uid) return `the ${what} belongs to uid ${stat.uid}`;
+  if ((stat.mode & 0o022) !== 0) return `the ${what} mode ${(stat.mode & 0o777).toString(8)} lets group or others write`;
+  return null;
+}
+
+// The tools of a list worth caching, or null: a non-empty array of tools with distinct valid names and an object
+// as inputSchema.
+function cacheableToolList(tools) {
+  if (!Array.isArray(tools) || tools.length === 0 || tools.length > MAX_CACHED_TOOLS) return null;
+  const names = new Set();
+  for (const tool of tools) {
+    if (!tool || typeof tool !== 'object' || Array.isArray(tool)) return null;
+    if (typeof tool.name !== 'string' || !TOOL_NAME_PATTERN.test(tool.name) || names.has(tool.name)) return null;
+    if (!tool.inputSchema || typeof tool.inputSchema !== 'object' || Array.isArray(tool.inputSchema)) return null;
+    names.add(tool.name);
+  }
+  return tools;
+}
+
+// The cached tools, or null.
+function loadToolCache(context = createDiscoveryContext()) {
+  // What is on disk now: a missing, deleted or unusable file is written again at the next live list.
+  toolCacheText = null;
+  const file = toolCacheFile(context);
+  if (!file) return null;
+  let fd = null;
+  try {
+    const dirProblem = toolCacheDirProblem(path.dirname(file), context);
+    if (dirProblem) throw new Error(dirProblem);
+    fd = context.fsImpl.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const stat = context.fsImpl.fstatSync(fd);
+    if (!stat.isFile()) throw new Error('not a regular file');
+    if (stat.size > MAX_TOOL_CACHE_BYTES) throw new Error(`${stat.size} bytes`);
+    const fileProblem = context.platform === 'win32' ? null : ownerProblem('file', stat, context);
+    if (fileProblem) throw new Error(fileProblem);
+    const text = context.fsImpl.readFileSync(fd, 'utf8');
+    if (Buffer.byteLength(text) > MAX_TOOL_CACHE_BYTES) throw new Error('the file grew past the limit');
+    const data = JSON.parse(text);
+    if (!data || data.format !== TOOL_CACHE_FORMAT) throw new Error('another format');
+    const tools = cacheableToolList(data.tools);
+    if (!tools) throw new Error('no tool list');
+    toolCacheText = JSON.stringify(tools);
+    return tools;
+  } catch (err) {
+    if (err.code !== 'ENOENT' && !/not found/.test(err.message)) debugLog(`tool cache ignored: ${normalizeFsError(err)}`);
+    return null;
+  } finally {
+    if (fd !== null) {
+      try { context.fsImpl.closeSync(fd); } catch { /* nothing to do */ }
+    }
+  }
+}
+
+// Writes the list to the cache, if it is worth caching and not already there. Never throws.
+function saveToolCache(tools, context = createDiscoveryContext()) {
+  let tmp = null;
+  try {
+    if (!cacheableToolList(tools)) return;
+    const text = JSON.stringify(tools);
+    if (text === toolCacheText) return;
+    const file = toolCacheFile(context);
+    if (!file) return;
+    const dir = path.dirname(file);
+    context.fsImpl.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const dirProblem = toolCacheDirProblem(dir, context);
+    if (dirProblem) throw new Error(dirProblem);
+    const body = JSON.stringify({ format: TOOL_CACHE_FORMAT, bridgeVersion: BRIDGE_VERSION, savedAt: new Date().toISOString(), tools });
+    if (Buffer.byteLength(body) > MAX_TOOL_CACHE_BYTES) return;
+    tmp = `${file}.${process.pid}-${crypto.randomBytes(4).toString('hex')}.tmp`;
+    context.fsImpl.writeFileSync(tmp, body, { flag: 'wx', mode: 0o600 });
+    context.fsImpl.renameSync(tmp, file);
+    tmp = null;
+    toolCacheText = text;
+  } catch (err) {
+    debugLog(`tool cache not written: ${normalizeFsError(err)}`);
+  } finally {
+    if (tmp !== null) {
+      try { context.fsImpl.unlinkSync(tmp); } catch { /* nothing to do */ }
+    }
+  }
+}
+
+// tools/list: Thunderbird's list, else the cached one, else an empty list (see coldStart above).
+async function listTools(message) {
+  const cached = loadToolCache();
+  if (coldStartDeadline === null) coldStartDeadline = Date.now() + coldStart.waitMs;
+  const waitMs = cached ? 0 : Math.max(coldStartDeadline - Date.now(), 0);
+  let response;
+  try {
+    response = await liveToolList(message, waitMs);
+  } catch (err) {
+    if (!(err instanceof ThunderbirdUnreachable)) throw err;
+    const tools = READ_ONLY ? readOnlyToolList(cached || []) : cached || [];
+    // Not only with COMMONPOST_MCP_DEBUG: the clients keep the server's stderr in their logs, and this is the only
+    // place where the reason shows.
+    process.stderr.write(`[commonpost-mcp] tools/list answered with ${cached ? `the cached list (${tools.length} tools)` : 'an empty list'}: ${err.message}\n`);
+    watchForThunderbird(tools);
+    return { jsonrpc: '2.0', id: message.id, result: { tools } };
+  }
+  if (response?.result) {
+    stopWatchingForThunderbird();
+    saveToolCache(response.result.tools);
+    // Warm the version probe so the first tools/call does not wait for it.
+    startVersionProbe();
+    if (READ_ONLY && Array.isArray(response.result.tools)) {
+      response.result.tools = readOnlyToolList(response.result.tools);
+    }
+  }
+  return response;
+}
+
+// Thunderbird's answer to tools/list, trying again until waitMs has passed; throws ThunderbirdUnreachable after.
+async function liveToolList(message, waitMs) {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      if (readConnectionInfo()) return await forwardToThunderbird(message);
+      throw new ThunderbirdUnreachable(buildConnectionDiscoveryErrorMessage());
+    } catch (err) {
+      if (!(err instanceof ThunderbirdUnreachable) || Date.now() >= deadline) throw err;
+    }
+    await new Promise((resolve) => { setTimeout(resolve, Math.min(CONNECTION_RETRY_DELAY_MS, Math.max(deadline - Date.now(), 0))); });
+  }
+}
+
+// Set by startBridge: writes a notification to the client.
+let notifyClient = null;
+let thunderbirdWatch = null;
+let thunderbirdWatchBusy = false;
+// The tools the client got while Thunderbird was away, as JSON.
+let servedToolsText = null;
+
+function watchForThunderbird(servedTools) {
+  servedToolsText = JSON.stringify(servedTools);
+  if (thunderbirdWatch || !notifyClient) return;
+  thunderbirdWatch = setInterval(checkForThunderbird, coldStart.watchMs);
+  thunderbirdWatch.unref();
+}
+
+function stopWatchingForThunderbird() {
+  if (thunderbirdWatch) clearInterval(thunderbirdWatch);
+  thunderbirdWatch = null;
+}
+
+// For the tests: back to the state of a bridge that has just started.
+function resetColdStart() {
+  stopWatchingForThunderbird();
+  coldStartDeadline = null;
+  toolCacheText = null;
+  servedToolsText = null;
+}
+
+async function checkForThunderbird() {
+  if (thunderbirdWatchBusy || !readConnectionInfo()) return;
+  thunderbirdWatchBusy = true;
+  const watch = thunderbirdWatch;
+  try {
+    const response = await forwardToThunderbird({ jsonrpc: '2.0', id: 'commonpost-tool-list-watch', method: 'tools/list', params: {} });
+    const tools = response?.result?.tools;
+    // Stopped meanwhile (the client asked for the list and got Thunderbird's), or replaced by a later watch.
+    if (!watch || thunderbirdWatch !== watch || !Array.isArray(tools)) return;
+    stopWatchingForThunderbird();
+    saveToolCache(tools);
+    const shown = READ_ONLY ? readOnlyToolList(tools) : tools;
+    if (JSON.stringify(shown) !== servedToolsText) {
+      debugLog('Thunderbird found: sending notifications/tools/list_changed');
+      await notifyClient({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+    }
+  } catch (err) {
+    debugLog(`Thunderbird not reached yet: ${err.message}`);
+  } finally {
+    thunderbirdWatchBusy = false;
+  }
+}
+
 // The connection (port, token, pid) that last answered a request.
 let lastServed = null;
 // One probe state per connection: a new Thunderbird process (an add-on update
@@ -2281,6 +2532,12 @@ async function versionNotice() {
   return text;
 }
 
+// A refusal (403) comes from a Thunderbird that is there: that is not ThunderbirdUnreachable.
+function connectionFailure(err) {
+  const Failure = err.statusCode === 403 ? Error : ThunderbirdUnreachable;
+  return new Failure(`Connection failed: ${err.message}. Is Thunderbird running with the MCP extension? ${UNREACHABLE_HINT}`, { cause: err });
+}
+
 async function forwardToThunderbird(message) {
   const postData = JSON.stringify(message);
   const requestOptions = requestOptionsFor(message);
@@ -2327,12 +2584,12 @@ async function forwardToThunderbird(message) {
         clearConnectionCache();
         connInfo = readConnectionInfo();
         if (!connInfo) {
-          throw new Error(`Connection failed: ${err.message}. Is Thunderbird running with the MCP extension? ${UNREACHABLE_HINT}`, { cause: err });
+          throw connectionFailure(err);
         }
         continue;
       }
 
-      throw new Error(`Connection failed: ${err.message}. Is Thunderbird running with the MCP extension? ${UNREACHABLE_HINT}`, { cause: err });
+      throw connectionFailure(err);
     }
   }
 }
@@ -2359,6 +2616,7 @@ function startBridge() {
       }
     });
   }
+  notifyClient = (notification) => writeOutput(JSON.stringify(notification) + '\n');
 
   function dispatch(line) {
     if (!line.trim()) {
@@ -2462,6 +2720,17 @@ if (isEntryPoint()) {
 
 module.exports = {
   advanceToNextCandidate,
+  coldStart,
+  cacheableToolList,
+  listTools,
+  loadToolCache,
+  resetColdStart,
+  saveToolCache,
+  setClientNotifier: (notify) => { notifyClient = notify; },
+  stopWatchingForThunderbird,
+  toolCacheDir,
+  toolCacheFile,
+  ThunderbirdUnreachable,
   buildCandidateGroups,
   buildConnectionDiscoveryErrorMessage,
   clearConnectionCache,

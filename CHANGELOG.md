@@ -8,6 +8,13 @@ project is kept in this repository.
 
 ### Fixed
 
+- The bridge no longer fails when the MCP client starts before Thunderbird, at login for example (#132). Claude
+  Desktop marked the server failed, and it stayed so until restarted by hand. `tools/list` now answers with the tools
+  Thunderbird last listed, kept in the user's cache folder. With no list cached yet (before the bridge has first
+  reached Thunderbird, or after the folder was deleted), the first `tools/list` waits up to 20 s for Thunderbird and
+  then answers with an empty list; the reason goes to the bridge's stderr, which the clients keep in their logs. Tool calls still fail with "Is Thunderbird running?" until
+  Thunderbird is there, and the bridge sends `notifications/tools/list_changed` once Thunderbird lists other tools, for
+  the clients that act on it. Thanks to @sherbie182 for the report, its cause and the approach.
 - `getMessage` no longer removes visible text of HTML messages as hidden text (since 0.10.0):
   - newsletters laid out with MJML, and other templates that put `font-size:0px` on the wrappers of their columns,
     came back with an empty body;

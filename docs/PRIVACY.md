@@ -12,6 +12,9 @@ collects no data and sends nothing to its developers or to any third party.
 - No telemetry, no analytics, no crash reports, no accounts, no cookies.
 - The session token the add-on writes for the bridge lives in a file of your temporary directory, readable by your
   user only, and is replaced at each Thunderbird start.
+- The bridge keeps the last tool list Thunderbird gave it (tool names, descriptions and parameters; no mail and no
+  token) in your cache folder, so that a client started before Thunderbird still sees the tools. You can delete it
+  at any time.
 
 Questions: open an issue at <https://github.com/commonpost/thunderbird-mcp/issues>; security reports: see
 [SECURITY.md](../SECURITY.md).

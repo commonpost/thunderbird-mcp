@@ -280,7 +280,7 @@ case "$cmd" in
   run)
     start
     trap stop EXIT
-    TB_BENCH_STATE="$STATE" node --test --test-concurrency=1 "$@" "$ROOT"/test/bench/*.test.cjs
+    TB_BENCH_STATE="$STATE" node --test --test-concurrency=1 --require "$ROOT/test/support/isolate-tool-cache.cjs" "$@" "$ROOT"/test/bench/*.test.cjs
     ;;
   *) die "unknown command: $cmd" ;;
 esac

@@ -30,7 +30,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test test/*.cjs test/*.js",
+    "test": "node --test --require ./test/support/isolate-tool-cache.cjs test/*.cjs test/*.js",
     "test:tb": "bash scripts/tb-bench.sh run",
     "coverage": "node scripts/coverage/run.cjs",
     "lint": "eslint . --max-warnings 0",
