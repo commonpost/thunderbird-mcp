@@ -6,15 +6,25 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-11-06
+
+- Fixed: when your MCP client starts before Thunderbird, at login for example, the server no longer fails to start.
+  The bridge lists the tools Thunderbird last listed, and they work as soon as Thunderbird runs (#132).
+- Fixed: `getMessage` again returns the text of newsletters laid out with MJML or similar templates, which came back
+  empty, and keeps small or slightly transparent text; text that a reader cannot see is still left out.
+- **Bridge 0.19.2:** the first fix is in the bridge. Updating it is optional (a 0.17.1 bridge or later keeps
+  working), but worth it if your client starts before Thunderbird. Nothing in this release is urgent.
+
 ### Fixed
 
 - The bridge no longer fails when the MCP client starts before Thunderbird, at login for example (#132). Claude
   Desktop marked the server failed, and it stayed so until restarted by hand. `tools/list` now answers with the tools
   Thunderbird last listed, kept in the user's cache folder. With no list cached yet (before the bridge has first
   reached Thunderbird, or after the folder was deleted), the first `tools/list` waits up to 20 s for Thunderbird and
-  then answers with an empty list; the reason goes to the bridge's stderr, which the clients keep in their logs. Tool calls still fail with "Is Thunderbird running?" until
-  Thunderbird is there, and the bridge sends `notifications/tools/list_changed` once Thunderbird lists other tools, for
-  the clients that act on it. Thanks to @sherbie182 for the report, its cause and the approach.
+  then answers with an empty list; the reason goes to the bridge's stderr, which the clients keep in their logs.
+  Tool calls still fail with "Is Thunderbird running?" until Thunderbird is there, and the bridge sends
+  `notifications/tools/list_changed` once Thunderbird lists other tools, for the clients that act on it. Thanks to
+  @sherbie182 for the report, its cause and the approach.
 - `getMessage` no longer removes visible text of HTML messages as hidden text (since 0.10.0):
   - newsletters laid out with MJML, and other templates that put `font-size:0px` on the wrappers of their columns,
     came back with an empty body;
