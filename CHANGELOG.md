@@ -6,6 +6,25 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Fixed
+
+- `getMessage` no longer removes visible text of HTML messages as hidden text (since 0.10.0):
+  - newsletters laid out with MJML, and other templates that put `font-size:0px` on the wrappers of their columns,
+    came back with an empty body;
+  - text styled `font-size:0.875rem`, `font-size:0.9em` or `opacity:0.8` was removed, `0.` being read as 0.
+
+  Inline styles are now read as Gecko reads them. `font-size` (the `font` shorthand too) and `visibility` are
+  inherited, so a descendant that sets its own size or `visibility:visible` is shown; opacities multiply down the
+  tree. A declaration that would show text again counts only in a form Gecko surely accepts (no CSS escape or
+  comment, an exact number, a known keyword), so one it drops cannot undo one it applies.
+- Hidden text that a reader cannot see is removed in more cases: text smaller than 3px or under an opacity below
+  0.1, `content-visibility:hidden`, an SVG `fill-opacity` below 0.1, hidden children of `<pre>` and `<code>`, and
+  `<dialog>` (not open), `<datalist>`, `<noembed>`, `<noframes>`, `<iframe>` and `<title>` content in the body. A
+  link whose text is hidden no longer leaves its URL behind.
+- The `text` body format is read the same way, through the DOM, and its `bodyNote` counts the hidden elements too.
+  Long `data:` URIs are left out before the 2 MiB limit of the DOM path is checked; bodies still over it keep the
+  lexical fallback, which errs toward removing.
+
 ## [0.19.1] - 2026-11-05
 
 - **Security fix:** `updateEvent` and `deleteEvent` no longer change or delete a task given its id. They did so even

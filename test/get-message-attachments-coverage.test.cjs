@@ -242,7 +242,7 @@ function installStubs(sandbox) {
       return { body, bodyIsHtml: !!env().options.bodyIsHtml };
     },
     htmlToMarkdown: html => `MD(${html})`,
-    stripHtml: html => `TEXT(${html})`,
+    emailHtmlToText: html => `TEXT(${html})`,
     getUserTags: () => ["$label1"],
     displaySubject: hdr => hdr.mime2DecodedSubject,
     decodeHeaderValue: value => String(value || ""),

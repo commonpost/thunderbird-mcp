@@ -37,7 +37,9 @@ function loadHtmlHiddenContentHelpers() {
   assert.ok(start >= 0 && end > start, "HTML HIDDEN CONTENT HELPERS marker missing");
   const sandbox = {};
   vm.createContext(sandbox);
-  vm.runInContext(`${apiSource.slice(start, end)}
+  const strip = apiSource.slice(apiSource.indexOf("// BEGIN STRIP HELPERS"), apiSource.indexOf("// END STRIP HELPERS"));
+  vm.runInContext(`${strip}\n${apiSource.slice(start, end)}
+const isHiddenElementNode = node => elementHiding(node, typeof node.tagName === "string" ? node.tagName.toLowerCase() : "", VISIBLE_CONTENT).hidden;
 this.stripHtml = stripHtml;
 this.isHiddenElementNode = isHiddenElementNode;
 this.removeHiddenHtmlBlocks = removeHiddenHtmlBlocks;`, sandbox);
@@ -137,11 +139,16 @@ describe("isHiddenElementNode", () => {
     getAttribute: (n) => (n in attrs ? attrs[n] : null),
   });
 
-  it("recognises the hidden attribute and every covered CSS declaration", () => {
+  it("recognises the hidden attribute and the declarations that hide a whole element", () => {
     assert.equal(isHiddenElementNode(node({ hidden: "" })), true);
-    for (const style of ["display:none", "display: none", "visibility:hidden", "font-size:0", "font-size: 0px",
-      "opacity:0", "opacity: 0.0"]) {
+    for (const style of ["display:none", "display: none", "opacity:0", "opacity: 0.0"]) {
       assert.equal(isHiddenElementNode(node({ style })), true, style);
+    }
+  });
+
+  it("leaves font-size:0 and visibility:hidden to the content, which may undo them", () => {
+    for (const style of ["visibility:hidden", "font-size:0", "font-size: 0px"]) {
+      assert.equal(isHiddenElementNode(node({ style })), false, style);
     }
   });
 
