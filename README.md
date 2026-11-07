@@ -5,7 +5,10 @@
 [![Tools](https://img.shields.io/badge/41_Tools-email%2C_compose%2C_filters%2C_calendar%2C_contacts-blue.svg)](#what-you-can-do)
 [![Localhost Only](https://img.shields.io/badge/Privacy-localhost_only-green.svg)](#security)
 [![Thunderbird](https://img.shields.io/badge/Thunderbird-140%2B-0a84ff.svg)](https://www.thunderbird.net/)
+[![Platforms: Windows, macOS, Linux](https://img.shields.io/badge/Platforms-Windows_%7C_macOS_%7C_Linux-lightgrey.svg)](#quick-install-about-3-minutes)
 [![License: MIT](https://img.shields.io/badge/License-MIT-grey.svg)](LICENSE)
+
+MCP server giving AI assistants Thunderbird mail, calendar, contacts and filters. Windows, macOS, Linux.
 
 Give your AI assistant full access to Thunderbird -- search mail, compose messages, manage filters, and organize your inbox. All through the [Model Context Protocol](https://modelcontextprotocol.io/).
 
@@ -19,9 +22,27 @@ Give your AI assistant full access to Thunderbird -- search mail, compose messag
 
 ---
 
+## Contents
+
+- [Quick install (about 3 minutes)](#quick-install-about-3-minutes)
+- [Why?](#why)
+- [How it works](#how-it-works)
+- [What you can do](#what-you-can-do)
+- [Setup](#setup)
+- [Security](#security)
+- [If Thunderbird disables Experiment add-ons on the Release channel](#if-thunderbird-disables-experiment-add-ons-on-the-release-channel)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [Project structure](#project-structure)
+- [Known issues](#known-issues)
+- [License and credits](#license-and-credits)
+
 ## Quick install (about 3 minutes)
 
-Requirements: Windows, macOS or Linux, with Thunderbird 140 or later and Node.js 22 or later. On Windows, attach files through the bridge (see [Attachments refused](#attachments-refused)).
+Requirements: Windows, macOS or Linux, with Thunderbird 140 or later and Node.js 22 or later.
+
+Every tool works the same on the three systems. One difference: on Windows, attachments go through the bridge rather
+than by file path (see [attachments on Windows](#attachments-refused)).
 
 1. Install the extension. Download `commonpost-mcp-v<version>.xpi` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest). In Thunderbird: Tools > Add-ons and Themes > gear menu > Install Add-on From File. Restart Thunderbird.
 2. Download `mcp-bridge.cjs` from the **same release** and put it in a folder you will keep, for example `~/commonpost-mcp/`. The bridge is a single file and needs nothing else: the release does not ship a `package.json`. (The bridge carries its own version; it reads no `package.json`.)
