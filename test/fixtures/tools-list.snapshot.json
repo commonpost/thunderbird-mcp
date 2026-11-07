@@ -2127,7 +2127,7 @@
     {
       "name": "createFilter",
       "title": "Create Filter",
-      "description": "Create a mail filter rule on an account. A rule that forwards or replies, or any new rule in a list already holding a sending rule, is refused by default (\"Filter rules that send mail: Always block\"); with \"Ask me each time\" the call returns {status: \"pending_user_confirmation\", confirmationId} and Thunderbird asks the user, who alone can accept (follow up with listFilters, confirmation: true). Forward takes one plain address; reply takes a Templates message (<folder URI>?messageId=<id>&subject=<subject>). Sending rules on outgoing mail (type 64) are always refused.",
+      "description": "Create a mail filter rule on an account. A rule that forwards or replies, or any new rule in a list already holding a sending rule, is refused by default (\"Filter rules that send mail: Always block\"); with \"Ask me each time\" the call returns {status: \"pending_user_confirmation\", confirmationId} and Thunderbird asks the user, who alone can accept (follow up with listFilters, confirmation: true). Forward takes one plain address; reply takes a Templates message (<folder URI>?messageId=<id>&subject=<subject>). Sending rules on outgoing mail, archiving or periodic runs (type 64, 128, 256) are always refused.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2215,7 +2215,7 @@
     {
       "name": "updateFilter",
       "title": "Update Filter",
-      "description": "Change an existing filter's properties, conditions or actions. Adding forward or reply actions, or changing a list that holds a sending rule (enabling or editing it included), is refused by default (\"Always block\"); with \"Ask me each time\" the call returns {status: \"pending_user_confirmation\", confirmationId} (follow up with listFilters, confirmation: true). Sending rules on outgoing mail (type 64) are always refused.",
+      "description": "Change an existing filter's properties, conditions or actions. Adding forward or reply actions, or changing a list that holds a sending rule (enabling or editing it included), is refused by default (\"Always block\"); with \"Ask me each time\" the call returns {status: \"pending_user_confirmation\", confirmationId} (follow up with listFilters, confirmation: true). Sending rules on outgoing mail, archiving or periodic runs (type 64, 128, 256) are always refused.",
       "inputSchema": {
         "type": "object",
         "properties": {

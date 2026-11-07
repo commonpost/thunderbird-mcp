@@ -4178,7 +4178,7 @@ const FILTER_TYPE_KNOWN_BITS = (() => {
 })();
 
 function validateFilterType(type) {
-  if (!Number.isInteger(type) || type <= 0 || (type & ~FILTER_TYPE_KNOWN_BITS) !== 0) {
+  if (!Number.isInteger(type) || type <= 0 || type > FILTER_TYPE_KNOWN_BITS || (type & ~FILTER_TYPE_KNOWN_BITS) !== 0) {
     throw new Error(`type must be a positive integer made of nsMsgFilterType bits (known bits: 0x${FILTER_TYPE_KNOWN_BITS.toString(16)}), `
       + `got: ${JSON.stringify(type)}`);
   }
@@ -4335,6 +4335,10 @@ const FILTER_SEND_ACTION_TYPES = ["Forward", "Reply"]
   .filter((v) => v !== undefined);
 const FILTER_ACTION_FORWARD = resolveXpcomConstant("nsMsgFilterAction", "Forward");
 const FILTER_TYPE_POST_OUTGOING = resolveXpcomConstant("nsMsgFilterType", "PostOutgoing") ?? 0x40;
+// A rule run on archiving acts on the messages being archived, and a periodic one on every message of the Inbox at
+// each run (PeriodicFilterManager applies it to the folders, not to new mail): neither may send mail.
+const FILTER_TYPE_ARCHIVE = resolveXpcomConstant("nsMsgFilterType", "Archive") ?? 0x80;
+const FILTER_TYPE_PERIODIC = resolveXpcomConstant("nsMsgFilterType", "Periodic") ?? 0x100;
 const FILTER_SEND_GUARD_NOTE =
   'blocked by "Filter rules that send mail: Always block" (extensions.commonpost-mcp.blockFilterForwardReply, on by default); '
   + "the user can create or change such a rule in Thunderbird's own filter editor (Tools > Message Filters), "
@@ -4493,7 +4497,8 @@ function selectManualRunFilters(filterList, manualType, isTargetAllowed) {
 // There is no setting that writes such a rule without asking. A value that
 // cannot be read, or is not a boolean, gives "block" (fail closed).
 // Refused whatever the setting: a rule that sends mail on OUTGOING mail
-// (nsMsgFilterType.PostOutgoing), anything involving an action that cannot be
+// (nsMsgFilterType.PostOutgoing), on archiving or periodically (Archive,
+// Periodic: mail already in the mailbox), anything involving an action that cannot be
 // read (it could not be shown), and what cannot be shown in full in a dialog
 // (too many conditions, actions or sending rules).
 // Limits: one confirmation pending at a time, at most five dialogs per hour
@@ -4585,6 +4590,13 @@ function decideSendRuleChange({ operation, listRules = [], result = null, target
   if (resultSends && result && ((Number(result.type) || 0) & FILTER_TYPE_POST_OUTGOING) !== 0) {
     return { verdict: "refuse", reason: "A filter rule that sends mail (or runs an add-on action) cannot run on outgoing "
       + "mail (type includes 64, PostOutgoing): refused whatever the setting" };
+  }
+  if (resultSends && result && ((Number(result.type) || 0) & (FILTER_TYPE_ARCHIVE | FILTER_TYPE_PERIODIC)) !== 0) {
+    return { verdict: "refuse", reason: "A filter rule that sends mail (or runs an add-on action) cannot run on archiving "
+      + "or periodically (type includes 128, Archive, or 256, Periodic): it would send mail already in the mailbox, the "
+      + "messages being archived or the matching messages of the Inbox at every run. Refused whatever the setting; such "
+      + "a rule can be deleted (deleteFilter), given a type without 128 and 256, or changed in Thunderbird's filter "
+      + "editor (Tools > Message Filters)" };
   }
   // Deleting a rule that sends mail (or runs an add-on action) is always the
   // way out, as with "block".
@@ -5045,6 +5057,35 @@ const FILTER_CONFIRM_SEND_WARNING =
   "This rule will automatically send matching incoming mail, every time, without review.";
 const FILTER_CONFIRM_SEND_WARNING_DISABLED =
   "The rule is disabled for now; once enabled, it will automatically send matching incoming mail, every time, without review.";
+// A rule marked "Manually Run" also runs on mail already in a folder: Run Filters on Folder and Run Filters on Selected
+// Messages (and applyFilters, which asks again) hand it those messages.
+const FILTER_CONFIRM_MANUAL_SEND_WARNING =
+  "Run by hand (Run Filters on Folder or on Selected Messages), it also sends the matching messages already there.";
+const FILTER_CONFIRM_MANUAL_ONLY_SEND_WARNING =
+  "Run by hand (Run Filters on Folder or on Selected Messages), it sends the matching messages already there, without review.";
+// The types under which a rule acts on new mail as it arrives (InboxRule, InboxJavaScript, NewsRule, NewsJavaScript,
+// PostPlugin).
+const FILTER_TYPE_NEW_MAIL_BITS = ["InboxRule", "InboxJavaScript", "NewsRule", "NewsJavaScript", "PostPlugin"]
+  .reduce((mask, idl, i) => mask | (resolveXpcomConstant("nsMsgFilterType", idl) ?? [0x1, 0x2, 0x4, 0x8, 0x20][i]), 0);
+
+// What a rule that sends mail will send, from its type: new mail as it arrives, and the messages already in a folder
+// when filters are run on it by hand. Outgoing mail, archiving and periodic runs are refused before any dialog
+// (decideSendRuleChange); here they, and a type that says nothing of when the rule sends, throw, so that the dialog is
+// a second check: the caller refuses the request.
+function filterSendWarnings(type, disabled) {
+  const t = Number(type) || 0;
+  if (t & (FILTER_TYPE_POST_OUTGOING | FILTER_TYPE_ARCHIVE | FILTER_TYPE_PERIODIC)) {
+    throw new Error(`a rule that sends mail cannot run on outgoing mail, on archiving or periodically (type ${t})`);
+  }
+  const lines = [];
+  if (t & FILTER_TYPE_NEW_MAIL_BITS) lines.push(disabled ? FILTER_CONFIRM_SEND_WARNING_DISABLED : FILTER_CONFIRM_SEND_WARNING);
+  if (t & FILTER_TYPE_MANUAL) {
+    lines.push(lines.length ? FILTER_CONFIRM_MANUAL_SEND_WARNING
+      : `${disabled ? "The rule is disabled for now; once enabled: " : ""}${FILTER_CONFIRM_MANUAL_ONLY_SEND_WARNING}`);
+  }
+  if (!lines.length) throw new Error(`the type of the rule (${t}) does not say when it would send mail`);
+  return lines;
+}
 
 // d = {
 //   operation: "create" | "update" | "delete" | "reorder" | "apply",
@@ -5136,7 +5177,7 @@ function buildFilterConfirmationDialog(d) {
   } else {
     if (d.resultSends) {
       L.push(`${ruleDisabled ? "Once enabled, mail" : "Mail"} is sent automatically to: ${describeSendTargets([d.rule])}`);
-      L.push(ruleDisabled ? FILTER_CONFIRM_SEND_WARNING_DISABLED : FILTER_CONFIRM_SEND_WARNING);
+      L.push(...filterSendWarnings(d.rule && d.rule.type, ruleDisabled));
     }
     if (context.length) {
       L.push(`Rules already in this list send to: ${describeSendTargets(context)}`);
@@ -7918,7 +7959,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "createFilter",
         group: "filters", crud: "create",
         title: "Create Filter",
-        description: "Create a mail filter rule on an account. A rule that forwards or replies, or any new rule in a list already holding a sending rule, is refused by default (\"Filter rules that send mail: Always block\"); with \"Ask me each time\" the call returns {status: \"pending_user_confirmation\", confirmationId} and Thunderbird asks the user, who alone can accept (follow up with listFilters, confirmation: true). Forward takes one plain address; reply takes a Templates message (<folder URI>?messageId=<id>&subject=<subject>). Sending rules on outgoing mail (type 64) are always refused.",
+        description: "Create a mail filter rule on an account. A rule that forwards or replies, or any new rule in a list already holding a sending rule, is refused by default (\"Filter rules that send mail: Always block\"); with \"Ask me each time\" the call returns {status: \"pending_user_confirmation\", confirmationId} and Thunderbird asks the user, who alone can accept (follow up with listFilters, confirmation: true). Forward takes one plain address; reply takes a Templates message (<folder URI>?messageId=<id>&subject=<subject>). Sending rules on outgoing mail, archiving or periodic runs (type 64, 128, 256) are always refused.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7960,7 +8001,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "updateFilter",
         group: "filters", crud: "update",
         title: "Update Filter",
-        description: "Change an existing filter's properties, conditions or actions. Adding forward or reply actions, or changing a list that holds a sending rule (enabling or editing it included), is refused by default (\"Always block\"); with \"Ask me each time\" the call returns {status: \"pending_user_confirmation\", confirmationId} (follow up with listFilters, confirmation: true). Sending rules on outgoing mail (type 64) are always refused.",
+        description: "Change an existing filter's properties, conditions or actions. Adding forward or reply actions, or changing a list that holds a sending rule (enabling or editing it included), is refused by default (\"Always block\"); with \"Ask me each time\" the call returns {status: \"pending_user_confirmation\", confirmationId} (follow up with listFilters, confirmation: true). Sending rules on outgoing mail, archiving or periodic runs (type 64, 128, 256) are always refused.",
         inputSchema: {
           type: "object",
           properties: {

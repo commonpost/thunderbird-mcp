@@ -153,7 +153,8 @@ describe("filter name and type", () => {
   it("validateFilterType accepts nsMsgFilterType bits only (every bit, not just All = 0x1f)", () => {
     assert.equal(api.FILTER_TYPE_KNOWN_BITS, 0x1ff);
     for (const ok of [1, 16, 17, 0x20, 0x40, 17 | 0x40, 0x80, 0x100, 0x1ff]) assert.equal(api.validateFilterType(ok), ok);
-    for (const bad of [0, -1, 0x200, 1024, 0x7fffffff, 1.5, NaN, "17"]) {
+    // 2 ** 32 + 17 acts as 17 in the 32-bit field: refused too.
+    for (const bad of [0, -1, 0x200, 1024, 0x7fffffff, 1.5, NaN, "17", 2 ** 32, 2 ** 32 + 17, 2 ** 32 + 0x100]) {
       assert.throws(() => api.validateFilterType(bad), /nsMsgFilterType bits/, String(bad));
     }
   });

@@ -315,6 +315,21 @@ describe("decideSendRuleChange (confirm policy)", () => {
     // A benign rule may still be an outgoing rule.
     assert.equal(D({ operation: "create", listRules: [], result: { kinds: [], type: 0x40 } }).verdict, "allow");
   });
+  it("a sending rule run on archiving or periodically is refused, whatever else: it would send mail already there", () => {
+    for (const type of [0x80, 0x100, 17 | 0x100, 0x20 | 0x80, 0x1 | 0x10 | 0x80 | 0x100]) {
+      for (const k of [["forward"], ["reply"], ["custom"]]) {
+        const d = D({ operation: "create", listRules: [], result: { kinds: k, type } });
+        assert.equal(d.verdict, "refuse", `${type} ${k}`);
+        assert.match(d.reason, /cannot run on archiving or periodically \(type includes 128, Archive, or 256, Periodic\)/);
+      }
+    }
+    // Made periodic by an update, or changed while periodic: refused too.
+    assert.equal(D({ operation: "update", listRules: [rule(["forward"])], result: { kinds: ["forward"], type: 0x100 }, targetIndex: 0 }).verdict, "refuse");
+    // A benign periodic or archiving rule is not concerned; deleting a periodic sending rule stays the way out.
+    assert.equal(D({ operation: "create", listRules: [], result: { kinds: [], type: 0x100 } }).verdict, "allow");
+    assert.equal(D({ operation: "create", listRules: [], result: { kinds: [], type: 0x80 } }).verdict, "allow");
+    assert.equal(D({ operation: "delete", listRules: [rule(["forward"], 0)], targetIndex: 0 }).verdict, "allow");
+  });
   it("any change to a list holding a sending rule is confirmed (create, update, reorder, apply, delete of another rule)", () => {
     const list = [rule(["forward"], 1, "fwd")];
     for (const [op, extra] of [["create", { result: { kinds: [], type: 17 } }], ["update", { result: { kinds: [], type: 17 }, targetIndex: 0 }],
@@ -513,6 +528,29 @@ describe("the confirmation dialog", () => {
     assert.match(d.text, /expires at 12:10:00; closing this window refuses it/);
     assert.match(d.text, /Runs on: new mail \(before junk classification\), manual run/);
     assert.doesNotMatch(d.text, /don't ask|do not ask|remember/i);
+  });
+  it("what the rule will send follows its type: new mail as it arrives, messages already in a folder when run by hand", () => {
+    const NEW = "This rule will automatically send matching incoming mail, every time, without review.";
+    const ALSO = "Run by hand (Run Filters on Folder or on Selected Messages), it also sends the matching messages already there.";
+    const ONLY = "Run by hand (Run Filters on Folder or on Selected Messages), it sends the matching messages already there, without review.";
+    const dialog = (type, enabled = true) => {
+      const r = api.serializeFilterRule(forwardFilter("cp-fwd", "a@example.com", { type, enabled }), 0);
+      return api.buildFilterConfirmationDialog({ operation: "create", account, rule: r, position: 0, count: 0,
+        context: [], resultSends: true, expiresAt: 0, formatTime: fmt }).text.split("\n");
+    };
+    const warnings = (lines) => lines.filter((l) => /^(This rule will|The rule is disabled|Run by hand)/.test(l));
+    const refused = (type) => assert.throws(() => dialog(type), /cannot run on outgoing mail, on archiving or periodically|does not say when/, String(type));
+    assert.deepEqual(warnings(dialog(17)), [NEW, ALSO], "new mail + manual run (the default type)");
+    assert.deepEqual(warnings(dialog(1)), [NEW], "new mail only");
+    assert.deepEqual(warnings(dialog(0x20)), [NEW], "after junk classification");
+    assert.deepEqual(warnings(dialog(0x4)), [NEW], "newsgroup messages");
+    assert.deepEqual(warnings(dialog(0x10)), [ONLY], "manual run only: no word about incoming mail");
+    assert.deepEqual(warnings(dialog(0x10, false)), [`The rule is disabled for now; once enabled: ${ONLY}`]);
+    assert.deepEqual(warnings(dialog(17, false)),
+      ["The rule is disabled for now; once enabled, it will automatically send matching incoming mail, every time, without review.", ALSO]);
+    // A second check behind decideSendRuleChange: no dialog for a sending rule run on outgoing mail, on archiving or
+    // periodically, nor for a type that says nothing of when it would send.
+    for (const type of [0x40, 0x80, 0x100, 17 | 0x100, 0x10 | 0x80, 0]) refused(type);
   });
   it("long names are cut visibly; invisible characters made visible", () => {
     const r = api.serializeFilterRule(forwardFilter("N".repeat(300) + "\u202E", "a@example.com"), 0);
@@ -1336,6 +1374,14 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
     assert.equal(w.dialogs.length, 0);
   });
 
+  it("a forward run on archiving or periodically (type 128, 256): refused, no dialog, nothing written", () => {
+    for (const type of [128, 256, 1 | 256]) {
+      const r = w.h.createFilter("account1", "cp-periodic", true, type, COND, FWD);
+      assert.match(r.error, /cannot run on archiving or periodically/, String(type));
+    }
+    assert.equal(w.dialogs.length, 0);
+  });
+
   it("an invalid forward target or a non-template reply is refused before any dialog", () => {
     assert.match(w.h.createFilter("account1", "x", true, 17, COND, [{ type: "forward", value: "a@x.com, b@y.com" }]).error,
       /exactly one plain e-mail address/);
@@ -1404,6 +1450,43 @@ describe("handlers, policy confirm (setting off): the call returns at once, noth
   it("updateFilter marking the forward rule for outgoing mail: refused", () => {
     seedForwardRule(w);
     assert.match(w.h.updateFilter("account2", 0, undefined, undefined, 17 | 64).error, /cannot run on outgoing mail/);
+    assert.equal(w.dialogs.length, 0);
+  });
+
+  it("a benign periodic rule given a forward by an actions-only update: refused, no dialog, nothing written", () => {
+    const f = makeFilter("periodic-tag");
+    f.filterType = 256;
+    w.h.buildTerms(f, [{ attrib: "subject", op: "contains", value: "facture" }]);
+    w.h.buildRuleActions(f, [{ type: "markRead" }], () => ({ error: "x" }));
+    w.lists.account2.filters.push(f);
+    const r = w.h.updateFilter("account2", 0, undefined, undefined, undefined, undefined, FWD);
+    assert.match(r.error, /cannot run on archiving or periodically/);
+    assert.equal(w.dialogs.length, 0);
+    assert.equal(w.lists.account2.filters[0], f);
+    assert.equal(f.filterType, 256);
+  });
+
+  it("a periodic forward rule made in Thunderbird: renaming or disabling it through MCP is refused, deleting it is not", () => {
+    const f = seedForwardRule(w);
+    f.filterType = 256;
+    for (const call of [
+      () => w.h.updateFilter("account2", 0, "renamed"),
+      () => w.h.updateFilter("account2", 0, undefined, false),
+    ]) {
+      const r = call();
+      assert.match(r.error, /cannot run on archiving or periodically.*can be deleted \(deleteFilter\)/);
+    }
+    assert.equal(w.dialogs.length, 0);
+    assert.equal(f.filterName, "manual-transfer-rule");
+    assert.equal(f.enabled, true);
+    assert.equal(w.h.deleteFilter("account2", 0).success, true);
+  });
+
+  it("updateFilter making the forward rule periodic or archiving: refused", () => {
+    seedForwardRule(w);
+    for (const type of [17 | 256, 128]) {
+      assert.match(w.h.updateFilter("account2", 0, undefined, undefined, type).error, /cannot run on archiving or periodically/);
+    }
     assert.equal(w.dialogs.length, 0);
   });
 
