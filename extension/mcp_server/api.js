@@ -58,7 +58,7 @@ const MCP_SERVER_INSTRUCTIONS = [
   "Conversation: searchMessages threadOf {messageId, folderPath} returns the thread across folders, oldest first.",
   "Replies: replyToMessage with replyAll and empty to/cc computes recipients like Thunderbird; latestInThread answers the newest message; mode \"draft\" saves a draft without sending.",
   "Drafts: edit with saveDraft draftId instead of delete + recreate.",
-  "Compose and create tools open a review window by default; do not claim a message was sent unless the result says so.",
+  "Compose tools open a review window by default; createEvent and createTask may add at once or open a dialog. Never claim a message was sent or an item created unless the result says so.",
   "IMAP folders may be stale until opened in Thunderbird.",
 ].join("\n");
 // END SERVER INSTRUCTIONS
@@ -5761,8 +5761,9 @@ function composeModeRefusal(composeMode, { skipReviewBlocked, saveDraftEnabled }
 const CALENDAR_SKIPREVIEW_BLOCKED_ERROR = "User preference blocks skipReview for events and tasks. Retry with skipReview: false (or omitted) to open the review dialog instead.";
 
 // Whether createEvent and createTask must refuse skipReview (the preference `prefName` of the nsIPrefBranch `prefs`).
-// Until the user sets it, it follows the block for mail (`mailBlocked()`): a configuration from before it existed
-// behaves as it did. A value that is not a boolean, or a preference that cannot be read, blocks.
+// Until it is set, it follows the block for mail (`mailBlocked()`): a configuration from before it existed behaves
+// as it did (onInstalled sets it: applyCalendarInstallDefault). A value that is not a boolean, or a preference
+// that cannot be read, blocks.
 function calendarSkipReviewBlocked(prefs, prefName, mailBlocked) {
   try {
     const type = prefs.getPrefType(prefName);
@@ -5771,6 +5772,29 @@ function calendarSkipReviewBlocked(prefs, prefName, mailBlocked) {
   } catch {
     return true;
   }
+}
+
+// What createEvent or createTask does with `skipReview` while the block for events and tasks is `blocked`:
+// "direct" (added at once), "dialog" or "refused". true asks for "direct", false for the dialog; without it, the
+// block decides, so a user who turned it off gets the event added at once, with no window to find in Thunderbird.
+function calendarCreateMode(skipReview, blocked) {
+  if (skipReview === undefined || skipReview === null) return blocked ? "dialog" : "direct";
+  if (!skipReview) return "dialog";
+  return blocked ? "refused" : "direct";
+}
+
+// Writes the block for events and tasks (`prefName`) on onInstalled (`reason`) while it holds no value. A new install
+// (reason "install" in a profile where the block for mail, `mailPrefName`, was never set either) turns it off:
+// events and tasks are added at once. An update writes what the profile had, the value of the block for mail, so a
+// later "install" of the same profile (Remove then Undo in the Add-ons Manager, a rebuilt add-on database) cannot
+// turn the dialog off. Other reasons write nothing. Returns the value written, or null.
+function applyCalendarInstallDefault(prefs, prefName, mailPrefName, reason) {
+  if (reason !== "install" && reason !== "update") return null;
+  if (prefs.getPrefType(prefName) !== prefs.PREF_INVALID) return null;
+  const newProfile = reason === "install" && prefs.getPrefType(mailPrefName) === prefs.PREF_INVALID;
+  const blocked = newProfile ? false : calendarSkipReviewBlocked(prefs, prefName, () => prefs.getBoolPref(mailPrefName, true));
+  prefs.setBoolPref(prefName, blocked);
+  return blocked;
 }
 
 const LATEST_IN_THREAD_SEND_ERROR = "latestInThread cannot be combined with mode \"send\" (or skipReview): anyone can join a conversation with a message, and the newest one would be quoted and answered without review. Use mode \"draft\" or \"window\", or find the message with searchMessages threadOf and pass its messageId.";
@@ -7388,7 +7412,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "createEvent",
         group: "calendar", crud: "create",
         title: "Create Event",
-        description: "Create a calendar event (changes: updateEvent; to-dos: createTask). By default it opens Thunderbird's event dialog filled in, and the event exists once the user saves it (listEvents with the reviewId of the result tells). skipReview adds it at once, only if the user turned off the default-on skipReview block for events and tasks.",
+        description: "Create a calendar event (changes: updateEvent; to-dos: createTask). No duplicate check: listEvents first. It is added at once (eventId in the result), unless the user's settings ask for Thunderbird's event dialog: then it exists once the user saves it (listEvents with the reviewId of the result tells).",
         inputSchema: {
           type: "object",
           properties: {
@@ -7404,7 +7428,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             categories: { type: "array", items: { type: "string" }, description: "Category labels, case-sensitive: take exact existing names from listCategories" },
             onlineMeeting: { type: "boolean", description: "Add a Teams link via Exchange (Office 365 only; no-op elsewhere), shown as onlineMeetingURL" },
             reminders: { type: "array", items: { type: "integer", minimum: 0, maximum: 40320 }, maxItems: 5, description: "Display reminders in minutes before the start, e.g. [1440, 15]" },
-            skipReview: { type: "boolean", description: "Add without the dialog; refused while the skipReview block for events and tasks is on (default: false)" },
+            skipReview: { type: "boolean", description: "true: add at once (refused if the settings ask for the dialog); false: open the dialog (default: the settings)" },
           },
           required: ["title", "startDate"],
         },
@@ -7469,7 +7493,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "createTask",
         group: "calendar", crud: "create",
         title: "Create Task",
-        description: "Create a task (to-do). By default it opens Thunderbird's task dialog filled in, and the task exists once the user saves it (listTasks with the reviewId of the result tells). skipReview adds it at once, only if the user turned off the default-on skipReview block for events and tasks.",
+        description: "Create a task (to-do). No duplicate check: listTasks first. It is added at once (taskId in the result), unless the user's settings ask for Thunderbird's task dialog: then it exists once the user saves it (listTasks with the reviewId of the result tells).",
         inputSchema: {
           type: "object",
           properties: {
@@ -7479,7 +7503,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             description: { type: "string", description: "Task description/body" },
             priority: { type: "integer", minimum: 0, maximum: 9, description: "Priority: 1=high, 5=normal, 9=low" },
             categories: { type: "array", items: { type: "string" }, description: "Category labels. Use listCategories to get exact existing names before setting." },
-            skipReview: { type: "boolean", description: "Add without the dialog; refused while the skipReview block for events and tasks is on (default: false)" },
+            skipReview: { type: "boolean", description: "true: add at once (refused if the settings ask for the dialog); false: open the dialog (default: the settings)" },
           },
           required: ["title"],
         },
@@ -8538,8 +8562,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * The block of skipReview for createEvent and createTask, apart from
              * the one for mail: an event or task added at once sends nothing
              * (these tools take no attendees), though anyone the calendar is
-             * shared with can see it. It follows the block for mail until the
-             * user sets it, and is on by default.
+             * shared with can see it. Off on a new install (the event is added
+             * at once unless the client asks for the dialog); an update from a
+             * version without it writes the value of the block for mail. On,
+             * skipReview is refused and the dialog opens.
              */
             function isCalendarSkipReviewBlocked() {
               return calendarSkipReviewBlocked(Services.prefs, PREF_BLOCK_CALENDAR_SKIPREVIEW, isSkipReviewBlocked);
@@ -12930,12 +12956,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               if (!cal || !CalEvent) {
                 return { error: "Calendar module not available" };
               }
-              if (skipReview && isCalendarSkipReviewBlocked()) {
-                return { error: CALENDAR_SKIPREVIEW_BLOCKED_ERROR };
-              }
+              const mode = calendarCreateMode(skipReview, isCalendarSkipReviewBlocked());
+              if (mode === "refused") return { error: CALENDAR_SKIPREVIEW_BLOCKED_ERROR };
               try {
                 const win = Services.wm.getMostRecentWindow("mail:3pane");
-                if (!win && !skipReview) {
+                if (!win && mode === "dialog") {
                   return { error: "No Thunderbird window found" };
                 }
 
@@ -13066,9 +13091,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   return result;
                 };
 
-                if (skipReview) {
-                  await targetCalendar.addItem(event);
-                  return withReminders({ success: true, message: `Event "${title}" added to calendar "${targetCalendar.name}"` });
+                if (mode === "direct") {
+                  const added = await targetCalendar.addItem(event);
+                  return withReminders({
+                    success: true,
+                    ...addedItemFields(added || event, targetCalendar, "event"),
+                    message: `Event "${title}" added to calendar "${targetCalendar.name}"`,
+                  });
                 }
 
                 const reviewId = openCalendarReviewDialog(win, event, targetCalendar, "event");
@@ -13193,6 +13222,27 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 priority,
                 description: item.getProperty("DESCRIPTION") || "",
               };
+            }
+
+            // The id and dates of an event or task createEvent or createTask just added, read as listEvents and
+            // listTasks print them, so a client can show what was added and change or delete it. The item is saved
+            // whatever happens here: a field that cannot be read is left out, never turned into an error that a
+            // client would retry, adding the item twice.
+            function addedItemFields(item, calendar, kind) {
+              const fields = {};
+              try {
+                const view = kind === "event" ? formatEvent(item, calendar) : formatTask(item, calendar);
+                if (view.id) fields[kind === "event" ? "eventId" : "taskId"] = view.id;
+                fields.calendarId = view.calendarId;
+                if (kind === "event") {
+                  Object.assign(fields, { startDate: view.startDate, endDate: view.endDate, allDay: view.allDay });
+                } else if (view.dueDate) {
+                  fields.dueDate = view.dueDate;
+                }
+              } catch (e) {
+                console.warn("commonpost-mcp: the added item could not be read back:", e);
+              }
+              return fields;
             }
 
             // A task of `calendar` by id: direct lookup first, then a scan of all its tasks. An item found by id
@@ -13764,9 +13814,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
             async function createTask(title, dueDate, calendarId, description, priority, categories, skipReview) {
               if (!cal || !CalTodo) return { error: "Calendar module not available" };
-              if (skipReview && isCalendarSkipReviewBlocked()) {
-                return { error: CALENDAR_SKIPREVIEW_BLOCKED_ERROR };
-              }
+              const mode = calendarCreateMode(skipReview, isCalendarSkipReviewBlocked());
+              if (mode === "refused") return { error: CALENDAR_SKIPREVIEW_BLOCKED_ERROR };
               try {
                 let dueDt = null;
                 if (dueDate) {
@@ -13823,9 +13872,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
                 todo.calendar = targetCalendar;
 
-                if (skipReview) {
-                  await targetCalendar.addItem(todo);
-                  return { success: true, message: `Task "${title}" created in calendar "${targetCalendar.name}"` };
+                if (mode === "direct") {
+                  const added = await targetCalendar.addItem(todo);
+                  return {
+                    success: true,
+                    ...addedItemFields(added || todo, targetCalendar, "task"),
+                    message: `Task "${title}" created in calendar "${targetCalendar.name}"`,
+                  };
                 }
 
                 const win = Services.wm.getMostRecentWindow("mail:3pane");
@@ -19712,6 +19765,18 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           // Once set, it no longer follows the block for mail.
           Services.prefs.setBoolPref(PREF_BLOCK_CALENDAR_SKIPREVIEW, blockCalendarSkipReview);
           return { success: true, blockCalendarSkipReview };
+        },
+
+        // Called by the background script on onInstalled, with its reason.
+        applyInstallDefaults: async function(reason) {
+          let blockCalendarSkipReview = null;
+          try {
+            blockCalendarSkipReview = applyCalendarInstallDefault(Services.prefs, PREF_BLOCK_CALENDAR_SKIPREVIEW,
+              PREF_BLOCK_SKIPREVIEW, reason);
+          } catch (e) {
+            console.warn("commonpost-mcp: the defaults of the install could not be written:", e);
+          }
+          return { blockCalendarSkipReview };
         },
 
         getBlockFilterForwardReply: async function() {

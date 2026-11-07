@@ -82,7 +82,7 @@ const SERVER_INSTRUCTIONS = [
   'Conversation: searchMessages threadOf {messageId, folderPath} returns the thread across folders, oldest first.',
   'Replies: replyToMessage with replyAll and empty to/cc computes recipients like Thunderbird; latestInThread answers the newest message; mode "draft" saves a draft without sending.',
   'Drafts: edit with saveDraft draftId instead of delete + recreate.',
-  'Compose and create tools open a review window by default; do not claim a message was sent unless the result says so.',
+  'Compose tools open a review window by default; createEvent and createTask may add at once or open a dialog. Never claim a message was sent or an item created unless the result says so.',
   'IMAP folders may be stale until opened in Thunderbird.',
 ].join('\n');
 

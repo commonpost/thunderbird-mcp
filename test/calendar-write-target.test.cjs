@@ -72,10 +72,12 @@ function loadTools(accessible, { calendarBlocked = false } = {}) {
     normalizeEventStatus: (s) => String(s).toUpperCase(),
     descriptionToHTML: (v) => v,
     getAccessibleCalendars: () => accessible,
+    addedItemFields: () => ({}),
   };
   vm.createContext(sandbox);
   vm.runInContext(`${helpersSource}
 ${apiSource.match(/^const CALENDAR_SKIPREVIEW_BLOCKED_ERROR = .*$/m)[0]}
+${apiSource.match(/^function calendarCreateMode\([^]*?\n}\n/m)[0]}
 ${slice("// BEGIN EVENT RANGE HELPERS", "// END EVENT RANGE HELPERS")}
 ${slice("async function createEvent(", "async function getCalendarItems(")}
 ${slice("async function createTask(", "// BEGIN RAW MIME PARSING HELPERS")}

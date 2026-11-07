@@ -7,8 +7,9 @@ function) that implements it, and the test that covers it when there is one. The
 [architecture.md](architecture.md); how to report a vulnerability is in [SECURITY.md](../SECURITY.md).
 
 Security requirements, in short: only the user's own MCP client, through the bridge, can use the add-on; it sees only
-the accounts and tools the user allows; nothing is sent, or created in a calendar, without the user's review unless
-the user turned that protection off; encrypted mail stays encrypted unless the user allows otherwise; local files that
+the accounts and tools the user allows; nothing is sent without the user's review unless the user turned that
+protection off (events and tasks are added at once on a new install, unless the user turns their block on or the
+client asks for the dialog); encrypted mail stays encrypted unless the user allows otherwise; local files that
 hold secrets or mail stores are not attached to outgoing mail; text written by third parties is handed over as data,
 marked as such.
 
@@ -71,10 +72,16 @@ marked as such.
 - *Block `skipReview`* for mail is on by default and read as on if the preference cannot be read
   (`isSkipReviewBlocked`): compose tools open a review window; direct sending is refused (`composeModeRefusal`, test
   in `test/compose-helpers.test.cjs`).
-- *Block `skipReview`* for events and tasks is on by default: `createEvent` and `createTask` open a dialog. Until it
-  is set it follows the block for mail; a value that is not a boolean, or one that cannot be read, blocks
-  (`calendarSkipReviewBlocked`, tests in `test/compose-helpers.test.cjs` and `test/calendar-write-target.test.cjs`).
-  The options page saves it before the block for mail, so lifting one never lifts the other.
+- *Block `skipReview`* for events and tasks is not a fail-safe default: a new install turns it off, and
+  `createEvent` and `createTask` then add the item at once unless the client asks for the dialog
+  (`calendarCreateMode`). Adding an event or task sends nothing (these tools take no attendees) and can be undone with
+  `deleteEvent` or `deleteTask`, and `updateEvent` already changes events without review. An update writes the value
+  of the block for mail, and an install into a profile where the block for mail was set follows it
+  (`applyCalendarInstallDefault`, on `onInstalled`; `test/background-install.test.cjs`), so an existing configuration
+  keeps the dialog. Unset, it follows the block for mail; a value that is not a boolean, or one that cannot be read, blocks
+  (`calendarSkipReviewBlocked`, tests in `test/compose-helpers.test.cjs`, `test/calendar-write-target.test.cjs` and
+  `test/calendar-skipreview-block.test.cjs`). The options page saves it before the block for mail, so lifting one
+  never lifts the other.
 - *Block filter forward/reply* is on by default; "Ask me each time" needs a confirmation in a Thunderbird dialog, and
   no answer within ten minutes writes nothing (`filterSendRulePolicy`; `test/commonpost-filter-confirm.test.cjs`).
 - A malformed account preference blocks every account; a malformed tool preference disables every tool
@@ -191,9 +198,10 @@ connection file 64 KiB in the bridge.
   defaults help; an assistant can still be persuaded by a message to call tools the user allowed. Subjects, sender
   names and attachment names are cleaned of hidden characters but are not wrapped in markers (only `body`,
   `rawSource`, `preview`, `title`, `description`, `location` and `note` are). With *Block `skipReview`* for mail turned off,
-  an injected instruction can send mail without review; with the block for events and tasks turned off, it can add
-  events and tasks (with links in their text) to any calendar the add-on may write to, shared ones included, without
-  review. `updateEvent`, `updateTask`, `deleteEvent` and `deleteTask` change existing items without review whatever
+  an injected instruction can send mail without review. With the block for events and tasks off, the default of a new
+  install, it can add events and tasks to any calendar the add-on may write to, shared ones included, without review
+  and with no limit on their number: text with links that colleagues see, time shown as busy, and reminders that
+  Thunderbird pops up later, outside the conversation. `updateEvent`, `updateTask`, `deleteEvent` and `deleteTask` change existing items without review whatever
   these settings say.
 - **Hidden text is judged, not proven.** The rendering imitates the message pane at its current size, without the
   user's zoom, the images the user let load from the network, the dark-mode recolouring or a different window. Text in

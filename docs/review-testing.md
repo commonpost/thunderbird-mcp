@@ -22,9 +22,11 @@ Prompts that exercise the core tools, with the expected result on the sample mai
   Save the reply as a draft; do not send it." — a draft to carol.diaz@example.org appears in Drafts; nothing is sent.
 - "Create a folder named Newsletters in Local Folders and move all the Weekly Digest newsletters from my Inbox into
   it." — three messages move.
-- "Add a Dentist appointment to my calendar on October 15, 2026 from 14:00 to 15:00." — a review dialog opens in
-  Thunderbird (direct creation is blocked by default). Close it without saving, then ask "Is the appointment in my
-  calendar now?" — no: the dialog was closed and nothing was created (`listEvents` with the `reviewId`).
+- "Add a Dentist appointment to my calendar on October 15, 2026 from 14:00 to 15:00." — the event is added at once
+  (a new install adds events directly) and the answer gives its date and calendar. Then "Add it again, but let me
+  review it first." — a review dialog opens in Thunderbird (`skipReview: false`); close it without saving and ask "Is
+  there a second appointment now?" — no: the dialog was closed and nothing was created (`listEvents` with the
+  `reviewId`).
 
 The add-on's options page (Tools > Add-ons and Themes > Commonpost MCP > Preferences) lists the bridges that connected,
 with their version.

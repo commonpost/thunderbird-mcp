@@ -327,7 +327,9 @@ describe("the save callback of a review dialog", () => {
 
 // The real createEvent, createTask, openCalendarReviewDialog and calendarReviewState, with one main window whose
 // openDialog records its arguments and returns a dialog window.
-function loadTools({ calendars, accessible = calendars, openDialogReturns = "dialog", calendarBlocked = false } = {}) {
+// calendarBlocked: the block of skipReview for events and tasks, on by default here (the dialog unless skipReview is
+// false), as an install from before it existed has it; a new install turns it off.
+function loadTools({ calendars, accessible = calendars, openDialogReturns = "dialog", calendarBlocked = true } = {}) {
   const opened = [];
   const win = {
     closed: false,
@@ -344,19 +346,32 @@ function loadTools({ calendars, accessible = calendars, openDialogReturns = "dia
   const sandbox = {
     cal: {
       dtz: {
-        defaultTimezone: {}, floating: {}, jsDateToDateTime: (d) => ({ js: d }),
+        defaultTimezone: {}, floating: {}, jsDateToDateTime: (d) => ({ js: d, nativeTime: d.getTime() * 1000, isDate: false }),
         getDefaultStartDate: () => ({ defaultStart: true }),
       },
       createDateTime: () => ({ resetTo() {} }),
     },
-    CalEvent: class { constructor() { this.props = {}; } setProperty(k, v) { this.props[k] = v; } setCategories() {} },
-    CalTodo: class { setCategories() {} },
+    CalEvent: class {
+      constructor() { this.props = {}; }
+      setProperty(k, v) { this.props[k] = v; }
+      getProperty(k) { return this.props[k] ?? null; }
+      setCategories() {}
+      getCategories() { return []; }
+      addAlarm(alarm) { (this.alarms ||= []).push(alarm); }
+    },
+    CalAlarm: class {},
+    normalizeReminderMinutes: (minutes) => ({ minutes }),
+    reminderCapabilityError: () => null,
+    buildDisplayReminder: (minutes) => ({ minutes }),
+    reminderSuppressedWarning: () => "reminders may not show",
+    CalTodo: class { setCategories() {} getProperty() { return null; } },
     Services: { wm: { getMostRecentWindow: (type) => (type === "mail:3pane" ? win : null) } },
     isCalendarSkipReviewBlocked: () => calendarBlocked,
     stripEmailContentMarkers: (v) => v,
     normalizeEventStatus: (s) => String(s).toUpperCase(),
     descriptionToHTML: (v) => v,
     getAccessibleCalendars: () => accessible,
+    itemReminderMinutes: () => [],
     randomCalendarReviewId: () => `rv-${String(++n).padStart(24, "0")}`,
   };
   vm.createContext(sandbox);
@@ -366,6 +381,11 @@ ${reviewHelpers}
 ${slice("// One store per running extension (survives a server restart, not a reload).\nfunction getCalendarReviewStore()", "\n}\n")}
 }
 ${slice("// BEGIN EVENT RANGE HELPERS", "// END EVENT RANGE HELPERS")}
+${apiSource.match(/^const CALENDAR_SKIPREVIEW_BLOCKED_ERROR = .*$/m)[0]}
+${slice("\nfunction calendarCreateMode(", "\n}\n")}
+}
+${slice("            function calDateToISO(", "            // VEVENT STATUS values")}
+${slice("            function formatEvent(", "            // A task of `calendar` by id")}
 ${slice("            function openCalendarReviewDialog(", "            async function getCalendarItems(")}
 ${slice("            async function createTask(", "            // BEGIN RAW MIME PARSING HELPERS")}
 ${slice("            function calendarReviewState(", "            async function listEvents(")}
@@ -381,7 +401,14 @@ function calendar({ id, name = id, tasks = true, disabled = false, readOnly = fa
       if (key === "capabilities.tasks.supported") return tasks;
       return null;
     },
-    async addItem(item) { return item; },
+    items: [],
+    // As CalStorageCalendar does: it stores a clone, which gets the id; the item passed keeps none.
+    async addItem(item) {
+      const stored = Object.assign(Object.create(Object.getPrototypeOf(item)), item);
+      if (!stored.id) stored.id = `added-${this.items.length + 1}`;
+      this.items.push(stored);
+      return stored;
+    },
   };
 }
 
@@ -523,6 +550,118 @@ describe("createEvent and createTask open a review dialog and give its reviewId"
     await flush();
     assert.equal(tools.win.calls.length, 0);
     assert.equal(other.calls.length, 1);
+  });
+});
+
+describe("while the block for events and tasks is off, createEvent and createTask add the item at once", () => {
+  it("createEvent without skipReview: added, no dialog, with the id and dates listEvents gives", async () => {
+    const home = calendar({ id: "home", name: "Home" });
+    const tools = loadTools({ calendars: [home], calendarBlocked: false });
+    const result = plain(await tools.createEvent("AGM", "2026-11-20T19:00:00Z", "2026-11-20T21:00:00Z", undefined, undefined, "home"));
+    assert.deepEqual(result, {
+      success: true,
+      eventId: "added-1",
+      calendarId: "home",
+      startDate: "2026-11-20T19:00:00.000Z",
+      endDate: "2026-11-20T21:00:00.000Z",
+      allDay: false,
+      message: 'Event "AGM" added to calendar "Home"',
+    });
+    assert.equal(tools.opened.length, 0);
+    assert.equal(home.items.length, 1);
+    assert.equal(home.items[0].title, "AGM");
+  });
+
+  it("createTask without skipReview: added, no dialog, with taskId and dueDate", async () => {
+    const home = calendar({ id: "home", name: "Home" });
+    const tools = loadTools({ calendars: [home], calendarBlocked: false });
+    const result = plain(await tools.createTask("Call", "2026-11-20T10:00:00Z"));
+    assert.deepEqual(result, {
+      success: true,
+      taskId: "added-1",
+      calendarId: "home",
+      dueDate: "2026-11-20T10:00:00.000Z",
+      message: 'Task "Call" created in calendar "Home"',
+    });
+    assert.equal(tools.opened.length, 0);
+    assert.equal(home.items.length, 1);
+  });
+
+  it("skipReview false still opens the dialog, and adds nothing", async () => {
+    const home = calendar({ id: "home" });
+    const tools = loadTools({ calendars: [home], calendarBlocked: false });
+    const event = plain(await tools.createEvent("AGM", "2026-11-20T19:00:00Z", undefined, undefined, undefined, "home", false, false));
+    const task = plain(await tools.createTask("Call", undefined, undefined, undefined, undefined, undefined, false));
+    assert.match(event.reviewId, /^rv-/);
+    assert.match(task.reviewId, /^rv-/);
+    assert.equal(tools.opened.length, 2);
+    assert.equal(home.items.length, 0);
+  });
+
+  it("needs no Thunderbird main window", async () => {
+    const home = calendar({ id: "home" });
+    const tools = loadTools({ calendars: [home], calendarBlocked: false });
+    tools.sandbox.Services.wm.getMostRecentWindow = () => null;
+    assert.equal(plain(await tools.createEvent("AGM", "2026-11-20T19:00:00Z")).eventId, "added-1");
+    assert.equal(plain(await tools.createTask("Call")).taskId, "added-2");
+  });
+
+  it("an added item that cannot be read back is still a success, never an error a client would retry", async () => {
+    const home = calendar({ id: "home", name: "Home" });
+    home.addItem = async () => ({ get id() { throw new Error("gone"); } });
+    const tools = loadTools({ calendars: [home], calendarBlocked: false });
+    const result = plain(await tools.createEvent("AGM", "2026-11-20T19:00:00Z"));
+    assert.deepEqual(result, { success: true, message: 'Event "AGM" added to calendar "Home"' });
+  });
+
+  it("createEvent: the reminders and their warning are in the result", async () => {
+    const home = calendar({ id: "home" });
+    const tools = loadTools({ calendars: [home], calendarBlocked: false });
+    const result = plain(await tools.createEvent("AGM", "2026-11-20T19:00:00Z", undefined, undefined, undefined, "home",
+      false, undefined, undefined, undefined, undefined, undefined, [15]));
+    assert.equal(result.eventId, "added-1");
+    assert.deepEqual(result.reminders, [15]);
+    assert.equal(result.warning, "reminders may not show");
+    assert.deepEqual(plain(home.items[0].alarms), [{ minutes: 15 }]);
+  });
+
+  it("an addItem that resolves to nothing: the item that was passed is read", async () => {
+    const home = calendar({ id: "home" });
+    home.addItem = async (item) => { item.id = "own-id"; };
+    const tools = loadTools({ calendars: [home], calendarBlocked: false });
+    assert.equal(plain(await tools.createEvent("AGM", "2026-11-20T19:00:00Z")).eventId, "own-id");
+  });
+});
+
+describe("while the block for events and tasks is on", () => {
+  it("without skipReview, the dialog opens and nothing is added", async () => {
+    const home = calendar({ id: "home" });
+    const tools = loadTools({ calendars: [home], calendarBlocked: true });
+    assert.match(plain(await tools.createEvent("AGM", "2026-11-20T19:00:00Z")).reviewId, /^rv-/);
+    assert.match(plain(await tools.createTask("Call")).reviewId, /^rv-/);
+    assert.equal(home.items.length, 0);
+  });
+
+  it("without a Thunderbird main window, the dialog cannot open: an error, nothing added", async () => {
+    const home = calendar({ id: "home" });
+    const tools = loadTools({ calendars: [home], calendarBlocked: true });
+    tools.sandbox.Services.wm.getMostRecentWindow = () => null;
+    assert.deepEqual(plain(await tools.createEvent("AGM", "2026-11-20T19:00:00Z")), { error: "No Thunderbird window found" });
+    assert.deepEqual(plain(await tools.createTask("Call")), { error: "No Thunderbird window found" });
+    assert.equal(home.items.length, 0);
+  });
+
+  it("skipReview true is refused: no dialog, nothing added", async () => {
+    const home = calendar({ id: "home" });
+    const tools = loadTools({ calendars: [home], calendarBlocked: true });
+    for (const result of [
+      plain(await tools.createEvent("AGM", "2026-11-20T19:00:00Z", undefined, undefined, undefined, undefined, false, true)),
+      plain(await tools.createTask("Call", undefined, undefined, undefined, undefined, undefined, true)),
+    ]) {
+      assert.equal(result.error, "User preference blocks skipReview for events and tasks. Retry with skipReview: false (or omitted) to open the review dialog instead.");
+    }
+    assert.equal(tools.opened.length, 0);
+    assert.equal(home.items.length, 0);
   });
 });
 

@@ -8,10 +8,12 @@ project is kept in this repository.
 
 ### Added
 
-- Send Safety has a second setting, **Block `skipReview`** for events and tasks: `createEvent` and `createTask` can
-  add an event or task at once while mail still needs its review window. It is on by default and, until it is saved,
-  follows the block for mail, so nothing changes for a configuration made before it. The refusal now says "for
-  events and tasks".
+- Send Safety has a second setting, **Block `skipReview`** for events and tasks, apart from the one for mail. Off,
+  `createEvent` and `createTask` add the event or task at once unless the client passes `skipReview: false`, while
+  mail still needs its review window; on, they open their dialog and refuse `skipReview: true`. A new install starts
+  with it off. An installation updated from an earlier version keeps what it had: the update gives it the value of
+  the block for mail, so with the default settings the dialog still opens, and an install into a profile where the
+  block for mail was saved follows it too. The refusal now says "for events and tasks".
 - `createEvent` and `createTask` return a `reviewId` with the dialog they open, and `listEvents` or `listTasks` with
   that `reviewId` tell what became of it: still open, saved by the user (with its `eventId` or `taskId`), closed
   without saving (nothing was created), or a save that failed. An assistant no longer has to guess whether a dialog
@@ -31,6 +33,12 @@ project is kept in this repository.
 
 ### Changed
 
+- On a new install, `createEvent` and `createTask` add the event or task at once instead of opening Thunderbird's
+  dialog: asking for several appointments no longer means saving each one by hand, as `updateEvent` and
+  `deleteEvent` already change events directly. They send no invitation (these tools take no attendees); anyone a
+  calendar is shared with sees what is added there. The result now gives `eventId` or `taskId`, `calendarId` and the
+  dates as `listEvents` and `listTasks` return them, so the item can be shown, changed or deleted at once, and both
+  tool descriptions say there is no duplicate check.
 - `createTask` opens its dialog in a window, as `createEvent` does, also when Thunderbird edits events and tasks in a
   tab; with no `calendarId`, on the calendar a direct save would use (the first enabled, writable calendar that
   supports tasks) instead of the calendar selected in Thunderbird.

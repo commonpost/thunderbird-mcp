@@ -613,7 +613,7 @@
     {
       "name": "createEvent",
       "title": "Create Event",
-      "description": "Create a calendar event (changes: updateEvent; to-dos: createTask). By default it opens Thunderbird's event dialog filled in, and the event exists once the user saves it (listEvents with the reviewId of the result tells). skipReview adds it at once, only if the user turned off the default-on skipReview block for events and tasks.",
+      "description": "Create a calendar event (changes: updateEvent; to-dos: createTask). No duplicate check: listEvents first. It is added at once (eventId in the result), unless the user's settings ask for Thunderbird's event dialog: then it exists once the user saves it (listEvents with the reviewId of the result tells).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -685,7 +685,7 @@
           },
           "skipReview": {
             "type": "boolean",
-            "description": "Add without the dialog; refused while the skipReview block for events and tasks is on (default: false)"
+            "description": "true: add at once (refused if the settings ask for the dialog); false: open the dialog (default: the settings)"
           }
         },
         "required": [
@@ -860,7 +860,7 @@
     {
       "name": "createTask",
       "title": "Create Task",
-      "description": "Create a task (to-do). By default it opens Thunderbird's task dialog filled in, and the task exists once the user saves it (listTasks with the reviewId of the result tells). skipReview adds it at once, only if the user turned off the default-on skipReview block for events and tasks.",
+      "description": "Create a task (to-do). No duplicate check: listTasks first. It is added at once (taskId in the result), unless the user's settings ask for Thunderbird's task dialog: then it exists once the user saves it (listTasks with the reviewId of the result tells).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -895,7 +895,7 @@
           },
           "skipReview": {
             "type": "boolean",
-            "description": "Add without the dialog; refused while the skipReview block for events and tasks is on (default: false)"
+            "description": "true: add at once (refused if the settings ask for the dialog); false: open the dialog (default: the settings)"
           }
         },
         "required": [

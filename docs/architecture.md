@@ -150,10 +150,13 @@ it (see "Versions" below).
     the options page listed at the last save (the 40 tools of 0.18.2 when it is not set);
   - *Block `skipReview`* for mail (on by default): compose tools open a review window; direct sending is refused
     while it is on;
-  - *Block `skipReview`* for events and tasks (on by default; `blockCalendarSkipReview`): `createEvent` and
-    `createTask` open a dialog; direct creation is refused while it is on. Until the user saves it, it follows the
-    block for mail (`calendarSkipReviewBlocked`), so a configuration from before it existed behaves as it did. The
-    dialog they open saves through Thunderbird's transaction (`calendarReviewSave`), and its outcome (open, saved,
+  - *Block `skipReview`* for events and tasks (`blockCalendarSkipReview`): off, `createEvent` and `createTask` add
+    the item at once unless the client passes `skipReview: false` (`calendarCreateMode`), and their result gives its
+    id and dates (`addedItemFields`); on, they open a dialog and refuse direct creation. The background script passes
+    the reason of `onInstalled` to `applyInstallDefaults`, which writes it while it holds no value
+    (`applyCalendarInstallDefault`): off on a new install, the value of the block for mail on an update, so a
+    configuration from before it existed behaves as it did, and a later "install" of the same profile (Remove then
+    Undo) changes nothing. Unset, it follows the block for mail (`calendarSkipReviewBlocked`). The dialog they open saves through Thunderbird's transaction (`calendarReviewSave`), and its outcome (open, saved,
     closed, failed) is kept in memory under the `reviewId` of the result (`createCalendarReviewStore`), which
     `listEvents` and `listTasks` read;
   - *Block filter forward/reply* (on by default), or *Ask me each time*: filter rules that would send mail are refused,
