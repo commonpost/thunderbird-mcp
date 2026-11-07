@@ -4,7 +4,23 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## [Unreleased]
+## [0.20.0] - 2026-11-07
+
+- **Security fix:** a filter rule you made to forward or reply could send mail that was already in your mailbox.
+  Thunderbird runs the rules for new mail on mail moved, copied or saved into a folder of an IMAP account, so an
+  assistant filing or deleting old messages, moving or renaming a folder, or saving a draft could set such a rule
+  off; a rule that forwards or replies could also be created or changed through MCP to run on archiving or
+  periodically, which the confirmation did not say. Mail is no longer put where the rules for new mail would send
+  it, and everywhere else the result now names the rule that may send by itself. Updating is recommended.
+- New: Send Safety has a separate block of `skipReview` for events and tasks, apart from the one for mail, and
+  `createEvent` and `createTask` tell what became of a dialog they opened -- saved, closed without saving, or failed.
+- Changed: on a new install, `createEvent` and `createTask` add the event or task at once instead of opening
+  Thunderbird's dialog, so asking for several appointments no longer means saving each one by hand. An installation
+  updated from an earlier version keeps what it had.
+- Fixed: the add-on's Options tab no longer disappears from an open Add-ons Manager after an update, saving an event
+  twice in its dialog no longer creates it twice, and a refusal that comes from a default now says where to click.
+- **Bridge 0.20.0:** only the text that describes the tools to the client changed. Updating the bridge is optional
+  (a 0.17.1 bridge or later keeps working).
 
 ### Added
 
