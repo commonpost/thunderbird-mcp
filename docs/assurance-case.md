@@ -68,9 +68,13 @@ marked as such.
 - Access control is not exposed over MCP: only the options page calls the setters of `schema.json`.
 
 **Fail-safe defaults.**
-- *Block `skipReview`* is on by default and read as on if the preference cannot be read (`isSkipReviewBlocked`):
-  compose tools open a review window, `createEvent` and `createTask` a dialog; direct sending is refused
-  (`composeModeRefusal`, test in `test/compose-helpers.test.cjs`).
+- *Block `skipReview`* for mail is on by default and read as on if the preference cannot be read
+  (`isSkipReviewBlocked`): compose tools open a review window; direct sending is refused (`composeModeRefusal`, test
+  in `test/compose-helpers.test.cjs`).
+- *Block `skipReview`* for events and tasks is on by default: `createEvent` and `createTask` open a dialog. Until it
+  is set it follows the block for mail; a value that is not a boolean, or one that cannot be read, blocks
+  (`calendarSkipReviewBlocked`, tests in `test/compose-helpers.test.cjs` and `test/calendar-write-target.test.cjs`).
+  The options page saves it before the block for mail, so lifting one never lifts the other.
 - *Block filter forward/reply* is on by default; "Ask me each time" needs a confirmation in a Thunderbird dialog, and
   no answer within ten minutes writes nothing (`filterSendRulePolicy`; `test/commonpost-filter-confirm.test.cjs`).
 - A malformed account preference blocks every account; a malformed tool preference disables every tool
@@ -186,8 +190,11 @@ connection file 64 KiB in the bridge.
 - **Prompt injection is reduced, not prevented.** Markers, hidden-character removal, the notice and the review
   defaults help; an assistant can still be persuaded by a message to call tools the user allowed. Subjects, sender
   names and attachment names are cleaned of hidden characters but are not wrapped in markers (only `body`,
-  `rawSource`, `preview`, `title`, `description`, `location` and `note` are). With *Block `skipReview`* turned off,
-  an injected instruction can send mail without review.
+  `rawSource`, `preview`, `title`, `description`, `location` and `note` are). With *Block `skipReview`* for mail turned off,
+  an injected instruction can send mail without review; with the block for events and tasks turned off, it can add
+  events and tasks (with links in their text) to any calendar the add-on may write to, shared ones included, without
+  review. `updateEvent`, `updateTask`, `deleteEvent` and `deleteTask` change existing items without review whatever
+  these settings say.
 - **Hidden text is judged, not proven.** The rendering imitates the message pane at its current size, without the
   user's zoom, the images the user let load from the network, the dark-mode recolouring or a different window. Text in
   a font with blank glyphs is not detected, nor a box painted over the text that hit testing does not see

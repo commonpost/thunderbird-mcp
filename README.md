@@ -79,7 +79,7 @@ Snap, Flatpak and macOS need no extra step in most cases; see [Sandbox-aware con
 
 Thunderbird has no official API for AI tools. Your AI assistant can't read your email, can't help you draft replies, can't organize your inbox. This extension fixes that -- it exposes 41 tools over MCP so any compatible AI (Claude, GPT, local models) can work with your mail the way you'd expect. The list is kept to about 40 tools so that assistants choose among them reliably; older Cursor versions also sent an agent only the first 40 tools of all servers combined (since January 2026 Cursor loads tool descriptions only when needed), and VS Code allows 128 tools per request.
 
-Mail sends and event/task creation require review by default because **Block `skipReview`** starts enabled. `skipReview: true` is honored only after you explicitly disable that safety setting. **By default, nothing is sent or created without your review.**
+Mail sends and event/task creation require review by default because **Block `skipReview`** for mail and **Block `skipReview`** for events and tasks start enabled. `skipReview: true` is honored only after you explicitly disable the safety setting that covers the tool. **By default, nothing is sent or created without your review.**
 
 ---
 
@@ -126,7 +126,7 @@ The Thunderbird extension embeds a local HTTP server with session-scoped auth to
 | `forwardMessage` | Forward with all original attachments preserved, from the identity Thunderbird would pick. `mode` as for `replyToMessage` (`draft` and `send` get the subject and body Thunderbird's forward window builds: header table, original body, signature); `to` is optional except with `send`, which needs explicit `to` and `from` |
 | `saveDraft` | Save a new message as a draft, as Thunderbird's compose window saves it (with the identity signature), or edit an existing draft with `draftId` -- returns its `messageId` and `folderPath` |
 
-All compose tools open a window for you to review and edit before sending by default. The **Block `skipReview`** preference is on by default, so `skipReview: true` (and `mode: "send"`) is rejected until you explicitly disable the preference; only then can it send directly. `mode: "draft"` only saves a draft, so the preference does not block it (even next to `skipReview: true`); it needs the `saveDraft` tool to be enabled in the settings, as a tool you disabled is not reachable through another one. Attachments can be file paths or inline base64 objects.
+All compose tools open a window for you to review and edit before sending by default. The **Block `skipReview`** setting for mail is on by default, so `skipReview: true` (and `mode: "send"`) is rejected until you explicitly disable it; only then can it send directly. `mode: "draft"` only saves a draft, so the preference does not block it (even next to `skipReview: true`); it needs the `saveDraft` tool to be enabled in the settings, as a tool you disabled is not reachable through another one. Attachments can be file paths or inline base64 objects.
 
 A direct send or saving a draft (`saveDraft`, `mode: "draft"`) can take a while: the bridge waits up to 180 s for Thunderbird (30 s for every other call). Your MCP client may also have its own time limit for a tool call; if it is shorter than 180 s, the client can give up while Thunderbird goes on sending or saving, so check the Sent folder and the Outbox (or the Drafts folder) before retrying to avoid sending the message, or saving the draft, twice.
 
@@ -166,11 +166,11 @@ OpenPGP and S/MIME messages are not decrypted for the assistant by default: `get
 | Tool | Description |
 |------|-------------|
 | `listCalendars` | List all calendars with read-only, disabled, event, and task support flags |
-| `createEvent` | Create a calendar event -- opens a review dialog; direct creation via `skipReview` requires explicitly disabling the default safety block. Accepts `status: tentative \| confirmed \| cancelled` (VEVENT STATUS per iCal RFC 5545) and `showAs: busy \| free` (whether the time is blocked; does not change `status`). `reminders` adds display reminders, in minutes before the start (up to 5, 0 to 40320). |
+| `createEvent` | Create a calendar event -- opens a review dialog; direct creation via `skipReview` requires explicitly disabling the default safety block for events and tasks. Accepts `status: tentative \| confirmed \| cancelled` (VEVENT STATUS per iCal RFC 5545) and `showAs: busy \| free` (whether the time is blocked; does not change `status`). `reminders` adds display reminders, in minutes before the start (up to 5, 0 to 40320). |
 | `listEvents` | Query events by date range with recurring event expansion; a date without a time is a whole day in local time. Returns `status` and `reminders` (display reminders, minutes before the start) on each event. Supports `maxResults` and `format: "table"`. |
 | `updateEvent` | Modify an event's title, dates, location, description, `status`, `showAs`, or `reminders` (replaces the display reminders; `[]` removes them; email, audio, absolute and end-related alarms are kept, as are reminders whose minutes stay; exceptions of a recurring event keep their own) |
 | `deleteEvent` | Delete a calendar event by ID |
-| `createTask` | Open a pre-filled task dialog for review; direct creation via `skipReview` requires explicitly disabling the default safety block |
+| `createTask` | Open a pre-filled task dialog for review; direct creation via `skipReview` requires explicitly disabling the default safety block for events and tasks |
 | `listTasks` | List tasks/to-dos from calendars -- filter by completion status, due date, or calendar. Supports `maxResults` and `format: "table"`. |
 | `updateTask` | Update a task's title, due date, description, priority, completion status, or percent complete |
 | `deleteTask` | Delete a task by `taskId` + `calendarId` (from `listTasks`), with no review dialog, like `deleteEvent`; a recurring task is deleted with its whole series, and an event's id is refused. To keep a task as done, use `updateTask` with `completed: true` instead. |
@@ -184,7 +184,7 @@ OpenPGP and S/MIME messages are not decrypted for the assistant by default: `get
 
 Account and tool access are configured via the extension settings page (Tools > Add-ons > Commonpost MCP for Thunderbird > Options). Access control is not MCP-exposed -- only the user can change it. Once you have disabled any tool, a tool added by a later update starts disabled too: the settings page marks it "new", and it stays off until you check it and save. If you have disabled nothing, new tools are enabled like the others.
 
-The same settings page has a "Send Safety" section. **Block `skipReview`** is enabled by default and rejects `skipReview: true` for `sendMail`, `replyToMessage`, `forwardMessage`, `createEvent`, and `createTask` (and `mode: "send"` for `replyToMessage` and `forwardMessage`); their review window or dialog still opens normally. `skipReview` is honored only after you explicitly disable this preference.
+The same settings page has a "Send Safety" section with two settings, both enabled by default. **Block `skipReview`** for mail rejects `skipReview: true` for `sendMail`, `replyToMessage` and `forwardMessage` (and `mode: "send"` for `replyToMessage` and `forwardMessage`); **Block `skipReview`** for events and tasks rejects it for `createEvent` and `createTask`. Their review window or dialog still opens normally, and `skipReview` is honored only after you explicitly disable the setting that covers the tool. An event or task added without the dialog sends no invitation (these tools take no attendees), but anyone the calendar is shared with sees it. Until you save the section, the setting for events and tasks follows the one for mail, so a choice made before it existed still applies.
 
 ---
 

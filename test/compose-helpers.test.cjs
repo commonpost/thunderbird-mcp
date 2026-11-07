@@ -18,7 +18,7 @@ assert.ok(start >= 0 && end > start, 'COMPOSE HELPERS markers missing');
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${apiSource.slice(start, end)}
-this.api = { resolveComposeMode, composeModeRefusal, DIRECT_SEND_BLOCKED_ERROR, DRAFT_TOOL_DISABLED_ERROR, latestInThreadRefusal, LATEST_IN_THREAD_SEND_ERROR, LATEST_IN_THREAD_SEARCH_DISABLED_ERROR, computeReplyRecipients, switchIdentityRecipients, buildReplyReferences, referenceIds,
+this.api = { resolveComposeMode, composeModeRefusal, DIRECT_SEND_BLOCKED_ERROR, calendarSkipReviewBlocked, CALENDAR_SKIPREVIEW_BLOCKED_ERROR, DRAFT_TOOL_DISABLED_ERROR, latestInThreadRefusal, LATEST_IN_THREAD_SEND_ERROR, LATEST_IN_THREAD_SEARCH_DISABLED_ERROR, computeReplyRecipients, switchIdentityRecipients, buildReplyReferences, referenceIds,
   mergeDraftFields, draftPriorityName, draftInfoFields, forEachHtmlTag, trailingSeparatorLength,
   buildCitePrefix, divWrappedHtml, citeText, removePlaintextTag, stripDocumentTags, plainTextToForwardHtml, forwardHeaderRows,
   forwardHeaderTableHtml, forwardPlainText, joinFlowedLines, replaceFileURLs, frameSignature, frameImageSignature,
@@ -57,6 +57,46 @@ describe('composeModeRefusal (the skipReview block)', () => {
       const composeMode = api.resolveComposeMode(mode, skipReview);
       assert.equal(api.composeModeRefusal(composeMode, { skipReviewBlocked: true, saveDraftEnabled: true }), null, `${mode} ${skipReview}`);
     }
+  });
+});
+
+describe('calendarSkipReviewBlocked (the block of skipReview for events and tasks)', () => {
+  const NAME = 'extensions.commonpost-mcp.blockCalendarSkipReview';
+  // nsIPrefBranch: PREF_INVALID 0, PREF_STRING 32, PREF_INT 64, PREF_BOOL 128
+  const prefs = (value, { throws = false } = {}) => ({
+    PREF_INVALID: 0, PREF_STRING: 32, PREF_INT: 64, PREF_BOOL: 128,
+    getPrefType(name) {
+      assert.equal(name, NAME);
+      if (throws) throw new Error('unreadable');
+      if (value === undefined) return 0;
+      return typeof value === 'boolean' ? 128 : typeof value === 'number' ? 64 : 32;
+    },
+    getBoolPref(name) { assert.equal(name, NAME); return value; },
+  });
+  const mail = (blocked) => () => blocked;
+
+  it('follows the block for mail while it is not set, so an older configuration behaves as it did', () => {
+    assert.equal(api.calendarSkipReviewBlocked(prefs(undefined), NAME, mail(true)), true);
+    assert.equal(api.calendarSkipReviewBlocked(prefs(undefined), NAME, mail(false)), false);
+  });
+
+  it('once set, holds its own value whatever the block for mail says', () => {
+    for (const mailBlocked of [true, false]) {
+      assert.equal(api.calendarSkipReviewBlocked(prefs(false), NAME, mail(mailBlocked)), false, `mail ${mailBlocked}`);
+      assert.equal(api.calendarSkipReviewBlocked(prefs(true), NAME, mail(mailBlocked)), true, `mail ${mailBlocked}`);
+    }
+  });
+
+  it('blocks when the value is not a boolean or cannot be read', () => {
+    assert.equal(api.calendarSkipReviewBlocked(prefs('false'), NAME, mail(false)), true);
+    assert.equal(api.calendarSkipReviewBlocked(prefs(0), NAME, mail(false)), true);
+    assert.equal(api.calendarSkipReviewBlocked(prefs(false, { throws: true }), NAME, mail(false)), true);
+    assert.equal(api.calendarSkipReviewBlocked(prefs(undefined), NAME, () => { throw new Error('unreadable'); }), true);
+  });
+
+  it('names the block in its refusal and tells how to go on', () => {
+    assert.match(api.CALENDAR_SKIPREVIEW_BLOCKED_ERROR, /^User preference blocks skipReview for events and tasks\. /);
+    assert.match(api.CALENDAR_SKIPREVIEW_BLOCKED_ERROR, /Retry with skipReview: false \(or omitted\) to open the review dialog instead\.$/);
   });
 });
 

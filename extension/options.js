@@ -547,13 +547,21 @@ saveToolsBtn.addEventListener("click", async () => {
 });
 
 const blockSkipReviewCheckbox = document.getElementById("blockSkipReview");
+const blockCalendarSkipReviewCheckbox = document.getElementById("blockCalendarSkipReview");
 const saveSkipReviewBtn = document.getElementById("saveSkipReviewBtn");
 const saveSkipReviewStatus = document.getElementById("saveSkipReviewStatus");
 
+// Two blocks, saved together. Until it is set, the block for events and tasks
+// follows the one for mail and shows its value; saving writes both, so each
+// box then keeps what it shows.
 async function loadSkipReviewPref() {
   try {
-    const { blockSkipReview } = await browser.commonpostMcp.getBlockSkipReview();
+    const [{ blockSkipReview }, { blockCalendarSkipReview }] = await Promise.all([
+      browser.commonpostMcp.getBlockSkipReview(),
+      browser.commonpostMcp.getBlockCalendarSkipReview(),
+    ]);
     blockSkipReviewCheckbox.checked = !!blockSkipReview;
+    blockCalendarSkipReviewCheckbox.checked = !!blockCalendarSkipReview;
     saveSkipReviewBtn.disabled = false;
     saveSkipReviewStatus.textContent = "";
   } catch (e) {
@@ -567,7 +575,12 @@ saveSkipReviewBtn.addEventListener("click", async () => {
   saveSkipReviewStatus.textContent = "Saving...";
   saveSkipReviewStatus.className = "save-status";
   try {
-    const result = await browser.commonpostMcp.setBlockSkipReview(blockSkipReviewCheckbox.checked);
+    // The block for events and tasks first: while it is not set it follows
+    // the one for mail, so writing the mail block alone could lift it.
+    let result = await browser.commonpostMcp.setBlockCalendarSkipReview(blockCalendarSkipReviewCheckbox.checked);
+    if (!result.error) {
+      result = await browser.commonpostMcp.setBlockSkipReview(blockSkipReviewCheckbox.checked);
+    }
     if (result.error) {
       saveSkipReviewStatus.textContent = result.error;
       saveSkipReviewStatus.className = "save-status error";

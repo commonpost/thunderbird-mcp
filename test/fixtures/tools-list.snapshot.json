@@ -613,7 +613,7 @@
     {
       "name": "createEvent",
       "title": "Create Event",
-      "description": "Create a calendar event (changes: updateEvent; to-dos: createTask). By default it opens Thunderbird's event dialog filled in, and the event exists once the user saves it. skipReview adds it at once, only if the user turned off the default-on skipReview block.",
+      "description": "Create a calendar event (changes: updateEvent; to-dos: createTask). By default it opens Thunderbird's event dialog filled in, and the event exists once the user saves it. skipReview adds it at once, only if the user turned off the default-on skipReview block for events and tasks.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -685,7 +685,7 @@
           },
           "skipReview": {
             "type": "boolean",
-            "description": "Add without the dialog; refused while the skipReview block is on (default: false)"
+            "description": "Add without the dialog; refused while the skipReview block for events and tasks is on (default: false)"
           }
         },
         "required": [
@@ -856,7 +856,7 @@
     {
       "name": "createTask",
       "title": "Create Task",
-      "description": "Open a pre-filled task dialog for review. The skipReview safety block is on by default; direct saving is honored only when the user explicitly disables that preference.",
+      "description": "Open a pre-filled task dialog for review. The skipReview block for events and tasks is on by default; direct saving is honored only when the user explicitly disables it.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -891,7 +891,7 @@
           },
           "skipReview": {
             "type": "boolean",
-            "description": "Request direct saving without a review dialog. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)."
+            "description": "Request direct saving without a review dialog. Honored only when the user explicitly disables the default-on skipReview block for events and tasks (default: false)."
           }
         },
         "required": [
