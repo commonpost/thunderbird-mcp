@@ -152,7 +152,10 @@ it (see "Versions" below).
     while it is on;
   - *Block `skipReview`* for events and tasks (on by default; `blockCalendarSkipReview`): `createEvent` and
     `createTask` open a dialog; direct creation is refused while it is on. Until the user saves it, it follows the
-    block for mail (`calendarSkipReviewBlocked`), so a configuration from before it existed behaves as it did;
+    block for mail (`calendarSkipReviewBlocked`), so a configuration from before it existed behaves as it did. The
+    dialog they open saves through Thunderbird's transaction (`calendarReviewSave`), and its outcome (open, saved,
+    closed, failed) is kept in memory under the `reviewId` of the result (`createCalendarReviewStore`), which
+    `listEvents` and `listTasks` read;
   - *Block filter forward/reply* (on by default), or *Ask me each time*: filter rules that would send mail are refused,
     or need a confirmation in a Thunderbird dialog;
   - *Let the assistant read encrypted messages* (off by default);

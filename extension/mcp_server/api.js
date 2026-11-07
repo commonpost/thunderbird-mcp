@@ -2108,6 +2108,172 @@ function pickDefaultWriteCalendar(calendars, accepts, kind) {
 }
 // END CALENDAR WRITE TARGET HELPERS
 
+// BEGIN CALENDAR REVIEW HELPERS
+// What became of the dialog that createEvent or createTask opened for review. The tool answers once the dialog is
+// open, so closing it without saving left no trace: an assistant could not tell a saved event from a lost one. Each
+// dialog gets a reviewId, and listEvents or listTasks read its state with it:
+//   open   -- the dialog is open and nothing is saved;
+//   saved  -- the user saved it: the id of the event or task, when its calendar is one the client can see;
+//   closed -- the dialog was closed without saving: nothing was created;
+//   failed -- nothing was saved, the last save failed (Thunderbird's error).
+// In memory only: a restart of Thunderbird or of the extension forgets them. Kept: every review whose dialog is open,
+// and the last CALENDAR_REVIEW_HISTORY others. Whether a dialog is open is read from its window (isDialogOpen) when
+// a review is read or a new one starts; the window is dropped once closed and no listener is left on it.
+const CALENDAR_REVIEW_HISTORY = 20;
+
+function createCalendarReviewStore({ now = () => Date.now(), newId, isDialogOpen, historyMax = CALENDAR_REVIEW_HISTORY } = {}) {
+  if (typeof newId !== "function" || typeof isDialogOpen !== "function") {
+    throw new Error("createCalendarReviewStore needs newId() and isDialogOpen()");
+  }
+  const entries = new Map();
+  const iso = (t) => new Date(t).toISOString();
+  function checkDialog(entry) {
+    if (!entry.dialog) return;
+    let open;
+    try {
+      open = isDialogOpen(entry.dialog) === true;
+    } catch {
+      open = false;
+    }
+    if (open) return;
+    entry.dialog = null;
+    if (entry.status === "open") entry.status = "closed";
+  }
+  function sweep() {
+    for (const entry of entries.values()) checkDialog(entry);
+    const ended = [...entries.values()].filter((e) => !e.dialog);
+    while (ended.length > historyMax) entries.delete(ended.shift().id);
+  }
+  return {
+    open({ kind, title, dialog }) {
+      if (!dialog) throw new Error("a review needs its dialog");
+      sweep();
+      const id = newId();
+      if (typeof id !== "string" || !id || entries.has(id)) throw new Error("review id collision");
+      entries.set(id, {
+        id, kind, title: typeof title === "string" ? title : "", dialog, status: "open",
+        requestedAt: now(), savedAt: null, item: null, error: null,
+      });
+      return id;
+    },
+    // A save that succeeded: `item` = { id, calendarId } of the stored item (id null when not known).
+    saved(id, item) {
+      const entry = entries.get(id);
+      if (!entry) return;
+      entry.status = "saved";
+      entry.savedAt = now();
+      entry.item = { id: item && item.id ? String(item.id) : null, calendarId: item && item.calendarId ? String(item.calendarId) : null };
+      entry.error = null;
+    },
+    // A save that failed. After an earlier save the item exists: it stays "saved", with the error of the last try.
+    failed(id, error) {
+      const entry = entries.get(id);
+      if (!entry) return;
+      if (entry.status !== "saved") entry.status = "failed";
+      entry.error = String(error || "unknown error");
+    },
+    // The public state of one review, or null. canSeeCalendar(calendarId): may the client see that calendar?
+    view(id, { canSeeCalendar = () => true } = {}) {
+      sweep();
+      const entry = typeof id === "string" ? entries.get(id) : undefined;
+      if (!entry) return null;
+      const list = entry.kind === "task" ? "listTasks" : "listEvents";
+      const dialogOpen = Boolean(entry.dialog);
+      const out = {
+        reviewId: entry.id, kind: entry.kind, title: entry.title, status: entry.status, dialogOpen,
+        requestedAt: iso(entry.requestedAt),
+      };
+      if (entry.savedAt !== null) out.savedAt = iso(entry.savedAt);
+      let note;
+      if (entry.status === "open") {
+        note = "The dialog is open; nothing is saved yet.";
+      } else if (entry.status === "closed") {
+        note = "The dialog was closed without saving: nothing was created. Ask the user before opening it again.";
+      } else if (entry.status === "failed") {
+        note = `Saving failed: nothing was created.${dialogOpen ? " The dialog is still open." : ""}`;
+      } else {
+        let visible;
+        try {
+          visible = Boolean(entry.item.calendarId) && canSeeCalendar(entry.item.calendarId) === true;
+        } catch {
+          visible = false;
+        }
+        if (visible) {
+          if (entry.item.id) out[entry.kind === "task" ? "taskId" : "eventId"] = entry.item.id;
+          out.calendarId = entry.item.calendarId;
+          note = entry.item.id
+            ? `Saved by the user. ${list} shows it as it is now.`
+            : `Saved by the user; its id is not known: find it with ${list}.`;
+        } else {
+          note = "Saved by the user, in a calendar this client cannot see.";
+        }
+        if (dialogOpen) note += " The dialog is still open: the user may change it again.";
+      }
+      if (entry.error) out.error = entry.error;
+      // Not named "note", which the untrusted-content markers wrap (contact and event notes).
+      out.message = note;
+      return out;
+    },
+  };
+}
+
+// The onOk of a review dialog. It saves the way Thunderbird's own new event and task dialogs do
+// (createEventWithDialog, createTodoWithDialog): through doTransaction of the main window, "add" the first time and
+// "modify" once the dialog holds the saved item, so a second Save changes the item instead of adding another one, the
+// save can be undone, and a calendar or attendees the user picks in the dialog are handled as Thunderbird handles them.
+// The outcome goes to `store` under review.id (set once the dialog is open). mainWindow() -> a window with
+// doTransaction, or null.
+function calendarReviewSave({ store, review, mainWindow }) {
+  return function onOk(item, calendar, originalItem, listener, extResponse) {
+    const modify = Boolean(item && item.id);
+    let recorded = false;
+    const observer = {
+      onTransactionComplete(saved, old) {
+        recorded = true;
+        store.saved(review.id, { id: saved && saved.id, calendarId: saved && saved.calendar && saved.calendar.id });
+        if (listener && typeof listener.onTransactionComplete === "function") listener.onTransactionComplete(saved, old);
+      },
+      onGetResult() {},
+    };
+    // A save inside a batch of Thunderbird's does not call the observer.
+    const settle = () => {
+      if (!recorded) store.saved(review.id, { id: modify ? item.id : null, calendarId: calendar && calendar.id });
+    };
+    // An error of the dialog's own listener, after the save, is not a failed save.
+    const fail = (e) => {
+      if (!recorded) store.failed(review.id, describeError(e));
+    };
+    const win = mainWindow();
+    if (!win || typeof win.doTransaction !== "function") {
+      store.failed(review.id, "Thunderbird's main window is closed; open it and save again");
+      return;
+    }
+    try {
+      Promise.resolve(win.doTransaction(modify ? "modify" : "add", item, calendar, modify ? originalItem : null, observer,
+        extResponse)).then(settle).catch(fail);
+    } catch (e) {
+      fail(e);
+    }
+  };
+}
+// END CALENDAR REVIEW HELPERS
+
+function randomCalendarReviewId() {
+  const rng = Cc["@mozilla.org/security/random-generator;1"].createInstance(Ci.nsIRandomGenerator);
+  return "rv-" + Array.from(rng.generateRandomBytes(12), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// One store per running extension (survives a server restart, not a reload).
+function getCalendarReviewStore() {
+  if (!globalThis.__commonpostMcpCalendarReviews) {
+    globalThis.__commonpostMcpCalendarReviews = createCalendarReviewStore({
+      newId: randomCalendarReviewId,
+      isDialogOpen: (dialog) => !dialog.closed,
+    });
+  }
+  return globalThis.__commonpostMcpCalendarReviews;
+}
+
 // BEGIN EVENT RANGE HELPERS
 // The range listEvents queries. A date-only value ("2026-10-15") is a calendar
 // day in local time, not an instant: as startDate it is the start of that day,
@@ -7222,7 +7388,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "createEvent",
         group: "calendar", crud: "create",
         title: "Create Event",
-        description: "Create a calendar event (changes: updateEvent; to-dos: createTask). By default it opens Thunderbird's event dialog filled in, and the event exists once the user saves it. skipReview adds it at once, only if the user turned off the default-on skipReview block for events and tasks.",
+        description: "Create a calendar event (changes: updateEvent; to-dos: createTask). By default it opens Thunderbird's event dialog filled in, and the event exists once the user saves it (listEvents with the reviewId of the result tells). skipReview adds it at once, only if the user turned off the default-on skipReview block for events and tasks.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7256,6 +7422,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             endDate: { type: "string", description: "ISO 8601 end (default: start + 30 days); date-only includes the whole day" },
             maxResults: { type: "integer", minimum: 1, maximum: 500, default: 100, description: "Max events" },
             format: { type: "string", enum: ["objects", "table"], description: "'table' returns { columns, rows }" },
+            reviewId: { type: "string", description: "From createEvent: that dialog's state instead (open, saved + eventId, closed unsaved, failed)" },
           },
           required: [],
         },
@@ -7302,7 +7469,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "createTask",
         group: "calendar", crud: "create",
         title: "Create Task",
-        description: "Open a pre-filled task dialog for review. The skipReview block for events and tasks is on by default; direct saving is honored only when the user explicitly disables it.",
+        description: "Create a task (to-do). By default it opens Thunderbird's task dialog filled in, and the task exists once the user saves it (listTasks with the reviewId of the result tells). skipReview adds it at once, only if the user turned off the default-on skipReview block for events and tasks.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7312,7 +7479,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             description: { type: "string", description: "Task description/body" },
             priority: { type: "integer", minimum: 0, maximum: 9, description: "Priority: 1=high, 5=normal, 9=low" },
             categories: { type: "array", items: { type: "string" }, description: "Category labels. Use listCategories to get exact existing names before setting." },
-            skipReview: { type: "boolean", description: "Request direct saving without a review dialog. Honored only when the user explicitly disables the default-on skipReview block for events and tasks (default: false)." },
+            skipReview: { type: "boolean", description: "Add without the dialog; refused while the skipReview block for events and tasks is on (default: false)" },
           },
           required: ["title"],
         },
@@ -7337,6 +7504,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             dueBefore: { type: "string", description: "Return tasks due before this ISO 8601 date" },
             maxResults: { type: "integer", minimum: 1, maximum: 500, default: 100, description: "Max tasks" },
             format: { type: "string", enum: ["objects", "table"], description: "'table' returns { columns, rows }" },
+            reviewId: { type: "string", description: "From createTask: that dialog's state instead (open, saved + taskId, closed unsaved, failed)" },
           },
           required: [],
         },
@@ -12723,6 +12891,41 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return alarm;
             }
 
+            // Opens Thunderbird's event dialog, which is also its task dialog, for the new `item` in a window of its
+            // own (as openEventDialog does outside a tab) and keeps a review of it (CALENDAR REVIEW HELPERS). Returns
+            // the reviewId, or null when no window opened.
+            function openCalendarReviewDialog(win, item, calendar, kind) {
+              const store = getCalendarReviewStore();
+              const review = { id: null };
+              const mainWindow = () => {
+                try {
+                  if (win && !win.closed && typeof win.doTransaction === "function") return win;
+                } catch {
+                  // The window is gone.
+                }
+                return Services.wm.getMostRecentWindow("mail:3pane");
+              };
+              const dialog = win.openDialog(
+                "chrome://calendar/content/calendar-event-dialog.xhtml",
+                "_blank",
+                "centerscreen,chrome,titlebar,toolbar,resizable",
+                {
+                  calendarEvent: item,
+                  calendar,
+                  mode: "new",
+                  inTab: false,
+                  initialStartDateValue: cal.dtz.getDefaultStartDate(),
+                  onOk: calendarReviewSave({ store, review, mainWindow }),
+                  // New event or task from the dialog's menu: Thunderbird's own dialogs, outside this review.
+                  onNewEvent: (c) => mainWindow()?.createEventWithDialog(c, null, null),
+                  onNewTodo: (c) => mainWindow()?.createTodoWithDialog(c),
+                }
+              );
+              if (!dialog) return null;
+              review.id = store.open({ kind, title: item.title, dialog });
+              return review.id;
+            }
+
             async function createEvent(title, startDate, endDate, location, description, calendarId, allDay, skipReview, status, showAs, categories, onlineMeeting, reminders) {
               if (!cal || !CalEvent) {
                 return { error: "Calendar module not available" };
@@ -12868,24 +13071,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   return withReminders({ success: true, message: `Event "${title}" added to calendar "${targetCalendar.name}"` });
                 }
 
-                const args = {
-                  calendarEvent: event,
-                  calendar: targetCalendar,
-                  mode: "new",
-                  inTab: false,
-                  onOk(item, calendar) {
-                    calendar.addItem(item);
-                  },
-                };
-
-                win.openDialog(
-                  "chrome://calendar/content/calendar-event-dialog.xhtml",
-                  "_blank",
-                  "centerscreen,chrome,titlebar,toolbar,resizable",
-                  args
-                );
-
-                return withReminders({ success: true, message: `Event dialog opened for "${title}" on calendar "${targetCalendar.name}"` });
+                const reviewId = openCalendarReviewDialog(win, event, targetCalendar, "event");
+                return withReminders({
+                  success: true,
+                  ...(reviewId ? { reviewId } : {}),
+                  message: `Event dialog opened for "${title}" on calendar "${targetCalendar.name}". Nothing is created `
+                    + "until the user saves it: listEvents with this reviewId tells whether they did.",
+                });
               } catch (e) {
                 return { error: e.toString() };
               }
@@ -13122,6 +13314,25 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               } catch (e) {
                 return { error: e.toString() };
               }
+            }
+
+            // listEvents (kind "event") / listTasks (kind "task") with reviewId: the state of a dialog opened by
+            // createEvent or createTask. Each reads its own kind, so the tool settings that keep one of them from the
+            // client also keep those reviews. The id of what the user saved is given only for a calendar the client
+            // may see.
+            function calendarReviewState(reviewId, kind) {
+              if (!cal) return { error: "Calendar not available" };
+              const creator = kind === "task" ? "createTask" : "createEvent";
+              if (typeof reviewId !== "string" || !/^rv-[0-9a-f]{24}$/.test(reviewId)) {
+                return { error: `reviewId must be the reviewId of a ${creator} result (rv- and 24 hexadecimal digits)` };
+              }
+              const visible = new Set(getAccessibleCalendars().map((c) => c.id));
+              const review = getCalendarReviewStore().view(reviewId, { canSeeCalendar: (id) => visible.has(id) });
+              if (!review || review.kind !== kind) {
+                return { error: `Unknown reviewId for ${creator}: ${reviewId}. Reviews are kept in memory, the last `
+                  + `${CALENDAR_REVIEW_HISTORY} of the closed dialogs, until Thunderbird or the extension restarts.` };
+              }
+              return { review };
             }
 
             async function listEvents(calendarId, startDate, endDate, maxResults) {
@@ -13586,7 +13797,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 // Build a fully-populated CalTodo. The extension runs in addon_parent
                 // (main-process privileged context) and imports CalTodo from the same
                 // resource:/// ESModule singleton as the chrome, so the object is fully
-                // interoperable with createTodoWithDialog and the task edit dialog.
+                // interoperable with the task edit dialog.
                 if (priority !== undefined && priority !== null) {
                   if (!Number.isInteger(priority) || priority < 0 || priority > 9) {
                     return { error: "priority must be an integer between 0 and 9 (0=unset, 1=high, 5=normal, 9=low)" };
@@ -13599,19 +13810,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (description) todo.descriptionHTML = descriptionToHTML(stripEmailContentMarkers(description));
                 if (priority !== undefined && priority !== null) todo.priority = priority;
                 if (categories && categories.length > 0) todo.setCategories(categories);
-                if (targetCalendar) todo.calendar = targetCalendar;
+
+                // With no calendarId, the dialog opens on the calendar a direct save would use, as for createEvent.
+                if (!targetCalendar) {
+                  const picked = pickDefaultWriteCalendar(
+                    getAccessibleCalendars(),
+                    c => c.getProperty("capabilities.tasks.supported") !== false,
+                    "task-capable calendar"
+                  );
+                  if (picked.error) return { error: picked.error };
+                  targetCalendar = picked.calendar;
+                }
+                todo.calendar = targetCalendar;
 
                 if (skipReview) {
-                  if (!targetCalendar) {
-                    const picked = pickDefaultWriteCalendar(
-                      getAccessibleCalendars(),
-                      c => c.getProperty("capabilities.tasks.supported") !== false,
-                      "task-capable calendar"
-                    );
-                    if (picked.error) return { error: picked.error };
-                    targetCalendar = picked.calendar;
-                    todo.calendar = targetCalendar;
-                  }
                   await targetCalendar.addItem(todo);
                   return { success: true, message: `Task "${title}" created in calendar "${targetCalendar.name}"` };
                 }
@@ -13619,12 +13831,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 const win = Services.wm.getMostRecentWindow("mail:3pane");
                 if (!win) return { error: "No Thunderbird window found" };
 
-                // Pass the pre-populated CalTodo to the dialog. createTodoWithDialog
-                // clones it (clearing the id) before opening, so all fields are
-                // pre-filled and the user can review or cancel without side effects.
-                win.createTodoWithDialog(targetCalendar, dueDt, null, todo);
-
-                return { success: true, message: `Task dialog opened for "${title}"` };
+                // The task is new (no id): the user reviews it, saves it or closes the dialog without side effects.
+                const reviewId = openCalendarReviewDialog(win, todo, targetCalendar, "task");
+                return {
+                  success: true,
+                  ...(reviewId ? { reviewId } : {}),
+                  message: `Task dialog opened for "${title}" on calendar "${targetCalendar.name}". Nothing is created `
+                    + "until the user saves it: listTasks with this reviewId tells whether they did.",
+                };
               } catch (e) {
                 return { error: e.toString() };
               }
@@ -18851,6 +19065,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "createEvent":
                   return await createEvent(args.title, args.startDate, args.endDate, args.location, args.description, args.calendarId, args.allDay, args.skipReview, args.status, args.showAs, args.categories, args.onlineMeeting, args.reminders);
                 case "listEvents":
+                  if (args.reviewId !== undefined) return calendarReviewState(args.reviewId, "event");
                   return listResultAsTable(await listEvents(args.calendarId, args.startDate, args.endDate, args.maxResults), args.format);
                 case "updateEvent":
                   return await updateEvent(args.eventId, args.calendarId, args.title, args.startDate, args.endDate, args.location, args.description, args.status, args.showAs, args.categories, args.onlineMeeting, args.reminders);
@@ -18861,6 +19076,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "createTask":
                   return await createTask(args.title, args.dueDate, args.calendarId, args.description, args.priority, args.categories, args.skipReview);
                 case "listTasks":
+                  if (args.reviewId !== undefined) return calendarReviewState(args.reviewId, "task");
                   return listResultAsTable(await listTasks(args.calendarId, args.completed, args.dueBefore, args.maxResults), args.format);
                 case "updateTask":
                   return await updateTask(args.taskId, args.calendarId, args.title, args.dueDate, args.description, args.completed, args.percentComplete, args.priority);
@@ -19636,6 +19852,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
       }
       globalThis.__commonpostMcpFilterConfirmations = null;
     }
+    // The reviews of event and task dialogs are forgotten; dialogs still open stay open.
+    globalThis.__commonpostMcpCalendarReviews = null;
     // Stop the HTTP server so the port is released
     if (globalThis.__cpMcpServer) {
       try { globalThis.__cpMcpServer.stop(() => {}); } catch { /* ignore */ }

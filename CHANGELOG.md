@@ -12,9 +12,18 @@ project is kept in this repository.
   add an event or task at once while mail still needs its review window. It is on by default and, until it is saved,
   follows the block for mail, so nothing changes for a configuration made before it. The refusal now says "for
   events and tasks".
+- `createEvent` and `createTask` return a `reviewId` with the dialog they open, and `listEvents` or `listTasks` with
+  that `reviewId` tell what became of it: still open, saved by the user (with its `eventId` or `taskId`), closed
+  without saving (nothing was created), or a save that failed. An assistant no longer has to guess whether a dialog
+  closed by mistake created anything. Kept in memory until Thunderbird or the add-on restarts: every open dialog and
+  the last 20 others.
 
 ### Fixed
 
+- The dialog of `createEvent` saved an event a second time when the user saved it twice (Save, then Save and
+  Close). Its dialogs now save as Thunderbird's own new event and task dialogs do, through Thunderbird's
+  transaction: a second save changes the event or task, the save can be undone, and invitations to attendees the
+  user adds in the dialog go out as Thunderbird sends them.
 - After an update, the add-on's Options tab and button no longer disappear from an open Add-ons Manager.
   Thunderbird drew the updated add-on before its new version had started (Mozilla bug 1667143); the add-on now
   redraws its own entry once it runs. This works from the update that installs this version on; until then, closing
@@ -22,6 +31,9 @@ project is kept in this repository.
 
 ### Changed
 
+- `createTask` opens its dialog in a window, as `createEvent` does, also when Thunderbird edits events and tasks in a
+  tab; with no `calendarId`, on the calendar a direct save would use (the first enabled, writable calendar that
+  supports tasks) instead of the calendar selected in Thunderbird.
 - `getMessage` and `getMessages` judge the hidden text of an HTML body (`markdown` and `text` formats) on the
   message as Thunderbird's message pane shows it. Thunderbird renders the message, at the size of the message pane,
   in a hidden frame of the add-on's background page that runs no script and loads nothing from the network, and the
