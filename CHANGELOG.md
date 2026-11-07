@@ -4,6 +4,17 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Fixed
+
+- The short description is 99 characters instead of 104. The MCP registry refuses a description longer than 100
+  (`ServerDetail.description` of its schema), so the entry for 0.20.1 was refused after that release was already
+  out and the registry still lists 0.20.0. The line now reads *MCP server for AI assistants: Thunderbird mail,
+  calendar, contacts, filters. Windows, macOS, Linux.*, is identical in the README, in `package.json` and in the
+  workflow that publishes the entry, and a test checks those three agree and stay within the limit -- before the
+  tag rather than after it. Nothing in the add-on or the bridge changes.
+
 ## [0.20.1] - 2026-11-07
 
 - Documentation only. The project now uses one short description of itself -- in the README, in the GitHub

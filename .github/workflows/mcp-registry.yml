@@ -63,7 +63,7 @@ jobs:
             "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
             name: "io.github.commonpost/thunderbird-mcp",
             title: "Commonpost MCP for Thunderbird",
-            description: "MCP server giving AI assistants Thunderbird mail, calendar, contacts and filters. Windows, macOS, Linux.",
+            description: "MCP server for AI assistants: Thunderbird mail, calendar, contacts, filters. Windows, macOS, Linux.",
             version: $version,
             websiteUrl: "https://github.com/commonpost/thunderbird-mcp",
             repository: { url: "https://github.com/commonpost/thunderbird-mcp", source: "github" },
