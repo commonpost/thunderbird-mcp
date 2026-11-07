@@ -6,6 +6,15 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Added
+
+- The head of the README states the released version and its date, on a line of its own: *Latest release:
+  **v0.20.1** (2026-11-07)*. Directories and search engines read the head of the README, and at least one directory
+  showed a version of this project that never existed, apparently counting the `Unreleased` section of this file as
+  the next patch. `scripts/check-versions.cjs` now refuses a release line that does not carry the version of
+  `package.json` and the date of its section here, or that sits beyond the first 2500 bytes of the README, so the
+  line moves with the other version files instead of going stale.
+
 ### Fixed
 
 - The short description is 99 characters instead of 104. The MCP registry refuses a description longer than 100

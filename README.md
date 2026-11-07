@@ -12,6 +12,8 @@ MCP server for AI assistants: Thunderbird mail, calendar, contacts, filters. Win
 
 Give your AI assistant full access to Thunderbird -- search mail, compose messages, manage filters, and organize your inbox. All through the [Model Context Protocol](https://modelcontextprotocol.io/).
 
+Latest release: **v0.20.1** (2026-11-07) -- see the [changelog](CHANGELOG.md) or [all releases](https://github.com/commonpost/thunderbird-mcp/releases).
+
 <p align="center">
   <img src="docs/demo.gif" alt="Demo of the MCP server for Thunderbird" width="600">
 </p>
