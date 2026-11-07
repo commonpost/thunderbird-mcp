@@ -33,6 +33,7 @@ function loadDeleteMessages(dependencies) {
 
   const snippet = source.slice(start, end);
   const sandbox = {
+    arrivalResendCheck: () => null, folderArrivalInfo: () => null, someUnread: () => true, folderHasUnread: () => true, // arrival guard: arrival-resend-guard.test.cjs
     openFolder: dependencies.openFolder,
     findTrashFolder: dependencies.findTrashFolder,
     MailServices: dependencies.MailServices,

@@ -3994,7 +3994,7 @@ function copyRuleAction(filter, action) {
 // forward = ONE plain address (assertForwardAddress); reply = a template of a
 // Templates folder, checked by `checkSendAction(actionName, value)`, which
 // the caller must supply (no check, no reply: fail closed).
-function buildRuleActions(filter, actions, resolveFolder, { allowSendActions = false, checkSendAction } = {}) {
+function buildRuleActions(filter, actions, resolveFolder, { allowSendActions = false, checkSendAction, warnings } = {}) {
   if (typeof resolveFolder !== "function") {
     // checkTargetFolder is mandatory: every action that targets a folder
     // (moveToFolder/copyToFolder) must have its target verified accessible.
@@ -4039,9 +4039,13 @@ function buildRuleActions(filter, actions, resolveFolder, { allowSendActions = f
         // canonical URI: getFolderForURL() is lenient, the targetFolderUri
         // setter is not (KinJLy/coulof forks).
         const targetCheck = resolveFolder(String(act.value));
+        // A target refused for what would happen there says why (`refused`);
+        // one that only warrants a warning passes it to the caller.
+        if (targetCheck && targetCheck.refused && targetCheck.error) throw new Error(targetCheck.error);
         if (!targetCheck || targetCheck.error || !targetCheck.folder) {
           throw new Error(`Filter target folder not accessible: ${act.value}`);
         }
+        if (targetCheck.warning && Array.isArray(warnings)) warnings.push(targetCheck.warning);
         action.targetFolderUri = targetCheck.folder.URI;
       } else {
         const parsed = VALUE_CODECS[spec.codec].parse(act.value, `Action value for "${act.type}"`, spec);
@@ -4190,7 +4194,7 @@ function validateFilterType(type) {
 // is not replaced is COPIED typed, and any copy failure throws before the
 // filter list is touched. Returns { changes, replacement } -- replacement is
 // null when only name/enabled/type change (applied in place by the caller).
-function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSendActions = false, checkSendAction, isKeptTargetAllowed, isAddressBookAllowed } = {}) {
+function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSendActions = false, checkSendAction, isKeptTargetAllowed, isAddressBookAllowed, warnings } = {}) {
   if (typeof resolveFolder !== "function") {
     throw new Error("planFilterUpdate requires a resolveFolder(uri) function");
   }
@@ -4296,7 +4300,7 @@ function planFilterUpdate(filterList, filter, update, resolveFolder, { allowSend
   }
 
   if (replaceActions) {
-    buildRuleActions(replacement, update.actions, resolveFolder, { allowSendActions, checkSendAction });
+    buildRuleActions(replacement, update.actions, resolveFolder, { allowSendActions, checkSendAction, warnings });
     changes.push("actions");
   } else {
     const count = filter.actionCount;
@@ -4479,6 +4483,178 @@ function selectManualRunFilters(filterList, manualType, isTargetAllowed) {
     else run.push({ index, filter });
   }
   return { run, skipped };
+}
+
+// ── Mail put into a folder where Thunderbird runs incoming filters ──
+//
+// Thunderbird runs an IMAP account's incoming filters on mail that appears
+// in a folder, also when it was moved or copied there:
+//   - in its Inbox, or a folder whose inherited folder property
+//     "applyIncomingFilters" is "true", every rule that acts on new mail, on
+//     every message with a UID above the highest one it has seen there
+//     (mail.imap.filter_on_new, the default) or else every unread one
+//     (nsImapMailFolder::NormalEndHeaderParseStream); periodic rules run on
+//     the Inbox too;
+//   - in ANY folder, the rules that run "after classification" (PostPlugin)
+//     on the unread messages that appear there (nsMsgDBFolder::
+//     CallFilterPlugins, run for every folder after a header fetch; measured
+//     in the lab: an unread message moved to an ordinary IMAP folder was
+//     forwarded, a read one was not).
+// A rule that forwards or replies there then sends that mail. Through MCP,
+// nothing is moved, copied or saved into such a folder (updateMessage,
+// deleteMessages, deleteFolder, moveFolder, renameFolder, saveDraft, and the
+// move/copy actions of filter rules created, kept or run through MCP) while
+// such a rule there sends mail or runs an add-on action, directly or through
+// the move/copy actions of the rules on the way (another account's Inbox).
+// Whatever the blockFilterForwardReply setting: the rule may be one the user
+// made. Local folders (Local Folders, POP3, feeds) filter only while
+// downloading (an unread message moved into one was not forwarded, in the
+// lab); any other server type is treated like IMAP.
+const ARRIVAL_FILTER_LOCAL_SERVER_TYPES = ["none", "pop3", "rss", "nntp"];
+const ARRIVAL_FILTER_MAX_FOLDERS = 50;
+const FILTER_TYPE_ARRIVAL_BITS = ["InboxRule", "InboxJavaScript", "NewsRule", "NewsJavaScript", "PostPlugin"]
+  .reduce((mask, idl, i) => mask | (resolveXpcomConstant("nsMsgFilterType", idl) ?? [0x1, 0x2, 0x4, 0x8, 0x20][i]), 0);
+const FILTER_TYPE_POST_PLUGIN = resolveXpcomConstant("nsMsgFilterType", "PostPlugin") ?? 0x20;
+const FILTER_TARGET_RESENDS = "move/copy target is a folder where Thunderbird runs, on the mail filed there as on new "
+  + "mail, a filter rule that sends mail or runs an add-on action, or one it cannot check (Tools > Message Filters)";
+
+// How Thunderbird filters mail put into a folder: "all" (Inbox, or
+// "applyIncomingFilters": the rules acting on new mail, read or not),
+// "unread" (any other folder of a non-local server: the rules run "after
+// classification", on unread mail) or "none" (local servers). A property that
+// cannot be read counts as "true" (fail closed).
+function arrivalFilterScope({ serverType, isInbox, inheritedProperty }) {
+  if (ARRIVAL_FILTER_LOCAL_SERVER_TYPES.includes(serverType)) return "none";
+  if (isInbox) return "all";
+  try {
+    return inheritedProperty("applyIncomingFilters") === "true" ? "all" : "unread";
+  } catch {
+    return "all";
+  }
+}
+
+// The filter types that run on mail put into a folder of `scope`; `unread`
+// says whether some of that mail is unread (true when not known).
+function arrivalRuleMask(scope, isInbox, unread) {
+  if (scope === "all") return FILTER_TYPE_ARRIVAL_BITS | (isInbox ? FILTER_TYPE_PERIODIC : 0);
+  if (scope === "unread" && unread) return FILTER_TYPE_POST_PLUGIN;
+  return 0;
+}
+
+// The enabled rules of `filterList` whose type has a bit of `mask`, with what
+// they send (filterSendingActionKinds) and the targets of their move/copy
+// actions. A rule that cannot be read counts as sending ("unreadable").
+function arrivalRules(filterList, mask) {
+  const rules = [];
+  const count = filterList.filterCount;
+  for (let index = 0; index < count; index++) {
+    let name = "";
+    try {
+      const filter = filterList.getFilterAt(index);
+      name = String(filter.filterName);
+      if (!filter.enabled || !(filter.filterType & mask)) continue;
+      rules.push({ index, name, actions: filterSendingActionKinds(filter), targets: filterFolderTargetUris(filter) });
+    } catch (e) {
+      rules.push({ index, name, actions: [`unreadable (${describeError(e)})`], targets: [] });
+    }
+  }
+  return rules;
+}
+
+// Follows mail put into `startUri` through the folders where Thunderbird runs
+// filter rules on it. `describe(uri)` returns null when no rule runs on it
+// there (or there is no such folder), else { rules: arrivalRules(...), scope,
+// server, mask }, or { unreadable, scope } when the rules cannot be read; it
+// may throw. Every folder of a server has the server's filter list: a
+// (server, mask) already checked is not checked again, and only those checked
+// count toward the limit. Returns null, or what the mail would meet:
+//   { uri, rule, via, scope }  a rule at `uri` sends mail; `via` = the folders before it
+//   { uri, via, unreadable }   the filters of `uri` cannot be read
+//   { uri, via, tooMany }      more than ARRIVAL_FILTER_MAX_FOLDERS folders with rules
+function findArrivalResend(startUri, describe) {
+  const seen = new Set();
+  const queue = [{ uri: startUri, via: [] }];
+  const done = new Map(); // server -> masks checked
+  let checked = 0;
+  while (queue.length) {
+    const { uri, via } = queue.shift();
+    if (seen.has(uri)) continue;
+    seen.add(uri);
+    let info;
+    try {
+      info = describe(uri);
+    } catch (e) {
+      return { uri, via, unreadable: describeError(e) };
+    }
+    if (!info) continue;
+    if (info.unreadable !== undefined) return { uri, via, unreadable: info.unreadable, scope: info.scope };
+    if (info.rules.length === 0) continue;
+    if (info.server !== undefined) {
+      const masks = done.get(info.server) || new Set();
+      if (masks.has(info.mask)) continue;
+      done.set(info.server, masks.add(info.mask));
+    }
+    if (++checked > ARRIVAL_FILTER_MAX_FOLDERS) return { uri, via, tooMany: true };
+    const sending = info.rules.find((r) => r.actions.length > 0);
+    if (sending) return { uri, rule: sending, via, scope: info.scope };
+    for (const r of info.rules) {
+      for (const target of r.targets) if (!seen.has(target)) queue.push({ uri: target, via: [...via, uri] });
+    }
+  }
+  return null;
+}
+
+// Whether `found` (findArrivalResend) is the case the lab measured and the
+// one MCP refuses: mail put where Thunderbird runs the rules for new mail (an
+// IMAP Inbox, a folder with "applyIncomingFilters") and a rule there sends it,
+// or its rules cannot be read. Anywhere else (the rules run after
+// classification, on unread mail) the request goes through with a warning: a
+// refusal there would stop ordinary work -- saving a draft, filing or deleting
+// unread mail -- for a rule that may well not match those messages, since only
+// the conditions Thunderbird evaluates at run time decide.
+function arrivalResendBlocks(found) {
+  return !!found && found.scope === "all";
+}
+
+// What to tell the user about `found` (findArrivalResend from `startUri`).
+// `what` names the request ("Moving messages into"); `isVisible(uri)` says
+// whether MCP may name that folder and its rules (account restriction).
+// Options: `blocked`, whether the request is refused (else it was done and
+// this is a warning); `markRead`, whether marking the messages read first is
+// a way out; `object`, what would be sent ("those messages"); `another`, the
+// other way out.
+function describeArrivalResend(found, startUri, what, isVisible = () => true,
+  { markRead = true, object = "those messages", another = "choose another folder", blocked = true } = {}) {
+  const place = (uri) => (isVisible(uri) ? uri : "a folder of an account MCP cannot access");
+  const head = blocked
+    ? `${what} ${place(startUri)} is refused, whatever the setting of "Filter rules that send mail": `
+    : `${what} ${place(startUri)}: `;
+  const look = blocked ? `The user can check them in Thunderbird (Tools > Message Filters), or ${another}.`
+    : "The user can check them in Thunderbird (Tools > Message Filters).";
+  const where = found.via.length === 0 ? "there"
+    : `in ${place(found.uri)}, where the filter rules of ${found.via.map(place).join(", then of ")} move or copy it,`;
+  if (found.tooMany) {
+    return `${head}mail put there goes on through the move/copy filter rules of more than ${ARRIVAL_FILTER_MAX_FOLDERS} `
+      + `folders, too many to check. ${look}`;
+  }
+  if (found.unreadable !== undefined) {
+    return `${head}Thunderbird runs filters on mail put ${where} and they cannot be read (${found.unreadable}). ${look}`;
+  }
+  const kinds = found.rule.actions;
+  const sends = kinds.includes("forward") || kinds.includes("reply");
+  const does = [...new Set(kinds.map((k) => ({ forward: "forwards", reply: "replies", custom: "runs an add-on action" })[k]
+    || (String(k).startsWith("unreadable") ? "has an action Thunderbird cannot read" : `runs action ${k}`)))].join(" and ");
+  const rule = isVisible(found.uri) ? `rule #${found.rule.index} ${JSON.stringify(found.rule.name)}` : "one of its rules";
+  const when = found.scope === "unread" ? `on unread mail put ${where} (rules run "after classification")`
+    : `on mail put ${where}, as on new mail`;
+  const verb = sends ? "send" : "run on";
+  if (!blocked) {
+    return `${head}Thunderbird runs filters ${when}, and ${rule} ${does}, so it may ${verb} ${object} by itself. `
+      + "The user can turn that rule off in Thunderbird (Tools > Message Filters) if that is not wanted.";
+  }
+  return `${head}Thunderbird runs filters ${when}, and ${rule} ${does}: it would ${verb} ${object}. `
+    + "The user can turn that rule off first in Thunderbird (Tools > Message Filters)"
+    + (found.scope === "unread" && markRead ? ", mark the messages read first," : "") + ` or ${another}.`;
 }
 // END FILTER RULE HELPERS
 
@@ -10292,6 +10468,36 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               try { return MailServices.folderLookup.getFolderForURL(uri); } catch { return null; }
             }
 
+            // Thunderbird files a draft in the identity's Drafts folder, and its
+            // rules "after classification" run on it there (measured in the
+            // lab: a draft saved into an IMAP Drafts folder was forwarded), so
+            // it counts as unread. A Drafts folder not created yet is checked
+            // as a new folder of the server its address names (or, with no
+            // address, of the identity's account); not found: refused.
+            function draftArrivalCheck(identity) {
+              const options = { unread: true, markRead: false, object: "the draft",
+                another: "choose another Drafts folder (Account Settings > Copies & Folders)" };
+              const drafts = getDraftsFolder(identity);
+              if (drafts) return arrivalResendCheck(drafts, "Saving a draft into", options);
+              let uri = "";
+              let root = null;
+              try {
+                uri = identity?.draftsFolderURI || identity?.draftFolder || "";
+                const server = uri ? MailServices.accounts.allServers.find((s) => uri.startsWith(`${s.serverURI}/`))
+                  : MailServices.accounts.getAccount(accountKeyForIdentity(identity))?.incomingServer;
+                root = server?.rootFolder || null;
+              } catch (e) {
+                console.warn("commonpost-mcp: drafts server unreadable for the arrival check:", e);
+              }
+              if (!root) {
+                return { warning: "The Drafts folder of this identity cannot be found, so the filter rules Thunderbird "
+                  + "may run on the draft where it files it were not checked. The user can see where it goes in "
+                  + "Thunderbird (Account Settings > Copies & Folders)." };
+              }
+              return arrivalResendCheck(root, "Saving a draft into",
+                { ...options, startInfo: folderArrivalInfo({ getInheritedStringProperty: () => "" }) });
+            }
+
             function generateMessageId(identity) {
               const domain = String(identity?.email || "").split("@")[1] || "localhost";
               return `<${Services.uuid.generateUUID().toString().replace(/[{}]/g, "")}@${domain}>`;
@@ -10369,6 +10575,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * Returns the new messageId + folderPath.
              */
             async function saveComposeFieldsAsDraft(composeFields, identity, attachDescs, useHtml, originalMsgURI, compType, replaceHdr) {
+              // A rule there must not send the draft, which nobody reviewed.
+              const arrival = draftArrivalCheck(identity);
+              if (arrival?.error) return { error: arrival.error };
+              const withArrival = (r) => (arrival?.warning && r && !r.error
+                ? { ...r, warning: [r.warning, arrival.warning].filter(Boolean).join(" ") } : r);
               const replaceURI = replaceHdr ? replaceHdr.folder.getUriForMsg(replaceHdr) : "";
               try {
                 if (composeFields.deliveryFormat === Ci.nsIMsgCompSendFormat.Unset) {
@@ -10385,7 +10596,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 console.warn("commonpost-mcp: nsIMsgCompose draft save failed, using nsIMsgSend:", e);
                 composeFields.removeAttachments();
                 composeFields.draftId = "";
-                return saveDraftViaSend(composeFields, identity, attachDescs, useHtml, originalMsgURI, compType, replaceHdr);
+                return withArrival(await saveDraftViaSend(composeFields, identity, attachDescs, useHtml, originalMsgURI, compType, replaceHdr));
               }
 
               const { msgCompose, status } = saved;
@@ -10402,7 +10613,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const result = { success: true, messageId: String(hdr?.messageId || fields.messageId || "").replace(/^<|>$/g, "") };
               const folder = hdr?.folder || getDraftsFolder(identity);
               if (folder) result.folderPath = folder.URI;
-              return result;
+              return withArrival(result);
             }
 
             // Fallback when window-less nsIMsgCompose fails: nsIMsgSend, as saveDraft did before; an edited draft is removed by hand.
@@ -17051,10 +17262,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 const isDrafts = typeof folder.getFlag === "function" && folder.getFlag(Ci.nsMsgFolderFlags.Drafts);
                 let trashFolder = null;
 
+                let arrivalWarning = null;
                 if (isDrafts) {
                   trashFolder = findTrashFolder(folder);
 
                   if (trashFolder) {
+                    const check = arrivalResendCheck(trashFolder, "Moving messages into", { unread: someUnread(found) });
+                    if (check?.error) return { error: check.error };
+                    arrivalWarning = check?.warning || null;
                     MailServices.copy.copyMessages(folder, found, trashFolder, true, null, null, false);
                   } else {
                     // No trash found, fall back to regular delete
@@ -17073,11 +17288,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     if (!trashFolder) {
                       return { error: "Trash folder not found" };
                     }
+                    const check = arrivalResendCheck(trashFolder, "Moving messages into", { unread: someUnread(found) });
+                    if (check?.error) return { error: check.error };
+                    arrivalWarning = check?.warning || null;
                   }
                   folder.deleteMessages(found, null, false, true, null, false);
                 }
 
                 const result = { success: true, deleted: found.length };
+                if (arrivalWarning) result.warning = arrivalWarning;
                 if (isDrafts && trashFolder) result.movedToTrash = true;
                 if (notFound.length > 0) result.notFound = notFound;
                 return result;
@@ -17166,12 +17385,18 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 // Resolve the destination first: a refused move must leave the
                 // messages untouched (no read, flag or tag change either).
                 let targetFolder = null;
+                let arrivalWarning = null;
+                // Read state of the messages once moved: `read` is applied first.
+                const movedUnread = () => (read === undefined ? someUnread(foundHdrs) : !read);
 
                 if (trash === true) {
                   targetFolder = findTrashFolder(folder);
                   if (!targetFolder) {
                     return { error: "Trash folder not found" };
                   }
+                  const check = arrivalResendCheck(targetFolder, "Moving messages into", { unread: movedUnread() });
+                  if (check?.error) return { error: check.error };
+                  arrivalWarning = check?.warning || null;
                 } else if (moveTo) {
                   const moveResult = getAccessibleFolder(moveTo);
                   if (moveResult.error) return moveResult;
@@ -17188,6 +17413,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (moveResult.folder.getFlag(Ci.nsMsgFolderFlags.Queue)) {
                     return { error: `Cannot move a message into the Outbox (Unsent Messages) through MCP: ${moveResult.folder.URI}` };
                   }
+                  // Thunderbird may run filters on them there as on new mail.
+                  const check = arrivalResendCheck(moveResult.folder, "Moving messages into", { unread: movedUnread() });
+                  if (check?.error) return { error: check.error };
+                  arrivalWarning = check?.warning || null;
                   targetFolder = moveResult.folder;
                 }
 
@@ -17232,9 +17461,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
 
                 const result = { success: true, updated: foundHdrs.length, actions };
+                const warnings = [];
                 if (targetFolder && (addTags || removeTags)) {
-                  result.warning = "Tags were applied before move; on IMAP accounts, tags may not transfer to the moved copy. Consider separate calls if tags are missing.";
+                  warnings.push("Tags were applied before move; on IMAP accounts, tags may not transfer to the moved copy. Consider separate calls if tags are missing.");
                 }
+                if (arrivalWarning) warnings.push(arrivalWarning);
+                if (warnings.length) result.warning = warnings.join(" ");
                 if (notFound.length > 0) result.notFound = notFound;
                 return result;
               } catch (e) {
@@ -17744,6 +17976,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 const parent = folder.parent;
                 const refusal = specialFolderRefusal(folder, "rename") || reservedFolderPlaceError(parent, newName, true);
                 if (refusal) return { error: refusal };
+                // An IMAP rename gives the folder a new database: Thunderbird
+                // takes its messages for new mail (see folderArrivalInfo).
+                const arrival = parent && arrivalResendCheck(parent, "Renaming a folder in",
+                  { unread: folderHasUnread(folder), startInfo: folderArrivalInfo(folder), another: "keep its name" });
+                if (arrival?.error) return { error: arrival.error };
 
                 folder.rename(newName, null);
 
@@ -17765,6 +18002,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
                 return {
                   success: true,
+                  ...(arrival?.warning ? { warning: arrival.warning } : {}),
                   message: newPath
                     ? `Folder renamed to "${newName}". Its URI changed: use ${newPath} from now on.`
                     : `Folder renamed to "${newName}". Its URI changed: read the new one from listFolders.`,
@@ -17810,8 +18048,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (!trashFolder) {
                     return { error: "Trash folder not found" };
                   }
+                  const arrival = arrivalResendCheck(trashFolder, "Moving a folder into",
+                    { unread: folderHasUnread(folder), startInfo: folderArrivalInfo(folder) });
+                  if (arrival?.error) return { error: arrival.error };
                   MailServices.copy.copyFolder(folder, trashFolder, true, null, null);
-                  return { success: true, message: `Folder "${folderName}" moved to Trash` };
+                  return { success: true, message: `Folder "${folderName}" moved to Trash`,
+                    ...(arrival?.warning ? { warning: arrival.warning } : {}) };
                 }
               } catch (e) {
                 return { error: e.toString() };
@@ -17973,10 +18215,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (folder.parent && folder.parent.URI === newParent.URI) {
                   return { error: "Folder is already under this parent" };
                 }
+                const arrival = arrivalResendCheck(newParent, "Moving a folder into",
+                  { unread: folderHasUnread(folder), startInfo: folderArrivalInfo(folder) });
+                if (arrival?.error) return { error: arrival.error };
 
                 MailServices.copy.copyFolder(folder, newParent, true, null, null);
                 return {
                   success: true,
+                  ...(arrival?.warning ? { warning: arrival.warning } : {}),
                   message: `Folder "${folderName}" moved to "${parentName}"`,
                 };
               } catch (e) {
@@ -18025,11 +18271,86 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return serializeFilterRule(filter, index);
             }
 
+            // Mail put into a folder where Thunderbird runs filter rules on it
+            // (see findArrivalResend). Every account is followed, even one
+            // MCP cannot reach: a rule the user made there sends all the same.
+            // `unread`: some of that mail is unread (true when not known).
+            // Rules that cannot be read are reported with the scope, so the
+            // caller can refuse where that matters.
+            function describeArrivalFolder(f, unread) {
+              if (!f) return null;
+              const isInbox = f.getFlag(Ci.nsMsgFolderFlags.Inbox);
+              const scope = arrivalFilterScope({ serverType: f.server.type, isInbox,
+                inheritedProperty: (name) => f.getInheritedStringProperty(name) });
+              const mask = arrivalRuleMask(scope, isInbox, unread);
+              if (!mask) return null;
+              try {
+                return { rules: arrivalRules(f.getFilterList(null), mask), scope, server: f.server, mask };
+              } catch (e) {
+                return { rules: [], unreadable: describeError(e), scope, server: f.server, mask };
+              }
+            }
+
+            // What MCP does about mail put into `folder`: null (nothing to
+            // say), { error } (refused: the case the lab measured, see
+            // arrivalResendBlocks) or { warning } (done, with what a rule may
+            // do by itself). `startInfo(folder, unread)` describes `folder`
+            // itself (folderArrivalInfo: a folder put under it); the other
+            // options shape the text (describeArrivalResend).
+            function arrivalResendCheck(folder, what, { unread = true, startInfo = describeArrivalFolder, ...text } = {}) {
+              // Mail filed on by a rule counts as unread: a rule on the way may mark it unread.
+              const found = findArrivalResend(folder.URI, (uri) => (uri === folder.URI ? startInfo(folder, unread)
+                : describeArrivalFolder(MailServices.folderLookup.getFolderForURL(uri), true)));
+              if (!found) return null;
+              const blocked = arrivalResendBlocks(found);
+              const message = describeArrivalResend(found, folder.URI, what,
+                (uri) => !getAccessibleFolder(uri).error, { ...text, blocked });
+              return blocked ? { error: message } : { warning: message };
+            }
+
+            // Whether some of `hdrs` is unread (true when that cannot be read).
+            function someUnread(hdrs) {
+              try {
+                return hdrs.some((h) => !h.isRead);
+              } catch (e) {
+                console.warn("commonpost-mcp: read state unreadable, counted as unread:", e);
+                return true;
+              }
+            }
+
+            // A folder put under a parent (moveFolder, renameFolder, or
+            // deleteFolder into the Trash) is a new folder there, every
+            // message of it new: it runs the parent's "applyIncomingFilters"
+            // (or its own, if "true"; an IMAP rename replaces the database
+            // that holds a "false"), and the rules "after classification" on
+            // its unread messages.
+            function folderArrivalInfo(moved) {
+              return (parent, unread) => describeArrivalFolder({
+                server: parent.server,
+                getFlag: () => false,
+                getFilterList: (w) => parent.getFilterList(w),
+                getInheritedStringProperty: (name) => (moved.getInheritedStringProperty(name) === "true"
+                  ? "true" : parent.getInheritedStringProperty(name)),
+              }, unread);
+            }
+
+            // Whether the folder (or a subfolder) holds unread mail (true when
+            // that cannot be read).
+            function folderHasUnread(folder) {
+              try {
+                return folder.getNumUnread(true) !== 0;
+              } catch (e) {
+                console.warn("commonpost-mcp: unread count unreadable, counted as unread:", e);
+                return true;
+              }
+            }
+
             // A moveToFolder/copyToFolder action files matching messages into
             // its target as they arrive, same as updateMessage's moveTo: a
             // Templates folder is refused as a target here too, so it can
             // only ever hold messages the user filed there themselves (see
-            // resolveReplyTemplate below); so is the Outbox.
+            // resolveReplyTemplate below); so is the Outbox, and a folder
+            // where a filter rule would send them (arrivalResendError).
             function resolveFilterTargetFolder(uri) {
               const result = getAccessibleFolder(uri);
               if (result.error) return result;
@@ -18039,20 +18360,29 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               if (result.folder.getFlag(Ci.nsMsgFolderFlags.Queue)) {
                 return { error: `Cannot target the Outbox (Unsent Messages) from a filter rule: ${result.folder.URI}` };
               }
-              return result;
+              const arrival = arrivalResendCheck(result.folder, "A filter rule moving or copying mail into",
+                { markRead: false, object: "the mail it files there" });
+              if (arrival?.error) return { error: arrival.error, refused: true };
+              return arrival?.warning ? { ...result, warning: arrival.warning } : result;
             }
 
             // A target a rule already has (kept by updateFilter, run by
             // applyFilters): the account restriction applies, and neither the
             // Outbox nor a Templates folder is kept or run through MCP (see
-            // resolveReplyTemplate). Returns true, or the reason why not.
-            function checkExistingFilterTarget(uri) {
+            // resolveReplyTemplate), nor a folder where a filter rule would
+            // send the messages (arrivalResendError). Returns true, or the
+            // reason why not.
+            function checkExistingFilterTarget(uri, warnings) {
               const result = getAccessibleFolder(uri);
               if (result.error) return FILTER_TARGET_NOT_ACCESSIBLE;
               if (result.folder.getFlag(Ci.nsMsgFolderFlags.Queue)) return FILTER_TARGET_IS_OUTBOX;
               if (result.folder.getFlag(Ci.nsMsgFolderFlags.Templates) || isIdentityTemplatesAddress(result.folder)) {
                 return FILTER_TARGET_IS_TEMPLATES;
               }
+              const arrival = arrivalResendCheck(result.folder, "A filter rule moving or copying mail into",
+                { markRead: false, object: "the mail it files there" });
+              if (arrival?.error) return FILTER_TARGET_RESENDS;
+              if (arrival?.warning && Array.isArray(warnings)) warnings.push(arrival.warning);
               return true;
             }
 
@@ -18129,8 +18459,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 : { allowSendActions: false };
             }
 
-            function buildActions(filter, actions, policy) {
-              buildRuleActions(filter, actions, resolveFilterTargetFolder, sendActionOptions(policy));
+            function buildActions(filter, actions, policy, warnings) {
+              buildRuleActions(filter, actions, resolveFilterTargetFolder, { ...sendActionOptions(policy), warnings });
             }
 
             // "block" policy only: throws when the guard forbids this
@@ -18222,7 +18552,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               filter.filterType = (Number.isFinite(a.type) && a.type > 0) ? a.type : 17; // inbox + manual
 
               buildTerms(filter, a.conditions, { isAddressBookAllowed: checkFilterAddressBook });
-              buildActions(filter, a.actions, policy);
+              // What a rule may set off where it files mail: said once, with the result.
+              const warnings = [];
+              buildActions(filter, a.actions, policy, warnings);
 
               const idx = (a.insertAtIndex != null && a.insertAtIndex >= 0)
                 ? Math.min(a.insertAtIndex, filterList.filterCount)
@@ -18243,6 +18575,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     name: filter.filterName,
                     index: idx,
                     filterCount: filterList.filterCount,
+                    ...(warnings.length ? { warning: [...new Set(warnings)].join(" ") } : {}),
                   };
                 },
               };
@@ -18265,13 +18598,16 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               if (policy === "block") guardFilterList(filterList, "update");
               const filter = filterList.getFilterAt(a.filterIndex);
               const before = serializeFilter(filter, a.filterIndex);
+              // What a rule may set off where it files mail (new and kept targets).
+              const warnings = [];
               // Build (and fully validate) the replacement before touching
               // the filter or the list: a failure leaves both unchanged.
               const { changes, replacement } = planFilterUpdate(
                 filterList, filter,
                 { name: a.name, enabled: a.enabled, type: a.type, conditions: a.conditions, actions: a.actions },
                 resolveFilterTargetFolder,
-                { ...sendActionOptions(policy), isKeptTargetAllowed: checkExistingFilterTarget, isAddressBookAllowed: checkFilterAddressBook });
+                { ...sendActionOptions(policy), warnings, isKeptTargetAllowed: (uri) => checkExistingFilterTarget(uri, warnings),
+                  isAddressBookAllowed: checkFilterAddressBook });
 
               const resulting = replacement || filter;
               let rule = serializeFilter(resulting, a.filterIndex);
@@ -18308,6 +18644,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     success: true,
                     changes,
                     filter: serializeFilter(filterList.getFilterAt(a.filterIndex), a.filterIndex),
+                    ...(warnings.length ? { warning: [...new Set(warnings)].join(" ") } : {}),
                   };
                 },
               };
@@ -18410,8 +18747,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     + (serviceErrors.length ? ` (${serviceErrors.join("; ")})` : ""),
                 };
               }
-              const selectRules = () => selectManualRunFilters(filterList, FILTER_TYPE_MANUAL, checkExistingFilterTarget);
-              const preview = selectRules();
+              const selectRules = (warnings) => selectManualRunFilters(filterList, FILTER_TYPE_MANUAL,
+                (uri) => checkExistingFilterTarget(uri, warnings));
+              const preview = selectRules([]);
               return {
                 operation: "apply",
                 account: fl.account,
@@ -18429,7 +18767,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 commit() {
                   // The list may have changed since the preparation (or since
                   // the user was asked): select again, right before running.
-                  const { run, skipped } = selectRules();
+                  const warnings = [];
+                  const { run, skipped } = selectRules(warnings);
                   if (run.length === 0) {
                     return {
                       success: true,
@@ -18437,10 +18776,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       folder: a.folderPath,
                       ran: { count: 0, names: [] },
                       skipped,
+                      ...(warnings.length ? { warning: [...new Set(warnings)].join(" ") } : {}),
                     };
                   }
                   // Same as Thunderbird's own "Run Filters on Folder": a
                   // temporary list holding only the selected rules, in order.
+                  const warning = warnings.length ? [...new Set(warnings)].join(" ") : null;
                   const tempList = filterService.getTempFilterList(folder);
                   tempList.loggingEnabled = filterList.loggingEnabled;
                   tempList.logStream = filterList.logStream;
@@ -18454,6 +18795,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     folder: a.folderPath,
                     ran: { count: run.length, names: run.map((r) => String(r.filter.filterName)) },
                     skipped,
+                    ...(warning ? { warning } : {}),
                   };
                 },
               };

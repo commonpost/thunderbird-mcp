@@ -28,7 +28,8 @@ function loadResolveFilterTargetFolder(getAccessibleFolder) {
   const end = source.indexOf(close, start);
   assert.ok(end > start, "resolveFilterTargetFolder end marker missing");
 
-  const sandbox = { Ci, getAccessibleFolder, MailServices: { accounts: { allIdentities: [] } } };
+  // arrival guard: arrival-resend-guard.test.cjs
+  const sandbox = { Ci, getAccessibleFolder, arrivalResendCheck: () => null, MailServices: { accounts: { allIdentities: [] } } };
   vm.createContext(sandbox);
   const guards = source.slice(source.indexOf("// BEGIN SPECIAL FOLDER GUARDS"), source.indexOf("// END SPECIAL FOLDER GUARDS"));
   vm.runInContext(`${guards}

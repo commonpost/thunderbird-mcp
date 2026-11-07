@@ -30,6 +30,22 @@ project is kept in this repository.
   already there once filters are run by hand (Run Filters on Folder or on Selected Messages), and no longer speaks of
   incoming mail for a rule that runs only by hand. With the default setting, **Always block**, no such rule could be
   created. A filter type above the known bits is refused.
+- Thunderbird takes mail moved, copied or saved into a folder of an IMAP account for new mail, and runs the
+  account's filter rules on it: in the Inbox (or a folder with `applyIncomingFilters`) the rules that act on new
+  mail, read or not; in any folder, the rules that run after classification, if the mail is unread, drafts
+  included. A rule that forwards or replies then sent mail already in the mailbox, also with the default setting,
+  **Always block**, since the rule may be one the user made. Now, whatever the setting:
+  - putting mail where the rules for new mail run, while such a rule is enabled there, is **refused** (that is the
+    case the lab reproduces: an old message moved into an IMAP Inbox was forwarded again);
+  - everywhere else the request is **done, and the result warns**, naming the rule and what it may send by itself.
+    A refusal there would stop ordinary work -- saving a draft, filing or deleting unread mail -- over a rule whose
+    conditions may well not match those messages.
+
+  This covers `updateMessage`, `deleteMessages` and `deleteFolder` (into the Trash), `moveFolder`, `renameFolder`,
+  `saveDraft` and the replies and forwards saved as drafts, and the move and copy actions of filter rules created,
+  kept or run through MCP, including those that file mail into another account where such a rule waits. The refusal
+  and the warning name the rule, unless it belongs to an account the add-on may not read; the user can turn it off
+  in Thunderbird (Tools > Message Filters), and a refusal also offers another folder, or marking the messages read.
 
 ### Fixed
 

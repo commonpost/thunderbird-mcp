@@ -774,19 +774,19 @@ describe("applyFilters wiring", () => {
     const start = apiSource.indexOf("function prepareApplyFilters");
     const end = apiSource.indexOf("function prepareFilterOperation");
     const body = apiSource.slice(start, end);
-    assert.match(body, /selectManualRunFilters\(filterList, FILTER_TYPE_MANUAL, checkExistingFilterTarget\)/);
+    assert.match(body, /selectManualRunFilters\(filterList, FILTER_TYPE_MANUAL,\s*\(uri\) => checkExistingFilterTarget\(uri, warnings\)\)/);
     assert.match(body, /getTempFilterList\(folder\)/);
     assert.match(body, /applyFiltersToFolders\(tempList, \[folder\], null\)/);
     assert.doesNotMatch(body, /applyFiltersToFolders\(filterList/);
     // selected again inside commit(), before running; no call when empty
     const commit = body.slice(body.indexOf("commit()"));
-    assert.match(commit, /selectRules\(\)/);
+    assert.match(commit, /selectRules\(warnings\)/);
     assert.ok(commit.indexOf("run.length === 0") < commit.indexOf("applyFiltersToFolders"));
   });
 
   it("updateFilter re-checks kept targets against the account restriction, the Outbox and Templates", () => {
-    assert.match(apiSource, /isKeptTargetAllowed: checkExistingFilterTarget/);
-    const start = apiSource.indexOf("function checkExistingFilterTarget(uri)");
+    assert.match(apiSource, /isKeptTargetAllowed: \(uri\) => checkExistingFilterTarget\(uri, warnings\)/);
+    const start = apiSource.indexOf("function checkExistingFilterTarget(uri");
     const body = apiSource.slice(start, apiSource.indexOf("\n            }\n", start));
     assert.match(body, /getAccessibleFolder\(uri\)/);
     assert.match(body, /Queue\)\) return FILTER_TARGET_IS_OUTBOX/);
