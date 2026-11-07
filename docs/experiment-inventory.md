@@ -27,6 +27,7 @@ reference release by release. Corrections are welcome.
 | Message filters | `@mozilla.org/messenger/filter-service;1`, `Services.filters` | No public MailExtension API. |
 | Filter confirmation dialog (`listFilters` with `confirmation: true` reads its state; the send-safety prompt) | `Services.wm`, `Services.ww` (find or open a window, `commonDialog.xhtml`) | No public MailExtension API for opening a native, user-answered dialog tied to a specific pending action. |
 | Clearing the stable token and network setting when the add-on is removed | `AddonManager.sys.mjs` (`addAddonListener`/`onUninstalling`) | None: a standard MailExtension has no hook that runs while it is being removed. |
+| Showing the Options tab again after an update (Mozilla bug 1667143: an open Add-ons Manager draws the updated card before the new version runs) | `Services.obs` (`EM-ping`/`EM-pong`), the Add-ons Manager's `addon-card` of this add-on only | None: a standard MailExtension cannot reach the Add-ons Manager. Without it, closing and reopening the Add-ons Manager tab brings the tab back. |
 | Options page | Standard `options_ui` page; talks to the Experiment for the items above | Fully standard once the items above move. |
 
 ## Where the code is

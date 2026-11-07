@@ -2250,6 +2250,43 @@ function createUninstallCleanupListener(addonId, clear) {
 }
 // END UNINSTALL CLEANUP HELPERS
 
+// BEGIN ADDONS MANAGER REFRESH HELPERS
+// An update fires onInstalled and onInstallEnded between the old version's
+// shutdown and the new version's startup, so an open Add-ons Manager redraws
+// this add-on's card while no version of it runs: its Options tab and button
+// stay hidden until that page is reloaded (Mozilla bug 1667143). Once this
+// version runs, start() redraws this add-on's card in every open Add-ons
+// Manager. Other add-ons' cards are left alone.
+function openAddonsManagerViews(obs) {
+  const views = [];
+  const pong = view => { views.push(view); };
+  obs.addObserver(pong, "EM-pong");
+  try {
+    obs.notifyObservers(null, "EM-ping");
+  } finally {
+    obs.removeObserver(pong, "EM-pong");
+  }
+  return views;
+}
+
+function refreshAddonCards(views, addonId) {
+  let refreshed = 0;
+  for (const view of views) {
+    try {
+      for (const card of view.document.querySelectorAll("addon-card")) {
+        if (card.addon && card.addon.id === addonId && typeof card.update === "function") {
+          card.update();
+          refreshed++;
+        }
+      }
+    } catch (e) {
+      console.warn("commonpost-mcp: could not redraw the Add-ons Manager:", e);
+    }
+  }
+  return refreshed;
+}
+// END ADDONS MANAGER REFRESH HELPERS
+
 
 // Message search and body paging. Pure: XPCOM glue lives in getAPI().
 // BEGIN MESSAGE SEARCH HELPERS
@@ -7607,6 +7644,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
     return {
       commonpostMcp: {
         start: async function() {
+          // After an update, the Add-ons Manager drew this card before this
+          // version ran (see ADDONS MANAGER REFRESH HELPERS).
+          try {
+            refreshAddonCards(openAddonsManagerViews(Services.obs), context.extension.id);
+          } catch (e) {
+            console.warn("commonpost-mcp: could not redraw the Add-ons Manager:", e);
+          }
           // runGuardedStart owns the double-start guard (extension reload,
           // port conflict), the cached promise and the remembered error (#179).
           return await runGuardedStart(globalThis, async () => {

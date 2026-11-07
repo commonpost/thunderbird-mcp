@@ -6,6 +6,13 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Fixed
+
+- After an update, the add-on's Options tab and button no longer disappear from an open Add-ons Manager.
+  Thunderbird drew the updated add-on before its new version had started (Mozilla bug 1667143); the add-on now
+  redraws its own entry once it runs. This works from the update that installs this version on; until then, closing
+  and reopening the Add-ons Manager tab brings the Options tab back, without restarting Thunderbird.
+
 ### Changed
 
 - The Claude Code plugin now comes from the latest published release, not from `main`: the marketplace lists it
