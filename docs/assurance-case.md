@@ -84,6 +84,10 @@ marked as such.
   never lifts the other.
 - *Block filter forward/reply* is on by default; "Ask me each time" needs a confirmation in a Thunderbird dialog, and
   no answer within ten minutes writes nothing (`filterSendRulePolicy`; `test/commonpost-filter-confirm.test.cjs`).
+  Whatever the setting, a rule that sends mail cannot be created or changed through MCP to run on outgoing mail, on
+  archiving or periodically, which act on mail already in the mailbox (`decideSendRuleChange`); the dialog says what a
+  rule will send from its type, new mail as it arrives or the messages already there when filters are run by hand,
+  and refuses a type that says neither (`filterSendWarnings`, a second check).
 - A malformed account preference blocks every account; a malformed tool preference disables every tool
   (`getAllowedAccountIds`, `resolveToolAccess`). Once the user has disabled a tool, a tool added by a later update
   stays disabled until the user enables it (`knownTools`; `test/tool-access.test.cjs`).

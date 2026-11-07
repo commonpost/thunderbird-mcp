@@ -20,6 +20,17 @@ project is kept in this repository.
   closed by mistake created anything. Kept in memory until Thunderbird or the add-on restarts: every open dialog and
   the last 20 others.
 
+### Security
+
+- With **Ask me each time** for filter rules that send mail, a rule that forwards or replies can no longer be created
+  or changed through MCP to run on archiving or periodically, whatever the setting, as it already could not be made
+  to run on outgoing mail: such a rule acts on mail already in the mailbox, the messages being archived or, at every
+  periodic run, the matching messages of the Inbox, which the confirmation did not say. Through MCP, an existing such
+  rule can be deleted or given another type. The confirmation now also says when a rule sends the matching messages
+  already there once filters are run by hand (Run Filters on Folder or on Selected Messages), and no longer speaks of
+  incoming mail for a rule that runs only by hand. With the default setting, **Always block**, no such rule could be
+  created. A filter type above the known bits is refused.
+
 ### Fixed
 
 - The dialog of `createEvent` saved an event a second time when the user saved it twice (Save, then Save and
