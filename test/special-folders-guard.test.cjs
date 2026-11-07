@@ -77,6 +77,8 @@ function makeWorld({ identities = [] } = {}) {
   const nestedTemplates = add("MyTemplates", FLAGS.Templates, work);
 
   const sandbox = {
+
+    arrivalResendCheck: () => null, folderArrivalInfo: () => null, someUnread: () => true, folderHasUnread: () => true, // arrival guard: arrival-resend-guard.test.cjs
     Ci: { nsMsgFolderFlags: FLAGS },
     FILTER_NAME_MAX_LENGTH: 512,
     assertFilterText: () => {},
@@ -229,6 +231,7 @@ describe("nothing is created or moved into Templates or the Outbox", () => {
 describe("an existing filter rule that files into Templates is not kept or run through MCP", () => {
   function load(flags, identities = []) {
     const sandbox = {
+      arrivalResendCheck: () => null, folderArrivalInfo: () => null, someUnread: () => true, folderHasUnread: () => true, // arrival guard: arrival-resend-guard.test.cjs
       Ci: { nsMsgFolderFlags: FLAGS },
       MailServices: { accounts: { allIdentities: identities } },
       getAccessibleFolder: (uri) => (uri === "missing" ? { error: "x" } : { folder: { URI: uri, getFlag: (f) => (flags & f) !== 0 } }),
@@ -277,6 +280,7 @@ function makeImapWorld({ delimiter = "/", trashName = "Trash", identities = [] }
   const inbox = add("INBOX", FLAGS.Inbox);
   const work = add("Work", 0, inbox);
   const sandbox = {
+    arrivalResendCheck: () => null, folderArrivalInfo: () => null, someUnread: () => true, folderHasUnread: () => true, // arrival guard: arrival-resend-guard.test.cjs
     Ci: { nsMsgFolderFlags: FLAGS },
     MailServices: { accounts: { allIdentities: identities }, copy: { copyFolder: (f, to) => calls.push(["copyFolder", f.URI, to.URI]) } },
     assertFilterText: () => {},

@@ -28,7 +28,7 @@ function loadUpdateMessage(dependencies) {
   const end = source.indexOf(endMarker, start);
   assert.ok(end > start, "updateMessage end marker missing");
 
-  const sandbox = { Ci, ...dependencies };
+  const sandbox = { Ci, arrivalResendCheck: () => null, someUnread: () => true, ...dependencies }; // arrival guard: arrival-resend-guard.test.cjs
   sandbox.MailServices = { ...sandbox.MailServices, accounts: { allIdentities: dependencies.identities || [] } };
   vm.createContext(sandbox);
   // The slice runs up to createFolder, so it holds the special folder guards updateMessage uses.

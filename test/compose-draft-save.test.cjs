@@ -51,6 +51,7 @@ function load({ initThrows = false, sendMsg } = {}) {
     return Promise.resolve();
   };
   const sandbox = {
+    draftArrivalCheck: () => null, // arrival guard: arrival-resend-guard.test.cjs
     Cc,
     Ci: {
       nsIMsgComposeParams: {},

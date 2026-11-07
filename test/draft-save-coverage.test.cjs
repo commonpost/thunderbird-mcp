@@ -40,6 +40,7 @@ function load({ capitalSend = false, sendMsg, initThrows = false, directSend, dr
     return compose;
   };
   const sandbox = {
+    draftArrivalCheck: () => null, // arrival guard: arrival-resend-guard.test.cjs
     Cc,
     Ci: {
       nsIMsgComposeParams: {}, nsIMsgCompType: CompType, nsIMsgCompFormat: { HTML: 1, PlainText: 2 }, nsIMsgCompDeliverMode: { SaveAsDraft: 4 },
@@ -157,6 +158,7 @@ describe("generateMessageId", () => {
 describe("getDraftsFolder", () => {
   const find = (identityValue, folders) => {
     const sandbox = {
+      draftArrivalCheck: () => null, // arrival guard: arrival-resend-guard.test.cjs
       MailServices: { folderLookup: { getFolderForURL: uri => { if (!(uri in folders)) throw new Error("no such folder"); return folders[uri]; } } },
     };
     vm.createContext(sandbox);

@@ -35,6 +35,7 @@ function makeWorld({ folders = {}, createFails = null, copyFails = null } = {}) 
   const log = { created: [], copied: [], virtual: [] };
   const byUri = new Map(Object.entries(folders));
   const sandbox = {
+    arrivalResendCheck: () => null, folderArrivalInfo: () => null, someUnread: () => true, folderHasUnread: () => true, // arrival guard: arrival-resend-guard.test.cjs
     Ci: { nsMsgFolderFlags: FLAGS },
     FILTER_NAME_MAX_LENGTH: 500,
     FOLDER_TEXT_NOTE: "it cannot be a folder name",

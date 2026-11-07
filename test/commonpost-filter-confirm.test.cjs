@@ -1038,7 +1038,10 @@ function makeWorld({ prefs = { [P_BLOCK]: false } } = {}) {
       flags: TEMPLATES_FLAG,
       msgDatabase: { getMsgHdrForMessageID: (id) => w.templateHdrs[id] || null } },
   };
-  for (const f of Object.values(folders)) f.getFlag = (flag) => (f.flags & flag) !== 0;
+  for (const f of Object.values(folders)) {
+    f.getFlag = (flag) => (f.flags & flag) !== 0;
+    f.server = { type: "none", canHaveFilters: true }; // local: no filter run on mail put there
+  }
   w.folders = folders;
   const accounts = {
     account1: { key: "account1", incomingServer: { prettyName: "Local Folders", canHaveFilters: true, getFilterList: () => w.lists.account1 },

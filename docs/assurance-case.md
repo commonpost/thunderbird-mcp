@@ -87,7 +87,14 @@ marked as such.
   Whatever the setting, a rule that sends mail cannot be created or changed through MCP to run on outgoing mail, on
   archiving or periodically, which act on mail already in the mailbox (`decideSendRuleChange`); the dialog says what a
   rule will send from its type, new mail as it arrives or the messages already there when filters are run by hand,
-  and refuses a type that says neither (`filterSendWarnings`, a second check).
+  and refuses a type that says neither (`filterSendWarnings`, a second check). Whatever the setting too, mail is not
+  moved, copied or saved through MCP into a folder where Thunderbird runs the rules for new mail (an IMAP Inbox, a
+  folder with `applyIncomingFilters`) while an enabled rule there, or one reached through the move and copy rules on
+  the way, sends mail or runs an add-on action; where Thunderbird instead runs the rules after classification (any
+  other folder of such an account, on unread mail, drafts included) the request is done and the result warns, naming
+  the rule (`findArrivalResend`, `arrivalResendBlocks`, `arrivalResendCheck`, `draftArrivalCheck`;
+  `test/arrival-resend-guard.test.cjs`, and private lab runs on Thunderbird 156, where the warning matched what
+  Thunderbird then sent). The check reads which rules are enabled, not their conditions.
 - A malformed account preference blocks every account; a malformed tool preference disables every tool
   (`getAllowedAccountIds`, `resolveToolAccess`). Once the user has disabled a tool, a tool added by a later update
   stays disabled until the user enables it (`knownTools`; `test/tool-access.test.cjs`).
@@ -227,7 +234,14 @@ connection file 64 KiB in the bridge.
 - **Attachment search** finds only messages Thunderbird flags as having attachments; signed (`multipart/signed`),
   `multipart/related` and single-part messages are usually not found (README).
 - **Thunderbird's behaviour.** Sending, header encoding, MIME parsing for display, Gloda indexing and IMAP state are
-  Thunderbird's; the add-on inherits their bugs. IMAP folders can be stale until opened.
+  Thunderbird's; the add-on inherits their bugs. IMAP folders can be stale until opened. **Mail a filter rule may send
+  by itself** is only refused where Thunderbird runs the rules for new mail; elsewhere the warning is all that stands
+  between an assistant and a rule that forwards unread mail or a draft, and an assistant may act on it or not. The
+  read state is the one Thunderbird last saw, not the server's; a message marked unread on another device, in a
+  folder Thunderbird has not synced, passes as read. The check does not cover a copy of a sent message that
+  Thunderbird files where such a rule runs, the autosave of a review window MCP opened, a subfolder's own
+  `applyIncomingFilters` when its parent folder is moved, a Trash that Thunderbird chooses apart from the one the
+  add-on finds, nor mail moved before the user confirms, with **Ask me each time**, a rule that then sends it.
 - **Attachment deny-lists are lists.** A secret in a file with an ordinary name in an ordinary folder is not
   recognized. Folders seen by the bridge under another path (WSL, containers), and profiles other than the running
   one, are not fully covered (README, "Attachments refused").

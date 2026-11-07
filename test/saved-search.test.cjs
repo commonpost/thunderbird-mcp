@@ -94,6 +94,7 @@ function loadSandbox({ blocked = [], blockedBooks = [] } = {}) {
   const wrappers = new Map();
   const folders = new Map();
   const sandbox = {
+    arrivalResendCheck: () => null, folderArrivalInfo: () => null, someUnread: () => true, folderHasUnread: () => true, // arrival guard: arrival-resend-guard.test.cjs
     Ci: {
       nsMsgSearchAttrib: nonEnumerable(ATTRIB),
       nsMsgSearchOp: nonEnumerable(OPS),
