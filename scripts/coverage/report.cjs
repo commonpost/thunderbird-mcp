@@ -35,7 +35,7 @@ const { branches, taken } = require('./branches.cjs');
 const ROOT = path.resolve(__dirname, '..', '..');
 const API = 'extension/mcp_server/api.js';
 // Code the tests may run through vm, to which slices are mapped back.
-const MAPPED = [API, 'extension/options.js', 'extension/background.js', 'mcp-bridge.cjs'];
+const MAPPED = [API, 'extension/options.js', 'extension/background.js', 'extension/engine-visibility.js', 'mcp-bridge.cjs'];
 const MIN_RUN = 2;
 const LONG_LINE = 25;
 const MAX_CANDIDATES = 64;

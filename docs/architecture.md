@@ -37,9 +37,12 @@ Everything runs on the user's computer. The add-on talks to the bridge only; the
 - `manifest.json`: a MailExtension (manifest version 2), id `commonpost-mcp@commonpost.github.io`, Thunderbird 140 or
   later, with its own `update_url`. It declares one Experiment API, `commonpostMcp`, whose parent script is
   `mcp_server/api.js` and whose schema is `mcp_server/schema.json` (20 functions: server start and status, bridge
-  status, token, account and tool access, send-safety, network and encrypted-message settings).
+  status, token, account and tool access, send-safety, network and encrypted-message settings; one event,
+  `onRender`). It also sets a strict `content_security_policy` for the add-on's own pages.
 - `background.js`: calls `browser.commonpostMcp.start()` at install, at startup and when the add-on is enabled again.
-  It does nothing else.
+- `engine-visibility.js`: also loaded in the background page; renders messages for the judgement of hidden text
+  (see "Hidden text in HTML bodies" below). It has no privileges: it only answers the `commonpostMcp.onRender`
+  event.
 - `options.html` / `options.js`: the settings page. It only calls `browser.commonpostMcp.*` functions; the settings
   are stored as Thunderbird preferences under `extensions.commonpost-mcp.*`.
 - `mcp_server/api.js`: the Experiment implementation. It runs with Thunderbird's full privileges and uses
@@ -151,6 +154,45 @@ it (see "Versions" below).
     or need a confirmation in a Thunderbird dialog;
   - *Let the assistant read encrypted messages* (off by default);
   - *Listen on all interfaces* (off by default) and *stable token* (off by default).
+
+## Hidden text in HTML bodies
+
+`getMessage` and `getMessages` leave out of the `markdown` and `text` bodies the text of an HTML message that a reader
+cannot see in Thunderbird, so that a sender cannot hand the assistant instructions out of the user's sight. The `html`
+format returns the sender's HTML unchanged.
+
+1. `api.js` reads the document Thunderbird's message pane shows for the message (`messageDisplayHtml`): the output of
+   Thunderbird's MIME code for display, read through the MIME stream converter on a channel of the message URL. It
+   has Thunderbird's header tables, its `div.moz-text-html` wrapper and its style sheet link; conditional CSS is
+   removed and `cid:` images become message-part URLs, as for the pane.
+2. It sends that document, the size of the message pane (`messagePaneViewport`) and the images of the message's own
+   parts as `data:` URLs through the Experiment event `commonpostMcp.onRender` to the background page, and waits
+   6 s at most (`requestEngineRender`).
+3. The background page (`engine-visibility.js`):
+   - rewrites, as text, every URL of a loading attribute that is not `http`, `https` or `data` into an inert one,
+     and gives up when the message's style sheets would load such URLs or select those attributes (`inertHtml`,
+     `checkLoads`): the URLs of Thunderbird's own message protocols must not be loaded outside its main process;
+   - parses the document apart (DOMParser) and puts its tree into an empty `<iframe sandbox="allow-same-origin">` of
+     the pane's size, which already holds the policy (`frameHtml`): the add-on's `content_security_policy`,
+     inherited, plus `default-src 'none'; img-src data:` and `x-dns-prefetch-control: off`. No script runs and
+     nothing is loaded from the network;
+   - marks the images as the message pane does (`shrinktofit`, `overflowing`) and gives the message's part images
+     their content through an adopted style sheet in a cascade layer, which no selector of the message can see;
+   - judges every run of text, image and link with the engine's own values (`judge`): `checkVisibility`, visibility,
+     opacity product below 0.1, font size below 3 px, SVG text without paint, rectangles clipped away by ancestors
+     or outside the page, closed `<details>`, a blend mode, a mask, a colour filter or a strong blur on the text or
+     above it, an opaque box painted over it (`elementsFromPoint` at up to three points), and its colour, stroke and
+     shadows against what is under it (contrast below 1.2; every colour syntax read through a canvas);
+   - answers the text of each unit and which ones are hidden.
+4. `api.js` finds the units of the HTML it converts (`engineUnits`) once, in a row, among them (`alignEngineUnits`),
+   and the converters take their verdicts (`engineHidingFor`).
+
+Without that (no background page, a timeout, after which the engine rests for 60 s, an encrypted or signed message,
+an IMAP message without a local copy, the body not found once in the rendered message, the hidden preference
+`extensions.commonpost-mcp.hiddenTextEngine` false), the inline styles of the HTML are read as before
+(`hiddenContentJudge`), and over 2 MiB a lexical reading (`stripHtml`). The hidden preference
+`extensions.commonpost-mcp.hiddenTextDiagnostics` adds `hiddenTextJudge` to the result: which judge decided, or why
+the engine did not.
 
 ## Data handled
 

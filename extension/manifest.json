@@ -26,6 +26,7 @@
   },
   "background": {
     "scripts": [
+      "engine-visibility.js",
       "background.js"
     ]
   },
@@ -56,5 +57,6 @@
     "accountsFolders",
     "compose"
   ],
-  "web_accessible_resources": []
+  "web_accessible_resources": [],
+  "content_security_policy": "script-src 'self'; object-src 'none'; default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline' chrome://messagebody/skin/ chrome://messenger/skin/; frame-src blob:; child-src blob:; base-uri 'none'; form-action 'none'"
 }

@@ -15,6 +15,18 @@ project is kept in this repository.
 
 ### Changed
 
+- `getMessage` and `getMessages` judge the hidden text of an HTML body (`markdown` and `text` formats) on the
+  message as Thunderbird's message pane shows it. Thunderbird renders the message, at the size of the message pane,
+  in a hidden frame of the add-on's background page that runs no script and loads nothing from the network, and the
+  text Thunderbird would not show is left out (its limits are in `docs/assurance-case.md`). Now taken into account: style rules of the message (classes, `!important`,
+  `@media` as Thunderbird applies it), text coloured like what is under it (any colour syntax, with its stroke and
+  shadows), text moved off the page, clipped away or covered by an opaque box, blend modes, masks, colour filters and
+  strong blurs, and Thunderbird's own wrapper and style sheet. The inline-style reading of 0.19.2 stays the fallback, for an
+  encrypted or signed message, an IMAP message without a local copy, a body over 2 MiB, or a message the frame cannot
+  render safely; the hidden preference `extensions.commonpost-mcp.hiddenTextEngine` (true) turns the rendering off.
+  URLs of Thunderbird's own message protocols in a message (`mailbox:`, `imap:`, `news:`, `cid:`...) are never
+  loaded by the frame. As in Thunderbird with remote content blocked, a link whose only content is a remote image
+  without alt text shows nothing, so its URL is no longer given.
 - The Claude Code plugin now comes from the latest published release, not from `main`: the marketplace lists it
   from the release's tag, pinned to its commit and fetched over https, and moves to each new release once that
   release is published and checked. Someone who installed the plugin between two releases used to get the bridge of

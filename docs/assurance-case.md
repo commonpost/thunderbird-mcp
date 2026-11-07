@@ -49,6 +49,11 @@ marked as such.
    inside tool results. It is data, never instructions; the add-on marks it but cannot make the assistant obey that.
 5. **The file system.** The connection file (written by the add-on, read by the bridge), attachments read from paths
    for outgoing mail, attachments saved from messages, and the profile.
+6. **Rendered mail, in the background page.** To judge hidden text, the HTML of a message is rendered in a frame of the
+   background page ([architecture.md](architecture.md#hidden-text-in-html-bodies)). The frame is sandboxed without
+   scripts, under the add-on's content security policy and its own (no remote resource), and URLs other than
+   `http`, `https` and `data` never reach it. Its answer to `api.js` (which text is hidden) is checked for shape and
+   can only decide what is left out of a body.
 
 ## 3. Secure design principles applied
 
@@ -102,6 +107,11 @@ deny-lists exist on both sides (`isSensitiveFilePath` in both files, kept in syn
   `test/search-untrusted-tables.test.cjs`.
 - HTML converted to Markdown keeps only `http`, `https` and `mailto` links and never emits image URLs
   (`safeEmailUrl`; `test/html-link-schemes.test.cjs`).
+- Hidden text: the text of an HTML body that a reader cannot see in Thunderbird is left out of the `markdown` and
+  `text` bodies, judged on the message as Thunderbird's message pane renders it (`hiddenTextEngineJudgement`,
+  `engine-visibility.js`), else on its inline styles (`hiddenContentJudge`). Tests:
+  `test/hidden-text-engine.test.cjs`, `test/engine-visibility.test.cjs`, `test/html-hidden-*.test.cjs`, and the lab
+  scenario `getmessage-hidden-text`.
 
 **Limits on size and time.** Request body 32 MiB (in `httpd.sys.mjs` before buffering, and `MAX_REQUEST_BODY` in
 `api.js`); request read 30 s of silence, 5 minutes in all (`REQUEST_READ_TIMEOUT_MS`, `REQUEST_READ_MAX_MS`;
@@ -126,6 +136,8 @@ connection file 64 KiB in the bridge.
 | Resource exhaustion through MIME | Part, depth and header-size limits in the raw MIME parser; encrypted-check walks are bounded and fail closed (`isEncryptedMimeMessage`); HTML over 2 MiB is not parsed into a DOM. | `test/raw-mime-*.test.cjs`, `test/encrypted-outer-subject.test.cjs` |
 | Prototype pollution and unknown arguments | Unknown parameters are rejected using `hasOwnProperty` on the schema (`validateToolArgs`). | `test/validation.test.cjs` |
 | A stale connection file leading the token to another program | Owner-process check in the bridge (`checkConnectionOwnerProcess`). | `test/mcp-bridge.test.cjs` |
+| Instructions hidden from the user in an HTML message (prompt injection out of sight) | The message is rendered as Thunderbird's message pane shows it (libmime's output, the pane's size, Thunderbird's style sheet) and only the text a reader could see is kept; the inline styles decide when it cannot be rendered. The `html` format is unchanged. | `test/hidden-text-engine.test.cjs`, `test/engine-visibility.test.cjs`, lab `getmessage-hidden-text` |
+| Network access or code from a rendered message | Frame sandboxed without scripts; the add-on's content security policy (checked at startup: the engine stays off when it is not in force) and the frame's own (`default-src 'none'`); DNS prefetch off; URLs of loading attributes other than `http`, `https` and `data` rewritten to an inert scheme before the HTML is parsed, and no rendering when the message's CSS would load or select them (those URLs must not be loaded outside Thunderbird's main process). | `test/engine-visibility.test.cjs`; lab runs observing every TCP connection and DNS query |
 | A planted tool cache, to put instructions in tool descriptions the model reads | The bridge serves its tool cache only when Thunderbird cannot be reached. POSIX: folder created `0700`, refused if a symlink, owned by another user or group/other-writable; file opened with `O_NOFOLLOW`, then owner, mode and size checked by `fstat`; written through a `0600` temporary file and a rename. Windows: the user's own `%LOCALAPPDATA%`, never a UNC or device path. In read-only mode, every call is still checked against the add-on's live list (`readOnlyRefusal`). | `test/bridge-cold-start.test.cjs` |
 
 ## 5. Supply chain and process
@@ -176,6 +188,13 @@ connection file 64 KiB in the bridge.
   names and attachment names are cleaned of hidden characters but are not wrapped in markers (only `body`,
   `rawSource`, `preview`, `title`, `description`, `location` and `note` are). With *Block `skipReview`* turned off,
   an injected instruction can send mail without review.
+- **Hidden text is judged, not proven.** The rendering imitates the message pane at its current size, without the
+  user's zoom, the images the user let load from the network, the dark-mode recolouring or a different window. Text in
+  a font with blank glyphs is not detected, nor a box painted over the text that hit testing does not see
+  (`pointer-events: none`, a pseudo-element, an image); a blend mode, a mask, a colour filter or a strong blur counts
+  as hiding, which can remove readable text. The thresholds are a font below 3 px, an opacity below 0.1 and a colour
+  contrast below 1.2. When the engine cannot render a message, the inline styles alone decide, which misses
+  style-sheet rules.
 - **Same-user processes are trusted.** Any program running as the user can read the token and call every enabled tool.
   The optional stable token is stored in a Thunderbird preference, in the profile.
 - **"Listen on all interfaces"** exposes the port to the network over plain HTTP: the token and the mail content
