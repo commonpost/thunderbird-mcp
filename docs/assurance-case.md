@@ -191,7 +191,8 @@ connection file 64 KiB in the bridge.
   [GHSA-x2mh-cqhm-f8mg](https://github.com/commonpost/thunderbird-mcp/security/advisories/GHSA-x2mh-cqhm-f8mg) (0.14.0),
   [GHSA-65cp-vcv7-cf69](https://github.com/commonpost/thunderbird-mcp/security/advisories/GHSA-65cp-vcv7-cf69) (0.17.1),
   [GHSA-whwf-gghm-mwx9](https://github.com/commonpost/thunderbird-mcp/security/advisories/GHSA-whwf-gghm-mwx9) (0.18.1),
-  [GHSA-8v8g-5qhh-q3wr](https://github.com/commonpost/thunderbird-mcp/security/advisories/GHSA-8v8g-5qhh-q3wr) (0.19.1).
+  [GHSA-8v8g-5qhh-q3wr](https://github.com/commonpost/thunderbird-mcp/security/advisories/GHSA-8v8g-5qhh-q3wr) (0.19.1),
+  [GHSA-jq9w-2gj3-8q82](https://github.com/commonpost/thunderbird-mcp/security/advisories/GHSA-jq9w-2gj3-8q82) (0.20.0).
 - **Testing in a real Thunderbird.** The end-to-end lab and the compatibility workflows (see
   [architecture.md](architecture.md#testing)).
 

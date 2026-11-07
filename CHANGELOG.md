@@ -4,6 +4,26 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [0.20.1] - 2026-11-07
+
+- Documentation only. The project now uses one short description of itself -- in the README, in the GitHub
+  description and in the entry published to the MCP registry -- and that line says the add-on runs on Windows,
+  macOS and Linux. The README gains a table of contents and a Platforms badge, and its requirements line states
+  the three systems on its own, before the one Windows caveat about attachments.
+- **The add-on and the bridge are unchanged** apart from the version number: nothing new is installed by this
+  update, and the bridge stays 0.20.0.
+
+### Changed
+
+- The README's short description was 200 characters and the project carried four different one-line descriptions
+  of itself (README, GitHub, MCP registry entry, `package.json`). They are now one line of 104 characters, within
+  the 120 of the Standard Readme convention, naming the three systems; the longer pitch follows it. Directories
+  and search engines read that line.
+- The requirements line of Quick install states the platforms by itself. The Windows caveat about attachments by
+  file path keeps its place, its wording and its anchor, in a sentence of its own.
+- The README has a table of contents for its twelve sections (the convention asks for one above 100 lines; this
+  README is 545) and a Platforms badge beside the others.
+
 ## [0.20.0] - 2026-11-07
 
 - **Security fix:** a filter rule you made to forward or reply could send mail that was already in your mailbox.
