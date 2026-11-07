@@ -39,6 +39,11 @@ project is kept in this repository.
   calendar is shared with sees what is added there. The result now gives `eventId` or `taskId`, `calendarId` and the
   dates as `listEvents` and `listTasks` return them, so the item can be shown, changed or deleted at once, and both
   tool descriptions say there is no duplicate check.
+- Refusals that come from a default now say where the user acts. An encrypted message names the option
+  (Tools > Add-ons and Themes > Commonpost MCP for Thunderbird > Options, Encrypted messages); a filter rule that
+  forwards or replies points to Thunderbird's own filter editor (Tools > Message Filters), where the user types the
+  address. A refusal that comes from a restriction the user set (a tool or an account turned off) still only states
+  it.
 - `createTask` opens its dialog in a window, as `createEvent` does, also when Thunderbird edits events and tasks in a
   tab; with no `calendarId`, on the calendar a direct save would use (the first enabled, writable calendar that
   supports tasks) instead of the calendar selected in Thunderbird.
