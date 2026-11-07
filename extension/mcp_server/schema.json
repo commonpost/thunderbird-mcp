@@ -103,7 +103,7 @@
         "name": "getBlockSkipReview",
         "type": "function",
         "async": true,
-        "description": "Get the Block skipReview preference. It defaults to true and gates direct mail sends plus event/task creation.",
+        "description": "Get the Block skipReview preference. It defaults to true and gates direct mail sends (and event/task creation while blockCalendarSkipReview is not set).",
         "parameters": []
       },
       {
@@ -115,7 +115,27 @@
           {
             "name": "blockSkipReview",
             "type": "boolean",
-            "description": "When true (the default), sendMail, replyToMessage, forwardMessage, createEvent, and createTask reject skipReview=true and require their review window or dialog. Set false explicitly to allow those tools to honor skipReview."
+            "description": "When true (the default), sendMail, replyToMessage, forwardMessage (and createEvent and createTask while blockCalendarSkipReview is not set) reject skipReview=true and require their review window or dialog. Set false explicitly to allow those tools to honor skipReview."
+          }
+        ]
+      },
+      {
+        "name": "getBlockCalendarSkipReview",
+        "type": "function",
+        "async": true,
+        "description": "Get the block of skipReview for createEvent and createTask. Until it is set, it is the value of the Block skipReview preference (true by default).",
+        "parameters": []
+      },
+      {
+        "name": "setBlockCalendarSkipReview",
+        "type": "function",
+        "async": true,
+        "description": "Set whether skipReview is blocked for createEvent and createTask. Once set, it no longer follows the Block skipReview preference.",
+        "parameters": [
+          {
+            "name": "blockCalendarSkipReview",
+            "type": "boolean",
+            "description": "When true, createEvent and createTask reject skipReview=true and open their dialog. Set false explicitly to let them add the event or task at once."
           }
         ]
       },

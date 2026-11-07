@@ -3066,6 +3066,9 @@ const PREF_ALLOWED_ACCOUNTS = "extensions.commonpost-mcp.allowedAccounts";
 const PREF_DISABLED_TOOLS = "extensions.commonpost-mcp.disabledTools";
 const PREF_KNOWN_TOOLS = "extensions.commonpost-mcp.knownTools";
 const PREF_BLOCK_SKIPREVIEW = "extensions.commonpost-mcp.blockSkipReview";
+// The block of skipReview for createEvent and createTask; it follows blockSkipReview until the user sets it
+// (calendarSkipReviewBlocked).
+const PREF_BLOCK_CALENDAR_SKIPREVIEW = "extensions.commonpost-mcp.blockCalendarSkipReview";
 const PREF_BRIDGE_UPDATE_ALERT = "extensions.commonpost-mcp.bridgeUpdateAlert";
 const PREF_STABLE_AUTH_TOKEN = "extensions.commonpost-mcp.stableAuthToken";
 const PREF_GET_MESSAGES_LIMIT = "extensions.commonpost-mcp.getMessagesLimit";
@@ -5589,6 +5592,21 @@ function composeModeRefusal(composeMode, { skipReviewBlocked, saveDraftEnabled }
   return null;
 }
 
+const CALENDAR_SKIPREVIEW_BLOCKED_ERROR = "User preference blocks skipReview for events and tasks. Retry with skipReview: false (or omitted) to open the review dialog instead.";
+
+// Whether createEvent and createTask must refuse skipReview (the preference `prefName` of the nsIPrefBranch `prefs`).
+// Until the user sets it, it follows the block for mail (`mailBlocked()`): a configuration from before it existed
+// behaves as it did. A value that is not a boolean, or a preference that cannot be read, blocks.
+function calendarSkipReviewBlocked(prefs, prefName, mailBlocked) {
+  try {
+    const type = prefs.getPrefType(prefName);
+    if (type === prefs.PREF_INVALID) return mailBlocked() !== false;
+    return type === prefs.PREF_BOOL ? prefs.getBoolPref(prefName) !== false : true;
+  } catch {
+    return true;
+  }
+}
+
 const LATEST_IN_THREAD_SEND_ERROR = "latestInThread cannot be combined with mode \"send\" (or skipReview): anyone can join a conversation with a message, and the newest one would be quoted and answered without review. Use mode \"draft\" or \"window\", or find the message with searchMessages threadOf and pass its messageId.";
 const LATEST_IN_THREAD_SEARCH_DISABLED_ERROR = "latestInThread reads the conversation as searchMessages threadOf does, and the searchMessages tool is disabled. Pass the messageId of the message to answer.";
 
@@ -7204,7 +7222,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "createEvent",
         group: "calendar", crud: "create",
         title: "Create Event",
-        description: "Create a calendar event (changes: updateEvent; to-dos: createTask). By default it opens Thunderbird's event dialog filled in, and the event exists once the user saves it. skipReview adds it at once, only if the user turned off the default-on skipReview block.",
+        description: "Create a calendar event (changes: updateEvent; to-dos: createTask). By default it opens Thunderbird's event dialog filled in, and the event exists once the user saves it. skipReview adds it at once, only if the user turned off the default-on skipReview block for events and tasks.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7220,7 +7238,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             categories: { type: "array", items: { type: "string" }, description: "Category labels, case-sensitive: take exact existing names from listCategories" },
             onlineMeeting: { type: "boolean", description: "Add a Teams link via Exchange (Office 365 only; no-op elsewhere), shown as onlineMeetingURL" },
             reminders: { type: "array", items: { type: "integer", minimum: 0, maximum: 40320 }, maxItems: 5, description: "Display reminders in minutes before the start, e.g. [1440, 15]" },
-            skipReview: { type: "boolean", description: "Add without the dialog; refused while the skipReview block is on (default: false)" },
+            skipReview: { type: "boolean", description: "Add without the dialog; refused while the skipReview block for events and tasks is on (default: false)" },
           },
           required: ["title", "startDate"],
         },
@@ -7284,7 +7302,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "createTask",
         group: "calendar", crud: "create",
         title: "Create Task",
-        description: "Open a pre-filled task dialog for review. The skipReview safety block is on by default; direct saving is honored only when the user explicitly disables that preference.",
+        description: "Open a pre-filled task dialog for review. The skipReview block for events and tasks is on by default; direct saving is honored only when the user explicitly disables it.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7294,7 +7312,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             description: { type: "string", description: "Task description/body" },
             priority: { type: "integer", minimum: 0, maximum: 9, description: "Priority: 1=high, 5=normal, 9=low" },
             categories: { type: "array", items: { type: "string" }, description: "Category labels. Use listCategories to get exact existing names before setting." },
-            skipReview: { type: "boolean", description: "Request direct saving without a review dialog. Honored only when the user explicitly disables the default-on skipReview safety block (default: false)." },
+            skipReview: { type: "boolean", description: "Request direct saving without a review dialog. Honored only when the user explicitly disables the default-on skipReview block for events and tasks (default: false)." },
           },
           required: ["title"],
         },
@@ -8328,8 +8346,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
             /**
              * Check if the user has disabled the skipReview shortcut.
-             * When true, send/reply/forward/createEvent/createTask tools must open
-             * the review window/dialog even if the caller passed skipReview: true.
+             * When true, send/reply/forward tools must open the review window
+             * even if the caller passed skipReview: true (and createEvent/createTask
+             * their dialog, until the user sets their own block: see
+             * isCalendarSkipReviewBlocked).
              *
              * Default is true: an LLM that reads attacker-controlled email content
              * can be prompt-injected into invoking sendMail with skipReview, so the
@@ -8344,6 +8364,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 // user retains ability to review before send.
                 return true;
               }
+            }
+
+            /**
+             * The block of skipReview for createEvent and createTask, apart from
+             * the one for mail: an event or task added at once sends nothing
+             * (these tools take no attendees), though anyone the calendar is
+             * shared with can see it. It follows the block for mail until the
+             * user sets it, and is on by default.
+             */
+            function isCalendarSkipReviewBlocked() {
+              return calendarSkipReviewBlocked(Services.prefs, PREF_BLOCK_CALENDAR_SKIPREVIEW, isSkipReviewBlocked);
             }
 
             /**
@@ -12696,8 +12727,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               if (!cal || !CalEvent) {
                 return { error: "Calendar module not available" };
               }
-              if (skipReview && isSkipReviewBlocked()) {
-                return { error: "User preference blocks skipReview. Retry with skipReview: false (or omitted) to open the review dialog instead." };
+              if (skipReview && isCalendarSkipReviewBlocked()) {
+                return { error: CALENDAR_SKIPREVIEW_BLOCKED_ERROR };
               }
               try {
                 const win = Services.wm.getMostRecentWindow("mail:3pane");
@@ -13522,8 +13553,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
             async function createTask(title, dueDate, calendarId, description, priority, categories, skipReview) {
               if (!cal || !CalTodo) return { error: "Calendar module not available" };
-              if (skipReview && isSkipReviewBlocked()) {
-                return { error: "User preference blocks skipReview. Retry with skipReview: false (or omitted) to open the review dialog instead." };
+              if (skipReview && isCalendarSkipReviewBlocked()) {
+                return { error: CALENDAR_SKIPREVIEW_BLOCKED_ERROR };
               }
               try {
                 let dueDt = null;
@@ -19450,6 +19481,21 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           // choice survives independent of the default we ship.
           Services.prefs.setBoolPref(PREF_BLOCK_SKIPREVIEW, blockSkipReview);
           return { success: true, blockSkipReview };
+        },
+
+        getBlockCalendarSkipReview: async function() {
+          const blocked = calendarSkipReviewBlocked(Services.prefs, PREF_BLOCK_CALENDAR_SKIPREVIEW,
+            () => Services.prefs.getBoolPref(PREF_BLOCK_SKIPREVIEW, true));
+          return { blockCalendarSkipReview: blocked };
+        },
+
+        setBlockCalendarSkipReview: async function(blockCalendarSkipReview) {
+          if (typeof blockCalendarSkipReview !== "boolean") {
+            return { error: "blockCalendarSkipReview must be a boolean" };
+          }
+          // Once set, it no longer follows the block for mail.
+          Services.prefs.setBoolPref(PREF_BLOCK_CALENDAR_SKIPREVIEW, blockCalendarSkipReview);
+          return { success: true, blockCalendarSkipReview };
         },
 
         getBlockFilterForwardReply: async function() {

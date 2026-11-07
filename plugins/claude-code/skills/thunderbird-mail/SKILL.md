@@ -47,7 +47,8 @@ These notes add to the server's instructions; each tool's description stays the 
   opened" means nothing has been sent or saved yet: never tell the user a message was sent, or an event or task
   created, unless the result says so ("Message sent", "Event ... added to calendar ...").
 - Direct sending (`skipReview: true`, or `mode: "send"`) is refused while the user's safety block is on, which is the
-  default. Do not try another way around it: open the review window, or save a draft.
+  default; `skipReview` on `createEvent` and `createTask` has a block of its own, on by default too. Do not try
+  another way around them: open the review window or dialog, or save a draft.
 - To check a message before the user sends it: `sendMail` with `dryRun: true` reports the sender, the recipients
   (with automatic Cc and Bcc), the attachments and the size, and sends nothing.
 - Replies: `replyToMessage` with `replyAll` and empty `to` and `cc` computes the recipients as Thunderbird does;

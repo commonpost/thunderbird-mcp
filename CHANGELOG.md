@@ -6,6 +6,13 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Added
+
+- Send Safety has a second setting, **Block `skipReview`** for events and tasks: `createEvent` and `createTask` can
+  add an event or task at once while mail still needs its review window. It is on by default and, until it is saved,
+  follows the block for mail, so nothing changes for a configuration made before it. The refusal now says "for
+  events and tasks".
+
 ### Fixed
 
 - After an update, the add-on's Options tab and button no longer disappear from an open Add-ons Manager.

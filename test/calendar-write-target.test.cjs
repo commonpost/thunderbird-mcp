@@ -56,7 +56,7 @@ class FakeItem {
 
 // Runs createEvent/createTask with `accessible` as what getAccessibleCalendars()
 // returns (the account restriction is applied there, not here).
-function loadTools(accessible) {
+function loadTools(accessible, { calendarBlocked = false } = {}) {
   const sandbox = {
     cal: {
       dtz: { defaultTimezone: {}, floating: {}, jsDateToDateTime: (d) => ({ js: d }) },
@@ -65,7 +65,9 @@ function loadTools(accessible) {
     CalEvent: FakeItem,
     CalTodo: FakeItem,
     Services: { wm: { getMostRecentWindow: () => null } },
-    isSkipReviewBlocked: () => false,
+    isCalendarSkipReviewBlocked: () => calendarBlocked,
+    // The block for mail is not the calendar tools' business: reading it here fails the test.
+    isSkipReviewBlocked: () => { throw new Error("createEvent/createTask read the block for mail"); },
     stripEmailContentMarkers: (v) => v,
     normalizeEventStatus: (s) => String(s).toUpperCase(),
     descriptionToHTML: (v) => v,
@@ -73,6 +75,7 @@ function loadTools(accessible) {
   };
   vm.createContext(sandbox);
   vm.runInContext(`${helpersSource}
+${apiSource.match(/^const CALENDAR_SKIPREVIEW_BLOCKED_ERROR = .*$/m)[0]}
 ${slice("// BEGIN EVENT RANGE HELPERS", "// END EVENT RANGE HELPERS")}
 ${slice("async function createEvent(", "async function getCalendarItems(")}
 ${slice("async function createTask(", "// BEGIN RAW MIME PARSING HELPERS")}
@@ -83,6 +86,24 @@ this.api = { createEvent, createTask };`, sandbox);
     task: (calendarId) => createTask("t", "2026-10-20T10:00:00", calendarId, undefined, undefined, undefined, true),
   };
 }
+
+describe("createEvent / createTask with skipReview follow the block for events and tasks", () => {
+  for (const kind of ["event", "task"]) {
+    it(`${kind}: refused while the block for events and tasks is on, and nothing is written`, async () => {
+      const work = storageCalendar({ id: "work", name: "Work" });
+      const result = JSON.parse(JSON.stringify(await loadTools([work], { calendarBlocked: true })[kind]("work")));
+      assert.equal(result.error, "User preference blocks skipReview for events and tasks. Retry with skipReview: false (or omitted) to open the review dialog instead.");
+      assert.equal(work.items.length, 0);
+    });
+
+    it(`${kind}: written at once while it is off, without reading the block for mail`, async () => {
+      const work = storageCalendar({ id: "work", name: "Work" });
+      const result = JSON.parse(JSON.stringify(await loadTools([work], { calendarBlocked: false })[kind]("work")));
+      assert.equal(result.success, true, JSON.stringify(result));
+      assert.equal(work.items.length, 1);
+    });
+  }
+});
 
 const plain = (v) => JSON.parse(JSON.stringify(v));
 

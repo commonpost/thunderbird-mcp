@@ -249,6 +249,8 @@ const DEFAULT_RESULTS = {
   setToolAccess: { success: true },
   getBlockSkipReview: { blockSkipReview: true },
   setBlockSkipReview: { success: true },
+  getBlockCalendarSkipReview: { blockCalendarSkipReview: true },
+  setBlockCalendarSkipReview: { success: true },
   getBlockFilterForwardReply: { blockFilterForwardReply: true },
   setBlockFilterForwardReply: { success: true },
   getAllowEncryptedContent: { allowEncryptedContent: false },
@@ -427,7 +429,8 @@ describe("options page: markup and script stay in sync", () => {
     const page = await openPage();
     for (const name of [
       "getServerInfo", "getCurrentAuthToken", "getStableAuthToken", "getAccountAccessConfig", "getToolAccessConfig",
-      "getBlockSkipReview", "getBlockFilterForwardReply", "getAllowEncryptedContent", "getListenAll", "getBridgeStatus",
+      "getBlockSkipReview", "getBlockCalendarSkipReview", "getBlockFilterForwardReply", "getAllowEncryptedContent",
+      "getListenAll", "getBridgeStatus",
     ]) {
       assert.equal(page.callsTo(name).length, 1, name);
     }
@@ -1312,6 +1315,22 @@ describe("options page: send safety (skipReview)", () => {
   it("shows an unchecked box when blocking is off", async () => {
     const page = await openPage({ getBlockSkipReview: { blockSkipReview: false } });
     assert.equal(page.$("blockSkipReview").checked, false);
+    assert.equal(page.$("blockCalendarSkipReview").checked, true, "each box shows its own block");
+  });
+
+  it("shows the block for events and tasks apart from the one for mail", async () => {
+    const page = await openPage({
+      getBlockSkipReview: { blockSkipReview: true },
+      getBlockCalendarSkipReview: { blockCalendarSkipReview: false },
+    });
+    assert.equal(page.$("blockSkipReview").checked, true);
+    assert.equal(page.$("blockCalendarSkipReview").checked, false);
+  });
+
+  it("keeps Save disabled when the block for events and tasks cannot be read", async () => {
+    const page = await openPage({ getBlockCalendarSkipReview: () => { throw new Error("pref unreadable"); } });
+    assert.equal(page.$("saveSkipReviewBtn").disabled, true);
+    assert.equal(page.$("saveSkipReviewStatus").textContent, "Error loading setting: pref unreadable");
   });
 
   it("keeps Save disabled and shows the error when the setting cannot be read", async () => {
@@ -1326,8 +1345,32 @@ describe("options page: send safety (skipReview)", () => {
     page.$("blockSkipReview").checked = false;
     await page.click("saveSkipReviewBtn");
     assert.deepEqual(page.callsTo("setBlockSkipReview"), [[false]]);
+    assert.deepEqual(page.callsTo("setBlockCalendarSkipReview"), [[true]], "the untouched box is saved as shown");
     assert.equal(page.$("saveSkipReviewStatus").textContent, "Saved.");
     assert.equal(page.$("saveSkipReviewStatus").className, "save-status");
+    assert.equal(page.$("saveSkipReviewBtn").disabled, false);
+  });
+
+  it("saves the block for events and tasks before the one for mail", async () => {
+    // Not yet set, it follows the block for mail: written second, it could be lifted by the mail block alone.
+    const order = [];
+    const page = await openPage({
+      setBlockCalendarSkipReview: (v) => { order.push(["calendar", v]); return { success: true }; },
+      setBlockSkipReview: (v) => { order.push(["mail", v]); return { success: true }; },
+    });
+    page.$("blockCalendarSkipReview").checked = false;
+    await page.click("saveSkipReviewBtn");
+    assert.deepEqual(order, [["calendar", false], ["mail", true]]);
+    assert.equal(page.$("saveSkipReviewStatus").textContent, "Saved.");
+  });
+
+  it("does not save the block for mail when the one for events and tasks fails", async () => {
+    const page = await openPage({ setBlockCalendarSkipReview: { error: "not allowed" } });
+    page.$("blockSkipReview").checked = false;
+    await page.click("saveSkipReviewBtn");
+    assert.deepEqual(page.callsTo("setBlockSkipReview"), []);
+    assert.equal(page.$("saveSkipReviewStatus").textContent, "not allowed");
+    assert.equal(page.$("saveSkipReviewStatus").className, "save-status error");
     assert.equal(page.$("saveSkipReviewBtn").disabled, false);
   });
 

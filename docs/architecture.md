@@ -126,8 +126,8 @@ it (see "Versions" below).
      bridges too old to wait for them (`bridgeModeRefusal`).
 5. `callTool` makes sure the folder databases the tool reads are ready, then calls the handler. Handlers apply the
    account restriction (`getAccessibleFolder`, `isAccountAllowed`, `isCollectionAllowed`), the encrypted-message
-   setting (`isEncryptedContentAllowed`) and the send-safety settings (`isSkipReviewBlocked`, the filter send-rule
-   policy).
+   setting (`isEncryptedContentAllowed`) and the send-safety settings (`isSkipReviewBlocked`,
+   `isCalendarSkipReviewBlocked`, the filter send-rule policy).
 6. For the message, calendar and contact read tools, `protectMessageToolResult` removes invisible and
    direction-changing characters from text fields, wraps free-text fields in `<email-content id="<random>">` markers,
    and adds a notice that the content is untrusted. A result too large to check this way is refused.
@@ -148,8 +148,11 @@ it (see "Versions" below).
     disables all tools; `listAccounts`, `listFolders` and `getAccountAccess` cannot be disabled. Once a tool is
     disabled, a tool added by a later update is disabled too until the user enables it: `knownTools` holds the tools
     the options page listed at the last save (the 40 tools of 0.18.2 when it is not set);
-  - *Block `skipReview`* (on by default): compose tools and `createEvent` / `createTask` open a review window or
-    dialog; direct sending or creation is refused while it is on;
+  - *Block `skipReview`* for mail (on by default): compose tools open a review window; direct sending is refused
+    while it is on;
+  - *Block `skipReview`* for events and tasks (on by default; `blockCalendarSkipReview`): `createEvent` and
+    `createTask` open a dialog; direct creation is refused while it is on. Until the user saves it, it follows the
+    block for mail (`calendarSkipReviewBlocked`), so a configuration from before it existed behaves as it did;
   - *Block filter forward/reply* (on by default), or *Ask me each time*: filter rules that would send mail are refused,
     or need a confirmation in a Thunderbird dialog;
   - *Let the assistant read encrypted messages* (off by default);

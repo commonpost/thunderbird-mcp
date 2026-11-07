@@ -60,7 +60,7 @@ function load() {
     },
     CalAlarm: null,
     Services: { wm: { getMostRecentWindow: () => ({ openDialog() {} }) } },
-    isSkipReviewBlocked: () => false,
+    isCalendarSkipReviewBlocked: () => false,
     stripEmailContentMarkers: (s) => s,
     normalizeEventStatus: (s) => s.toUpperCase(),
     getAccessibleCalendars: () => [calendar],
