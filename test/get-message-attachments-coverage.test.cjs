@@ -97,6 +97,8 @@ function makeEnv(options) {
     options,
     fsState,
     logs: [],
+    enginesSeen: [],
+    engineCalls: 0,
     rawOpens: 0,
     streams: [],
     rawStreams: [],
@@ -236,13 +238,20 @@ function installStubs(sandbox) {
     },
     findMessage: () => env().found,
     isEncryptedContentAllowed: () => env().options.encryptedAllowed !== false,
-    extractFormattedBody: (mimeMsg, format, counter) => {
+    extractFormattedBody: (mimeMsg, format, counter, engine) => {
       const body = env().options.body === undefined ? "Body text" : env().options.body;
       if (env().options.hidden) counter.n += env().options.hidden;
+      env().enginesSeen.push(engine);
+      if (engine && env().options.engineJudge) counter.judge = env().options.engineJudge;
       return { body, bodyIsHtml: !!env().options.bodyIsHtml };
     },
-    htmlToMarkdown: html => `MD(${html})`,
-    emailHtmlToText: html => `TEXT(${html})`,
+    htmlToMarkdown: (html, counter, engine) => `MD(${html}${engine ? ",engine" : ""})`,
+    emailHtmlToText: (html, counter, engine) => `TEXT(${html}${engine ? ",engine" : ""})`,
+    hiddenTextEngineJudgement: async () => {
+      env().engineCalls++;
+      return env().options.engine || { error: "no engine in this test" };
+    },
+    hiddenTextDiagnosticsEnabled: () => env().options.diagnostics === true,
     getUserTags: () => ["$label1"],
     displaySubject: hdr => hdr.mime2DecodedSubject,
     decodeHeaderValue: value => String(value || ""),

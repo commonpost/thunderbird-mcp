@@ -9,6 +9,9 @@ collects no data and sends nothing to its developers or to any third party.
 - The add-on's only outbound connection is Thunderbird's add-on update check against
   `https://commonpost.github.io/thunderbird-mcp/updates.json`, which you can turn off in Thunderbird. It carries no
   data about you beyond what Thunderbird sends for any add-on update check.
+- To leave hidden text out of what the assistant reads, the add-on renders messages in a hidden frame of its own
+  background page. That frame loads nothing from the network: the add-on's content security policy allows no remote
+  resource, and remote content stays blocked as in Thunderbird.
 - No telemetry, no analytics, no crash reports, no accounts, no cookies.
 - The session token the add-on writes for the bridge lives in a file of your temporary directory, readable by your
   user only, and is replaced at each Thunderbird start.

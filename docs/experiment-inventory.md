@@ -28,14 +28,15 @@ reference release by release. Corrections are welcome.
 | Filter confirmation dialog (`listFilters` with `confirmation: true` reads its state; the send-safety prompt) | `Services.wm`, `Services.ww` (find or open a window, `commonDialog.xhtml`) | No public MailExtension API for opening a native, user-answered dialog tied to a specific pending action. |
 | Clearing the stable token and network setting when the add-on is removed | `AddonManager.sys.mjs` (`addAddonListener`/`onUninstalling`) | None: a standard MailExtension has no hook that runs while it is being removed. |
 | Showing the Options tab again after an update (Mozilla bug 1667143: an open Add-ons Manager draws the updated card before the new version runs) | `Services.obs` (`EM-ping`/`EM-pong`), the Add-ons Manager's `addon-card` of this add-on only | None: a standard MailExtension cannot reach the Add-ons Manager. Without it, closing and reopening the Add-ons Manager tab brings the tab back. |
+| Hidden text: the document Thunderbird's message pane shows, the pane's size, the message's part images, and the request to the background page that renders it | MIME stream converter (`@mozilla.org/streamConverters;1`) on a channel of the message URL (`getUrlForUri`), `NetUtil`, `Services.wm`, an Experiment event (`ExtensionCommon.EventManager`) | No MailExtension API gives Thunderbird's display output; `messages.getFull` gives the parts as sent. The rendering and the judgement themselves run in the background page (`engine-visibility.js`), with no privilege. |
 | Options page | Standard `options_ui` page; talks to the Experiment for the items above | Fully standard once the items above move. |
 
 ## Where the code is
 
 - The Experiment schema is `extension/mcp_server/schema.json` (20 functions: server start and status, bridge status, token,
-  account and tool access, send-safety and network settings, encrypted-message setting).
+  account and tool access, send-safety and network settings, encrypted-message setting; one event, `onRender`).
 - All privileged code is in `extension/mcp_server/api.js` and `extension/httpd.sys.mjs`; the background page and the
-  options page only call `browser.commonpostMcp.*`.
+  options page only call `browser.commonpostMcp.*` (the background page also listens to `commonpostMcp.onRender`).
 - Nothing is downloaded or evaluated at run time: the XPI contains the only code that runs, unminified.
 
 ## Plan

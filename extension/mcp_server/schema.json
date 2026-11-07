@@ -2,6 +2,20 @@
   {
     "namespace": "commonpostMcp",
     "description": "MCP HTTP server for AI integration",
+    "events": [
+      {
+        "name": "onRender",
+        "type": "function",
+        "description": "Fired for the background page's hidden-text engine: render the document Thunderbird's message pane shows for a message and say which of its units a reader can see. The listener returns { ok, keys, hidden } or { ok: false, error }.",
+        "parameters": [
+          {
+            "name": "job",
+            "type": "any",
+            "description": "{ html, width, height, parts }"
+          }
+        ]
+      }
+    ],
     "functions": [
       {
         "name": "start",

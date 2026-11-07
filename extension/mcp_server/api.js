@@ -1727,6 +1727,293 @@ function mayQuoteOriginal(mimeMsg, encryptedContentAllowed) {
 }
 // END ENCRYPTED MESSAGE HELPERS
 
+// BEGIN ENGINE VISIBILITY HELPERS
+// Hidden text judged by Thunderbird's own layout engine (docs/architecture.md, "Hidden text in HTML bodies").
+// Thunderbird's MIME code writes the document its message pane shows: the sender's HTML in a wrapper of its own,
+// after header tables, with its own style sheet. The background page (extension/engine-visibility.js) renders that
+// document in a sandboxed frame of the size of the message pane and reports which of its units a reader can see.
+// A unit is a run of adjacent text nodes holding more than white space, outside the elements whose text is never
+// rendered, or an <img> or <a> element; engine-visibility.js has the same definition. The units of the HTML body
+// converted here must appear once, in a row, among the units of the rendered document, and take their verdicts
+// from there; otherwise the inline-style reading (hiddenContentJudge) decides, as before.
+const ENGINE_SKIPPED_TAGS = new Set(["script", "style", "title", "template", "noembed", "noframes", "iframe"]);
+const ENGINE_MAX_UNITS = 200000;
+// Parts that make Thunderbird's MIME code decrypt or verify a message: such a message is not rendered for the engine
+const ENGINE_CRYPTO_CONTENT_TYPES = new Set([
+  ...ENCRYPTED_CONTENT_TYPES,
+  "multipart/signed",
+  "application/pkcs7-signature",
+  "application/x-pkcs7-signature",
+  "application/pgp-signature",
+]);
+// The frame takes the size of the message pane; without one (no 3-pane window, pane closed), this size
+const ENGINE_DEFAULT_VIEWPORT = Object.freeze({ width: 1000, height: 800 });
+
+function engineTagName(node) {
+  return String(node.localName || node.tagName || "").toLowerCase();
+}
+
+// The units under a root, in document order: [{ nodes, key }], key being the text of a run, "\0img\0" + alt for an
+// image and "\0a" for a link.
+function engineUnits(root) {
+  const units = [];
+  const pending = [[root, 0]];
+  let run = null;
+  const flush = () => {
+    if (run && /\S/.test(run.key)) units.push(run);
+    run = null;
+  };
+  while (pending.length) {
+    const top = pending[pending.length - 1];
+    const children = top[0].childNodes || [];
+    if (top[1] >= children.length) {
+      flush();
+      pending.pop();
+      continue;
+    }
+    const child = children[top[1]++];
+    if (child.nodeType === 3) {
+      const data = child.data ?? child.textContent ?? "";
+      if (run) {
+        run.nodes.push(child);
+        run.key += data;
+      } else {
+        run = { nodes: [child], key: data };
+      }
+      continue;
+    }
+    flush();
+    if (child.nodeType !== 1) continue;
+    const tag = engineTagName(child);
+    if (ENGINE_SKIPPED_TAGS.has(tag)) continue;
+    if (tag === "img") units.push({ nodes: [child], key: "\u0000img\u0000" + (child.getAttribute("alt") || "") });
+    else if (tag === "a") units.push({ nodes: [child], key: "\u0000a" });
+    if (units.length > ENGINE_MAX_UNITS) throw new Error("too many units");
+    pending.push([child, 0]);
+  }
+  return units;
+}
+
+// Where the keys of the body's units appear in a row among the rendered document's keys: their first index, -1 when
+// they do not, -2 when they do more than once (Knuth-Morris-Pratt).
+function alignEngineUnits(keys, renderedKeys) {
+  const n = keys.length, m = renderedKeys.length;
+  if (!n || n > m) return -1;
+  const fail = new Array(n).fill(0);
+  for (let i = 1, k = 0; i < n; i++) {
+    while (k && keys[i] !== keys[k]) k = fail[k - 1];
+    if (keys[i] === keys[k]) k++;
+    fail[i] = k;
+  }
+  let found = -1;
+  for (let i = 0, k = 0; i < m; i++) {
+    while (k && renderedKeys[i] !== keys[k]) k = fail[k - 1];
+    if (renderedKeys[i] === keys[k]) k++;
+    if (k === n) {
+      if (found !== -1) return -2;
+      found = i - n + 1;
+      k = fail[k - 1];
+    }
+  }
+  return found;
+}
+
+// The background page's answer, checked: { keys, hidden: Set of indices } or { error }
+function parseEngineRender(result) {
+  if (!result || typeof result !== "object") return { error: "no answer" };
+  if (result.ok !== true) return { error: typeof result.error === "string" ? result.error.slice(0, 100) : "render failed" };
+  const { keys, hidden } = result;
+  if (!Array.isArray(keys) || keys.length > ENGINE_MAX_UNITS || !keys.every(k => typeof k === "string")) return { error: "bad keys" };
+  if (!Array.isArray(hidden) || !hidden.every(i => Number.isInteger(i) && i >= 0 && i < keys.length)) return { error: "bad verdicts" };
+  return { keys, hidden: new Set(hidden) };
+}
+
+const engineParentOf = node => node.parentElement || null;
+
+// A hiding judge (the shape of hiddenContentJudge) that takes the engine's verdicts. Counts, once each, the highest
+// element above hidden content that shows no text at all.
+function engineHiddenContentJudge(units, start, hiddenIndices, counterRef) {
+  const hiddenNodes = new Set();
+  const showsText = new Set();
+  units.forEach((unit, i) => {
+    if (hiddenIndices.has(start + i)) {
+      for (const node of unit.nodes) hiddenNodes.add(node);
+    } else if (unit.nodes[0].nodeType === 3) {
+      for (let e = engineParentOf(unit.nodes[0]); e && !showsText.has(e); e = engineParentOf(e)) showsText.add(e);
+    }
+  });
+  const counted = new Set();
+  const count = node => {
+    let top = node.nodeType === 1 ? node : engineParentOf(node);
+    for (let up = top && engineParentOf(top); up && !showsText.has(up) && engineTagName(up) !== "body" && engineTagName(up) !== "html"; up = engineParentOf(up)) top = up;
+    if (top && !counted.has(top)) {
+      counted.add(top);
+      counterRef.n++;
+    }
+  };
+  return {
+    // Elements whose text is never rendered (a <title> lands in the body after a byte order mark) give nothing; they
+    // are counted as the inline-style reading counts them: every <template>, the others when they hold text
+    enter(node, tag, inherited) {
+      if (!ENGINE_SKIPPED_TAGS.has(tag)) return inherited;
+      if (tag === "template" || (tag !== "script" && tag !== "style" && /\S/.test(node.textContent || ""))) {
+        if (!counted.has(node)) {
+          counted.add(node);
+          counterRef.n++;
+        }
+      }
+      return null;
+    },
+    textHidden(text, inherited, sizeApplies, node) {
+      if (!node || !hiddenNodes.has(node)) return false;
+      if (/\S/.test(text)) count(node);
+      return true;
+    },
+    elementHidden: node => hiddenNodes.has(node),
+  };
+}
+
+// The engine's judge for a parsed body, or null (the reason in counterRef.judge) when the engine cannot decide
+function engineHidingFor(doc, engine, counterRef, inlineJudge) {
+  if (!engine) return null;
+  let units;
+  try {
+    units = engineUnits(doc.documentElement);
+  } catch {
+    counterRef.judge = "fallback: too many units";
+    return null;
+  }
+  // Compared with white space collapsed: Thunderbird's serialisation of the message and its wrapper change the white
+  // space at the edges of some runs (the last one before </body>)
+  const normal = key => key.replace(/\s+/g, " ").trim();
+  const start = alignEngineUnits(units.map(u => normal(u.key)), engine.keys.map(normal));
+  if (start < 0) {
+    if (!units.length) {
+      counterRef.judge = "fallback: no text";
+      return null;
+    }
+    counterRef.judge = `layout and inline styles: ${start === -2 ? "ambiguous" : "not found"} in the rendered message`;
+    return engineUnionJudge(units, engine, normal, counterRef, inlineJudge);
+  }
+  counterRef.judge = "layout";
+  return engineHiddenContentJudge(units, start, engine.hidden, counterRef);
+}
+
+// When the body is not found once, in a row, in the rendered message (a sender can arrange that, by repeating text
+// for instance), its units cannot take the verdicts of their own place. A unit is then hidden when the inline styles
+// hide it, or when the engine hid any unit of the rendered message with the same text: a sender cannot lose the
+// engine's judgement this way, at worst visible text that also appears hidden elsewhere is left out.
+function engineUnionJudge(units, engine, normal, counterRef, inlineJudge) {
+  const hiddenKeys = new Set();
+  engine.keys.forEach((key, i) => {
+    if (engine.hidden.has(i)) hiddenKeys.add(normal(key));
+  });
+  const hiddenNodes = new Set();
+  for (const unit of units) if (hiddenKeys.has(normal(unit.key))) for (const node of unit.nodes) hiddenNodes.add(node);
+  const inline = inlineJudge();
+  const counted = new Set();
+  return {
+    enter: (node, tag, inherited) => inline.enter(node, tag, inherited),
+    textHidden(text, inherited, sizeApplies, node) {
+      if (node && hiddenNodes.has(node)) {
+        const top = node.nodeType === 1 ? node : engineParentOf(node);
+        if (/\S/.test(text) && top && !counted.has(top)) {
+          counted.add(top);
+          counterRef.n++;
+        }
+        return true;
+      }
+      return inline.textHidden(text, inherited, sizeApplies, node);
+    },
+    elementHidden: node => hiddenNodes.has(node),
+  };
+}
+
+// Whether a parsed message (Gloda MimeMessage tree) has an HTML part, and none that would be decrypted or verified to
+// display it. Fails closed: a tree that cannot be read counts as cryptographic.
+function engineMessageKind(root) {
+  try {
+    const pending = [root];
+    let visited = 0, html = false;
+    while (pending.length > 0) {
+      const part = pending.pop();
+      if (!part || typeof part !== "object") continue;
+      if (++visited > ENCRYPTED_WALK_MAX_NODES) return "crypto";
+      const header = part.headers && part.headers["content-type"];
+      for (const type of [part.contentType, Array.isArray(header) ? header[0] : header]) {
+        const base = mimeBaseType(type);
+        if (ENGINE_CRYPTO_CONTENT_TYPES.has(base)) return "crypto";
+        if (base === "text/html") html = true;
+      }
+      if (Array.isArray(part.parts)) pending.push(...part.parts);
+    }
+    return html ? "html" : "no html";
+  } catch {
+    return "crypto";
+  }
+}
+
+// The frame's size: the message pane's, in CSS pixels of its content, when it has a usable one
+function engineViewport(width, height, zoom) {
+  const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  const w = Math.round(width / z), h = Math.round(height / z);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w < 200 || h < 200 || w > 10000 || h > 10000) return ENGINE_DEFAULT_VIEWPORT;
+  return { width: w, height: h };
+}
+
+// Whether an image source in the rendered message is one of the message's own parts (libmime turns cid: references
+// into URLs of the message with a part number)
+function isMessagePartUrl(src, messageUrl) {
+  const url = String(messageUrl || "");
+  if (!url || typeof src !== "string") return false;
+  const prefix = url + (url.includes("?") ? "&" : "?");
+  return src.startsWith(prefix) && /[?&]part=[0-9.]+(?:&|$)/.test(src.slice(url.length));
+}
+// END ENGINE VISIBILITY HELPERS
+
+// BEGIN ENGINE RENDER CHANNEL
+// The background page's onRender listeners (their `fire` objects, newest last), and the time before which the engine
+// is not asked again after a failure that would repeat (a timeout, the page gone). Kept at module level: getAPI runs
+// once for each extension page.
+const ENGINE_PAUSE_MS = 60 * 1000;
+const engineRenderChannel = { listeners: [], pausedUntil: 0 };
+
+function addEngineRenderListener(fire) {
+  engineRenderChannel.listeners.push(fire);
+  return () => {
+    const i = engineRenderChannel.listeners.indexOf(fire);
+    if (i >= 0) engineRenderChannel.listeners.splice(i, 1);
+  };
+}
+
+// One render by the background page, answered as parseEngineRender answers. `after(ms, callback)` starts a timer and
+// returns an object with cancel(). Nothing in the framework bounds the wait for a listener.
+async function requestEngineRender(job, timeoutMs, after, now = Date.now) {
+  if (now() < engineRenderChannel.pausedUntil) return { error: "engine paused" };
+  const fire = engineRenderChannel.listeners[engineRenderChannel.listeners.length - 1];
+  if (!fire) return { error: "no background page" };
+  let timer = null;
+  const timeout = new Promise(resolve => {
+    timer = after(timeoutMs, () => resolve({ ok: false, error: "timeout" }));
+  });
+  let answer;
+  try {
+    answer = await Promise.race([
+      Promise.resolve().then(() => fire.async(job)).then(
+        result => result,
+        e => ({ ok: false, error: e && e.name === "AbortError" ? "background page gone" : "render rejected" })),
+      timeout,
+    ]);
+  } finally {
+    if (timer) timer.cancel();
+  }
+  if (answer && (answer.error === "timeout" || answer.error === "background page gone")) {
+    engineRenderChannel.pausedUntil = now() + ENGINE_PAUSE_MS;
+  }
+  return parseEngineRender(answer);
+}
+// END ENGINE RENDER CHANNEL
+
 // BEGIN ACCOUNT RESTRICTION HELPERS
 // The "allowed accounts" preference is read the same way by the server and by
 // the options page: an unset value or an empty array means every account is
@@ -10911,14 +11198,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * Falls back to stripHtml if DOMParser is unavailable or the HTML
              * is too large to parse.
              */
-            function htmlToMarkdown(html, counterRef = { n: 0 }) {
+            function htmlToMarkdown(html, counterRef = { n: 0 }, engine = null) {
               if (!html) return "";
               html = shortenDataUris(html);
               if (htmlExceedsDomLimit(html)) return stripHtml(html, counterRef);
               const countBefore = counterRef.n;
               try {
                 const doc = new DOMParser().parseFromString(html, "text/html");
-                const hiding = hiddenContentJudge(counterRef);
+                const hiding = (engine && engineHidingFor(doc, engine, counterRef, () => hiddenContentJudge(counterRef))) || hiddenContentJudge(counterRef);
+                counterRef.judge ||= "inline styles";
 
                 function walkChildren(node, inherited) {
                   return Array.from(node.childNodes).map(child => walk(child, inherited)).join("");
@@ -10928,7 +11216,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 // and pre), without what is hidden.
                 function visibleText(node, inherited) {
                   return Array.from(node.childNodes).map(child => {
-                    if (child.nodeType === 3) return hiding.textHidden(child.textContent, inherited) ? "" : child.textContent;
+                    if (child.nodeType === 3) return hiding.textHidden(child.textContent, inherited, true, child) ? "" : child.textContent;
                     if (child.nodeType !== 1) return "";
                     const tag = child.tagName.toLowerCase();
                     if (tag === "script" || tag === "style") return "";
@@ -10939,7 +11227,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
                 function walk(node, inherited) {
                   if (node.nodeType === 3) { // Text
-                    return hiding.textHidden(node.textContent, inherited) ? "" : node.textContent.replace(/[ \t]+/g, " ");
+                    return hiding.textHidden(node.textContent, inherited, true, node) ? "" : node.textContent.replace(/[ \t]+/g, " ");
                   }
                   if (node.nodeType !== 1) return "";
                   const tag = node.tagName.toLowerCase();
@@ -10971,7 +11259,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       const href = safeEmailUrl(node.getAttribute("href") || "");
                       const text = inner().trim();
                       // A link whose text is out of sight gives nothing, not its URL
-                      if (!text && (innerInherited.invisible || /\S/.test(node.textContent))) return "";
+                      if (!text && (innerInherited.invisible || /\S/.test(node.textContent) || hiding.elementHidden?.(node))) return "";
                       // A link with an unsafe or missing URL is just its text
                       if (!href) return text;
                       if (text && text !== href) return `[${text}](${href})`;
@@ -10986,7 +11274,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       const w = parseInt(node.getAttribute("width"), 10) || 0;
                       const h = parseInt(node.getAttribute("height"), 10) || 0;
                       if ((w > 0 && w <= 3) || (h > 0 && h <= 3)) return "";
-                      return hiding.textHidden(alt, innerInherited, false) ? "" : alt;
+                      return hiding.textHidden(alt, innerInherited, false, node) ? "" : alt;
                     }
                     case "code": return "`" + visibleText(node, innerInherited) + "`";
                     case "pre": return "\n\n```\n" + visibleText(node, innerInherited).trim() + "\n```\n\n";
@@ -11029,16 +11317,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * parse failure or above the DOM size limit.
              */
             const PLAIN_TEXT_BLOCK_TAGS = new Set(["p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre"]);
-            function emailHtmlToText(html, counterRef = { n: 0 }) {
+            function emailHtmlToText(html, counterRef = { n: 0 }, engine = null) {
               if (!html) return "";
               html = shortenDataUris(html);
               if (htmlExceedsDomLimit(html)) return stripHtml(html, counterRef);
               const countBefore = counterRef.n;
               try {
                 const doc = new DOMParser().parseFromString(html, "text/html");
-                const hiding = hiddenContentJudge(counterRef);
+                const hiding = (engine && engineHidingFor(doc, engine, counterRef, () => hiddenContentJudge(counterRef))) || hiddenContentJudge(counterRef);
+                counterRef.judge ||= "inline styles";
                 function walk(node, inherited) {
-                  if (node.nodeType === 3) return hiding.textHidden(node.textContent, inherited) ? "" : node.textContent;
+                  if (node.nodeType === 3) return hiding.textHidden(node.textContent, inherited, true, node) ? "" : node.textContent;
                   if (node.nodeType !== 1) return " ";
                   const tag = node.tagName.toLowerCase();
                   if (tag === "script" || tag === "style" || tag === "head") return " ";
@@ -11136,14 +11425,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * Uses coerceBodyToPlaintext as fast path, then MIME tree fallback.
              * Used by reply/forward quoting where plain text is appropriate.
              */
-            function extractPlainTextBody(aMimeMsg, counterRef = { n: 0 }) {
+            function extractPlainTextBody(aMimeMsg, counterRef = { n: 0 }, engine = null) {
               if (!aMimeMsg) return "";
               try {
                 const text = aMimeMsg.coerceBodyToPlaintext();
                 if (text) return text;
               } catch { /* fall through */ }
               const { text, isHtml } = extractBodyContent(aMimeMsg);
-              return isHtml ? emailHtmlToText(text, counterRef) : text;
+              return isHtml ? emailHtmlToText(text, counterRef, engine) : text;
             }
 
             /**
@@ -11151,15 +11440,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
              * For "text": uses coerceBodyToPlaintext fast path (original behavior).
              * For "markdown"/"html": walks MIME tree to find raw HTML content.
              */
-            function extractFormattedBody(aMimeMsg, bodyFormat, counterRef = { n: 0 }) {
+            function extractFormattedBody(aMimeMsg, bodyFormat, counterRef = { n: 0 }, engine = null) {
               if (bodyFormat === "text") {
-                return { body: extractPlainTextBody(aMimeMsg, counterRef), bodyIsHtml: false };
+                return { body: extractPlainTextBody(aMimeMsg, counterRef, engine), bodyIsHtml: false };
               }
               // For markdown/html: need raw MIME content, not coerced text
               const { text, isHtml } = extractBodyContent(aMimeMsg, true);
               if (!text) {
                 // MIME tree empty -- try coerce as last resort
-                const fallback = extractPlainTextBody(aMimeMsg, counterRef);
+                const fallback = extractPlainTextBody(aMimeMsg, counterRef, engine);
                 return { body: fallback, bodyIsHtml: false };
               }
               if (!isHtml) return { body: text, bodyIsHtml: false };
@@ -11167,7 +11456,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               // all -- this is the one path that deliberately does not clean it.
               if (bodyFormat === "html") return { body: text, bodyIsHtml: true };
               // Default: markdown
-              return { body: htmlToMarkdown(text, counterRef), bodyIsHtml: false };
+              return { body: htmlToMarkdown(text, counterRef, engine), bodyIsHtml: false };
             }
 
             /**
@@ -14330,6 +14619,201 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
             // END ATTACHMENT SEARCH HELPERS
 
+
+            // BEGIN ENGINE RENDER REQUEST
+            // Asks the background page to judge the hidden text of a message (ENGINE VISIBILITY HELPERS): the
+            // document Thunderbird's message pane shows, the pane's size and the images of the message's own parts.
+            // Any failure answers { error } and the inline-style reading decides instead.
+            const ENGINE_DISPLAY_TIMEOUT_MS = 5000;
+            const ENGINE_RENDER_TIMEOUT_MS = 6000;
+            const ENGINE_MAX_DISPLAY_BYTES = 8 * 1024 * 1024;
+            const ENGINE_MAX_PART_IMAGES = 20;
+            const ENGINE_MAX_PART_IMAGE_BYTES = 1024 * 1024;
+            const ENGINE_MAX_PART_IMAGES_BYTES = 4 * 1024 * 1024;
+            const PREF_ENGINE_VISIBILITY = "extensions.commonpost-mcp.hiddenTextEngine";
+            const PREF_HIDDEN_TEXT_DIAGNOSTICS = "extensions.commonpost-mcp.hiddenTextDiagnostics";
+
+            function engineTimer(ms, callback) {
+              const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+              timer.initWithCallback({ notify: callback }, ms, Ci.nsITimer.TYPE_ONE_SHOT);
+              return timer;
+            }
+
+            function byteStringToUtf8(bytes) {
+              const array = new Uint8Array(bytes.length);
+              for (let i = 0; i < bytes.length; i++) array[i] = bytes.charCodeAt(i);
+              return new TextDecoder("utf-8").decode(array);
+            }
+
+            // libmime's output for display, read through the MIME stream converter on a channel of the message URL
+            // (with the channel as context, as Thunderbird's quoting does in nsMsgQuote): { html, url } or { error }
+            function messageDisplayHtml(msgHdr) {
+              return new Promise(resolve => {
+                let channel = null;
+                let settled = false;
+                const settle = value => {
+                  if (settled) return;
+                  settled = true;
+                  guard.cancel();
+                  resolve(value);
+                };
+                const guard = engineTimer(ENGINE_DISPLAY_TIMEOUT_MS, () => {
+                  try { channel?.cancel(Cr.NS_BINDING_ABORTED); } catch { /* already done */ }
+                  settle({ error: "display timeout" });
+                });
+                try {
+                  const uri = msgHdr.folder.getUriForMsg(msgHdr);
+                  const url = MailServices.messageServiceFromURI(uri).getUrlForUri(uri);
+                  channel = Services.io.newChannelFromURI(url, null, Services.scriptSecurityManager.getSystemPrincipal(), null,
+                    Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL, Ci.nsIContentPolicy.TYPE_OTHER);
+                  const chunks = [];
+                  let size = 0;
+                  const listener = {
+                    QueryInterface: ChromeUtils.generateQI(["nsIStreamListener", "nsIRequestObserver"]),
+                    onStartRequest() {},
+                    onDataAvailable(request, stream, offset, count) {
+                      const input = Cc["@mozilla.org/scriptableinputstream;1"].createInstance(Ci.nsIScriptableInputStream);
+                      input.init(stream);
+                      const bytes = input.readBytes(count);
+                      size += bytes.length;
+                      if (size > ENGINE_MAX_DISPLAY_BYTES) {
+                        try { request.cancel(Cr.NS_BINDING_ABORTED); } catch { /* already done */ }
+                        settle({ error: "display too large" });
+                        return;
+                      }
+                      chunks.push(bytes);
+                    },
+                    onStopRequest(request, status) {
+                      if (!Components.isSuccessCode(status)) {
+                        settle({ error: "display failed" });
+                        return;
+                      }
+                      settle({ html: byteStringToUtf8(chunks.join("")), url: url.spec });
+                    },
+                  };
+                  const converter = Cc["@mozilla.org/streamConverters;1"].getService(Ci.nsIStreamConverterService);
+                  channel.asyncOpen(converter.asyncConvertData("message/rfc822", "*/*", listener, channel));
+                } catch (e) {
+                  console.warn("commonpost-mcp: message display unavailable for the hidden-text engine:", e);
+                  settle({ error: "display unavailable" });
+                }
+              });
+            }
+
+            // An image part of the message as a data: URL, or null
+            function messagePartImage(spec, budget) {
+              return new Promise(resolve => {
+                let settled = false;
+                const settle = value => {
+                  if (settled) return;
+                  settled = true;
+                  guard.cancel();
+                  resolve(value);
+                };
+                const guard = engineTimer(ENGINE_DISPLAY_TIMEOUT_MS, () => settle(null));
+                try {
+                  const channel = NetUtil.newChannel({ uri: spec, loadUsingSystemPrincipal: true });
+                  NetUtil.asyncFetch(channel, (inputStream, status) => {
+                    try {
+                      if (!Components.isSuccessCode(status) || !inputStream) {
+                        settle(null);
+                        return;
+                      }
+                      const type = mimeBaseType(channel.contentType);
+                      if (!/^image\/[a-z0-9.+-]+$/.test(type)) {
+                        settle(null);
+                        return;
+                      }
+                      const bytes = readMessageStreamFully(inputStream, Math.min(ENGINE_MAX_PART_IMAGE_BYTES, budget));
+                      settle({ url: `data:${type};base64,${btoa(bytes)}`, size: bytes.length });
+                    } catch {
+                      settle(null);
+                    } finally {
+                      try { inputStream?.close(); } catch { /* closed */ }
+                    }
+                  });
+                } catch {
+                  settle(null);
+                }
+              });
+            }
+
+            // The size of the message pane of the most recent 3-pane window, and its zoom
+            function messagePaneViewport() {
+              try {
+                const win = Services.wm.getMostRecentWindow("mail:3pane");
+                const about3Pane = win?.gTabmail?.currentAbout3Pane;
+                const aboutMessage = about3Pane?.messageBrowser?.contentWindow;
+                const pane = aboutMessage?.getMessagePaneBrowser?.();
+                if (!pane) return ENGINE_DEFAULT_VIEWPORT;
+                let zoom = 1;
+                try { zoom = pane.browsingContext.fullZoom; } catch { /* default zoom */ }
+                return engineViewport(pane.clientWidth, pane.clientHeight, zoom);
+              } catch {
+                return ENGINE_DEFAULT_VIEWPORT;
+              }
+            }
+
+            function hiddenTextDiagnosticsEnabled() {
+              try {
+                return Services.prefs.getBoolPref(PREF_HIDDEN_TEXT_DIAGNOSTICS, false);
+              } catch {
+                return false;
+              }
+            }
+
+            function hiddenTextEngineEnabled() {
+              try {
+                return Services.prefs.getBoolPref(PREF_ENGINE_VISIBILITY, true);
+              } catch {
+                return true;
+              }
+            }
+
+            // { keys, hidden } for the message, or { error }
+            async function hiddenTextEngineJudgement(msgHdr, aMimeMsg) {
+              if (!hiddenTextEngineEnabled()) return { error: "turned off" };
+              const kind = engineMessageKind(aMimeMsg);
+              if (kind !== "html") return { error: kind === "crypto" ? "encrypted or signed message" : "no HTML part" };
+              // Only from a local copy: rendering must not fetch the message from a server
+              const local = msgHdr.folder instanceof Ci.nsIMsgLocalMailFolder;
+              if (!local && !(msgHdr.flags & Ci.nsMsgMessageFlags.Offline)) return { error: "no local copy" };
+              const display = await messageDisplayHtml(msgHdr);
+              if (display.error) return display;
+              // A preconnect is not covered by any content policy; Thunderbird turns them all off by default
+              let preconnects = 0;
+              try { preconnects = Services.prefs.getIntPref("network.http.speculative-parallel-limit", 0); } catch { /* default */ }
+              // The tags of the display document, each read up to the next "<" (linear, whatever the message holds)
+              const tags = display.html.split("<");
+              if (preconnects !== 0 && tags.some(tag => /^link\b[^>]*\bpreconnect\b/i.test(tag))) return { error: "preconnect allowed" };
+              const parts = [];
+              let budget = ENGINE_MAX_PART_IMAGES_BYTES;
+              const sources = new Set();
+              for (const tag of tags) {
+                const match = /^img\b[^>]*?\ssrc\s*=\s*"([^"]*)"/i.exec(tag);
+                if (!match) continue;
+                const src = match[1].replace(/&amp;/g, "&");
+                if (isMessagePartUrl(src, display.url)) sources.add(src);
+              }
+              const partsDeadline = Date.now() + ENGINE_DISPLAY_TIMEOUT_MS;
+              for (const src of sources) {
+                if (parts.length >= ENGINE_MAX_PART_IMAGES || budget <= 0 || Date.now() > partsDeadline) break;
+                const image = await messagePartImage(src, budget);
+                if (!image) continue;
+                budget -= image.size;
+                parts.push([src, image.url]);
+              }
+              const viewport = messagePaneViewport();
+              const job = {
+                html: display.html,
+                width: viewport.width,
+                height: viewport.height,
+                parts,
+              };
+              return await requestEngineRender(job, ENGINE_RENDER_TIMEOUT_MS, engineTimer);
+            }
+            // END ENGINE RENDER REQUEST
+
 	            function getMessage(messageId, folderPath, saveAttachments, bodyFormat, rawSource, includeInlineImages, rawEncoding) {
 	              return new Promise((resolve) => {
 	                try {
@@ -14393,6 +14877,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
                   const encryptedAllowed = isEncryptedContentAllowed();
                   MsgHdrToMimeMessage(msgHdr, null, (aMsgHdr, aMimeMsg) => {
+                    readParsedMessage(aMsgHdr, aMimeMsg).catch(e => {
+                      console.error("commonpost-mcp: getMessage failed:", e);
+                      resolve({ error: "Failed to get message" });
+                    });
+                  }, true, { examineEncryptedParts: encryptedAllowed });
+
+                  // The parsed message, once Gloda has it. Asynchronous: the hidden-text engine answers from the
+                  // background page.
+                  async function readParsedMessage(aMsgHdr, aMimeMsg) {
                     if (!aMimeMsg) {
                       resolve({ error: "Could not parse message" });
                       return;
@@ -14424,7 +14917,14 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
                     const requestedBodyFormat = bodyFormat || "markdown";
                     const hiddenElementCounter = { n: 0 };
-                    const fmt = extractFormattedBody(aMimeMsg, requestedBodyFormat, hiddenElementCounter);
+                    // Hidden text of an HTML body, judged on the message as Thunderbird's pane shows it
+                    let engine = null;
+                    if (requestedBodyFormat !== "html") {
+                      const judgement = await hiddenTextEngineJudgement(msgHdr, aMimeMsg);
+                      if (judgement.error) hiddenElementCounter.judge = `fallback: ${judgement.error}`;
+                      else engine = judgement;
+                    }
+                    const fmt = extractFormattedBody(aMimeMsg, requestedBodyFormat, hiddenElementCounter, engine);
                     let body = fmt.body;
                     let bodyIsHtml = fmt.bodyIsHtml;
                     let bodyNote = "";
@@ -14472,10 +14972,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                                 body = extracted.text;
                                 bodyIsHtml = true;
                               } else if (requestedBodyFormat === "markdown") {
-                                body = htmlToMarkdown(extracted.text, hiddenElementCounter);
+                                body = htmlToMarkdown(extracted.text, hiddenElementCounter, engine);
                                 bodyIsHtml = false;
                               } else {
-                                body = emailHtmlToText(extracted.text, hiddenElementCounter);
+                                body = emailHtmlToText(extracted.text, hiddenElementCounter, engine);
                                 bodyIsHtml = false;
                               }
                             } else {
@@ -14743,6 +15243,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       attachments
                     };
                     if (bodyNote) baseResponse.bodyNote = bodyNote;
+                    // Which judge decided on hidden text, for checking the engine in a test profile (hidden preference)
+                    if (hiddenTextDiagnosticsEnabled() && hiddenElementCounter.judge) baseResponse.hiddenTextJudge = hiddenElementCounter.judge;
                     // As the receiving server reported it in the topmost header; nothing here is verified
                     const authentication = parseAuthenticationResults(aMimeMsg.headers?.["authentication-results"]?.[0]);
                     if (authentication) baseResponse.authentication = authentication;
@@ -15183,7 +15685,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       }
                       resolveBaseResponse();
                     })();
-                  }, true, { examineEncryptedParts: encryptedAllowed });
+                  }
 
 	                } catch (e) {
 	                  console.error("commonpost-mcp: getMessage failed:", e);
@@ -19057,6 +19559,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           console.log(`[MCP] Restarting server...`);
           return await this.start();
         },
+        // The background page's renderer of the hidden-text engine (ENGINE RENDER CHANNEL)
+        onRender: new ExtensionCommon.EventManager({
+          context,
+          name: "commonpostMcp.onRender",
+          register: fire => addEngineRenderListener(fire),
+        }).api(),
       }
     };
   }
