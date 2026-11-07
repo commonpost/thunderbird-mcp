@@ -8,7 +8,7 @@
 [![Platforms: Windows, macOS, Linux](https://img.shields.io/badge/Platforms-Windows_%7C_macOS_%7C_Linux-lightgrey.svg)](#quick-install-about-3-minutes)
 [![License: MIT](https://img.shields.io/badge/License-MIT-grey.svg)](LICENSE)
 
-MCP server giving AI assistants Thunderbird mail, calendar, contacts and filters. Windows, macOS, Linux.
+MCP server for AI assistants: Thunderbird mail, calendar, contacts, filters. Windows, macOS, Linux.
 
 Give your AI assistant full access to Thunderbird -- search mail, compose messages, manage filters, and organize your inbox. All through the [Model Context Protocol](https://modelcontextprotocol.io/).
 
