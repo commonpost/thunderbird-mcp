@@ -16,7 +16,22 @@ async function init() {
   }
 }
 
-browser.runtime.onInstalled.addListener(init);
+// A new install writes its defaults (events and tasks are added at once); an update writes what the profile had, so
+// a later "install" of the same profile changes nothing. The settings are read on every call, so a server started by
+// the init() below follows them as soon as they are written.
+async function onInstalled(details) {
+  const reason = details && details.reason;
+  if (reason === "install" || reason === "update") {
+    try {
+      await browser.commonpostMcp.applyInstallDefaults(reason);
+    } catch (e) {
+      console.error("Error writing the defaults of the install:", e);
+    }
+  }
+  await init();
+}
+
+browser.runtime.onInstalled.addListener(onInstalled);
 browser.runtime.onStartup.addListener(init);
 
 // Also call init() directly — the event listeners above don't fire when

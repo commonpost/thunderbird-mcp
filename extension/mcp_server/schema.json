@@ -123,7 +123,7 @@
         "name": "getBlockCalendarSkipReview",
         "type": "function",
         "async": true,
-        "description": "Get the block of skipReview for createEvent and createTask. Until it is set, it is the value of the Block skipReview preference (true by default).",
+        "description": "Get the block of skipReview for createEvent and createTask. A new install sets it to false; until it is set, it is the value of the Block skipReview preference (true by default).",
         "parameters": []
       },
       {
@@ -135,7 +135,20 @@
           {
             "name": "blockCalendarSkipReview",
             "type": "boolean",
-            "description": "When true, createEvent and createTask reject skipReview=true and open their dialog. Set false explicitly to let them add the event or task at once."
+            "description": "When true, createEvent and createTask reject skipReview=true and open their dialog. When false, they add the event or task at once unless the caller passes skipReview=false."
+          }
+        ]
+      },
+      {
+        "name": "applyInstallDefaults",
+        "type": "function",
+        "async": true,
+        "description": "Write the block of skipReview for createEvent and createTask while it holds no value: off on a new install, the value of the Block skipReview preference on an update. Called on onInstalled.",
+        "parameters": [
+          {
+            "name": "reason",
+            "type": "string",
+            "description": "The reason of onInstalled; only install and update write anything."
           }
         ]
       },

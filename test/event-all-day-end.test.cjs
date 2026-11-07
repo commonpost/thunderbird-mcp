@@ -68,9 +68,10 @@ function load() {
     disabledCalendarError: () => "disabled",
     pickDefaultWriteCalendar: (cals) => ({ calendar: cals[0] }),
     normalizeReminderMinutes: () => ({ minutes: [] }),
+    addedItemFields: () => ({}),
   };
   vm.createContext(sandbox);
-  vm.runInContext(`${region("EVENT RANGE HELPERS")}\n${fn("createEvent")}\nthis.createEvent = createEvent;\nthis.parseDateArg = parseDateArg;`, sandbox);
+  vm.runInContext(`${region("EVENT RANGE HELPERS")}\n${API.match(/^function calendarCreateMode\([^]*?\n}\n/m)[0]}\n${fn("createEvent")}\nthis.createEvent = createEvent;\nthis.parseDateArg = parseDateArg;`, sandbox);
   const create = (startDate, endDate) =>
     sandbox.createEvent("Trip", startDate, endDate, undefined, undefined, undefined, true, true);
   return { create, added, parseDateArg: sandbox.parseDateArg };
