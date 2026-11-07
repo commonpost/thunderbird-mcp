@@ -1,6 +1,6 @@
 {
   "name": "commonpost-mcp",
-  "version": "0.20.0",
+  "version": "0.20.1",
   "description": "MCP server giving AI assistants Thunderbird mail, calendar, contacts and filters. Windows, macOS, Linux.",
   "author": "Commonpost contributors (continuation of thunderbird-mcp by Tomasz Kasperczyk)",
   "license": "MIT",
