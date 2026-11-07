@@ -105,7 +105,8 @@ version of a bridge built from `main` is only meaningful at a tag.
 
 Fixes for problems reported under [SECURITY.md](SECURITY.md) are prepared and reviewed privately, and released on the
 date agreed through coordinated disclosure. Until the advisory is published, release notes describe them in general
-terms.
+terms. Once it is published, add it, with the version that fixes it, to the list in
+[docs/assurance-case.md](docs/assurance-case.md) (section 5, "Vulnerability handling").
 
 ## Dependabot pull requests
 

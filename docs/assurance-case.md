@@ -150,10 +150,14 @@ connection file 64 KiB in the bridge.
   SHA-256; the manifest carries that hash as `update_hash` (`scripts/gen-updates.js`; `test/gen-updates.test.cjs`).
 - **Vulnerability handling.** Private vulnerability reporting, response targets and coordinated disclosure are in
   [SECURITY.md](../SECURITY.md); security releases in [RELEASING.md](../RELEASING.md#security-releases). Security fixes
-  are listed under "Security" in [CHANGELOG.md](../CHANGELOG.md) (for example 0.14.0, 0.17.1, 0.17.4, 0.17.5).
-  Published advisories: [GHSA-vgv3-crg8-3rfh](https://github.com/commonpost/thunderbird-mcp/security/advisories/GHSA-vgv3-crg8-3rfh),
-  [GHSA-x2mh-cqhm-f8mg](https://github.com/commonpost/thunderbird-mcp/security/advisories/GHSA-x2mh-cqhm-f8mg),
-  [GHSA-65cp-vcv7-cf69](https://github.com/commonpost/thunderbird-mcp/security/advisories/GHSA-65cp-vcv7-cf69).
+  are listed under "Security" in [CHANGELOG.md](../CHANGELOG.md) (0.14.0, 0.17.1, 0.17.4, 0.17.5, 0.18.1, 0.19.1).
+  [Published advisories](https://github.com/commonpost/thunderbird-mcp/security/advisories?state=published), with the
+  version that fixes each:
+  [GHSA-vgv3-crg8-3rfh](https://github.com/commonpost/thunderbird-mcp/security/advisories/GHSA-vgv3-crg8-3rfh) (0.10.0),
+  [GHSA-x2mh-cqhm-f8mg](https://github.com/commonpost/thunderbird-mcp/security/advisories/GHSA-x2mh-cqhm-f8mg) (0.14.0),
+  [GHSA-65cp-vcv7-cf69](https://github.com/commonpost/thunderbird-mcp/security/advisories/GHSA-65cp-vcv7-cf69) (0.17.1),
+  [GHSA-whwf-gghm-mwx9](https://github.com/commonpost/thunderbird-mcp/security/advisories/GHSA-whwf-gghm-mwx9) (0.18.1),
+  [GHSA-8v8g-5qhh-q3wr](https://github.com/commonpost/thunderbird-mcp/security/advisories/GHSA-8v8g-5qhh-q3wr) (0.19.1).
 - **Testing in a real Thunderbird.** The end-to-end lab and the compatibility workflows (see
   [architecture.md](architecture.md#testing)).
 
