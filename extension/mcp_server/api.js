@@ -1681,9 +1681,15 @@ function folderUriWithoutTrailingSlash(uri) {
 // unless the user switches the option on: their decrypted content would be
 // handed to whichever service runs the assistant.
 const PREF_ALLOW_ENCRYPTED_CONTENT = "extensions.commonpost-mcp.allowEncryptedContent";
+// Where the user changes the add-on's settings, with Thunderbird's own labels (the tab is "Options" on Windows).
+// A refusal that comes from a default names it, so that a new user can act on it; one that comes from a restriction
+// the user set (a tool or an account turned off) only states it, and does not invite the client to have it lifted.
+const ADDON_OPTIONS_PATH =
+  "Tools > Add-ons and Themes > Commonpost MCP for Thunderbird > Options (Preferences outside Windows)";
 const ENCRYPTED_CONTENT_NOTICE =
   "message chiffré : contenu non transmis (option à activer) / "
-  + "encrypted message: content not sent (option to enable in the add-on settings)";
+  + "encrypted message: content not sent (the user can allow it in Thunderbird: " + ADDON_OPTIONS_PATH
+  + ", Encrypted messages)";
 const ENCRYPTED_CONTENT_TYPES = new Set([
   "multipart/encrypted",
   "application/pkcs7-mime",
@@ -4331,7 +4337,8 @@ const FILTER_ACTION_FORWARD = resolveXpcomConstant("nsMsgFilterAction", "Forward
 const FILTER_TYPE_POST_OUTGOING = resolveXpcomConstant("nsMsgFilterType", "PostOutgoing") ?? 0x40;
 const FILTER_SEND_GUARD_NOTE =
   'blocked by "Filter rules that send mail: Always block" (extensions.commonpost-mcp.blockFilterForwardReply, on by default); '
-  + "review and change such rules in Thunderbird's filter editor";
+  + "the user can create or change such a rule in Thunderbird's own filter editor (Tools > Message Filters), "
+  + "where they type the address themselves";
 
 // A forward target the user can read in full and that means one recipient:
 // one plain ASCII address, no display name, no list, no comment, no IP
