@@ -31,6 +31,7 @@ function files(o) {
     "mcp-bridge.cjs": `const BRIDGE_VERSION = '${B}';\nconst MIN_EXTENSION_VERSION = '${M}';\n${body}`,
     "extension/mcp_server/api.js": `const MIN_BRIDGE_VERSION = "${A}";\nconst MODE_MIN_BRIDGE_VERSION = "${MODE}";\nconst BRIDGE_SECURITY_FLOOR = "${F}";\n${C === null ? "" : `const CURRENT_BRIDGE_VERSION = "${C}";\n`}`,
     "CHANGELOG.md": o.changelog || "# Changelog\n\n## [Unreleased]\n",
+    "README.md": o.readme || `# t\n\nLatest release: **v${V}** (2026-11-07) -- see the changelog.\n`,
     "LICENSE": o.license || "license 1\n",
     "THIRD-PARTY.md": "third party\n",
     "extension/icons/icon-128.png": "png",
@@ -201,6 +202,35 @@ describe("check-versions.cjs", () => {
     assert.equal(differs.status, 1);
     assert.match(differs.out, /CURRENT_BRIDGE_VERSION 0\.11\.0 .* must equal BRIDGE_VERSION 0\.10\.0/);
     assert.equal(run(makeRepo(PREV, ["v0.11.0"], { ...PREV })).status, 0);
+  });
+
+  it("16. README.md states the released version in its head, with the date of its CHANGELOG section", () => {
+    const changelog = "# Changelog\n\n## [0.11.0] - 2026-11-07\n\n- release\n";
+    const ok = run(makeRepo(PREV, ["v0.11.0"], { ...PREV, changelog }));
+    assert.equal(ok.status, 0, ok.out);
+
+    const stale = run(makeRepo(PREV, ["v0.11.0"], { ...PREV, readme: "# t\n\nLatest release: **v0.10.0** (2026-11-07) -- x\n" }));
+    assert.equal(stale.status, 1);
+    assert.match(stale.out, /announces v0\.10\.0/);
+
+    const wrongDate = run(makeRepo(PREV, ["v0.11.0"], { ...PREV, changelog, readme: "# t\n\nLatest release: **v0.11.0** (2026-11-01) -- x\n" }));
+    assert.equal(wrongDate.status, 1);
+    assert.match(wrongDate.out, /CHANGELOG\.md 2026-11-07/);
+
+    const noLine = run(makeRepo(PREV, ["v0.11.0"], { ...PREV, readme: "# t\n\nno release line here\n" }));
+    assert.equal(noLine.status, 1);
+    assert.match(noLine.out, /has no line/);
+
+    // Far from the head, where a directory or a search engine stops reading.
+    const buried = run(makeRepo(PREV, ["v0.11.0"], { ...PREV, readme: `# t\n\n${"filler ".repeat(400)}\nLatest release: **v0.11.0** (2026-11-07) -- x\n` }));
+    assert.equal(buried.status, 1);
+    assert.match(buried.out, /within the first 2500/);
+
+    const dir = makeRepo(PREV, ["v0.11.0"], PREV);
+    fs.rmSync(path.join(dir, "README.md"));
+    const missing = run(dir);
+    assert.equal(missing.status, 1);
+    assert.match(missing.out, /README\.md is missing/);
   });
 
   it("15. previousReleaseTag compares tags number by number", () => {

@@ -15,6 +15,9 @@
  *   (scripts/mcpb-inputs.cjs). Compared with the previous release tag, the BRIDGE_VERSION line and the "version"
  *   line of mcpb/manifest.json left out: unchanged, BRIDGE_VERSION stays; changed, the release pull request sets it
  *   to the new version (until then it stays).
+ * - README.md states the released version in its head: `Latest release: **vX.Y.Z** (YYYY-MM-DD)`, carrying the product
+ *   version and the date of its CHANGELOG section. Directories and search engines read the head of the README; one
+ *   directory displayed a version of this project that never existed, inferred from the Unreleased section.
  * - Thresholds: MIN_EXTENSION_VERSION (bridge), MIN_BRIDGE_VERSION and MODE_MIN_BRIDGE_VERSION (add-on) are at most
  *   BRIDGE_VERSION, checked once BRIDGE_VERSION is final; BRIDGE_SECURITY_FLOOR is 0.0.0 or at most
  *   MIN_BRIDGE_VERSION, and arming it must be announced in CHANGELOG.md ("security floor").
@@ -109,6 +112,30 @@ function main(argv) {
     if (plugin !== version) fail(`${pluginManifest} version ${plugin} must equal package.json ${version}`);
     if (!read('plugins/claude-code/mcp-bridge.cjs').equals(read('mcp-bridge.cjs'))) {
       fail('plugins/claude-code/mcp-bridge.cjs must be a byte-for-byte copy of mcp-bridge.cjs (cp mcp-bridge.cjs plugins/claude-code/)');
+    }
+  }
+
+  // README: the release line in the head of the file, where a reader, a search engine and a directory's model all
+  // look. It carries the product version and the date of its CHANGELOG section, so the release pull request moves it
+  // with the other version files.
+  const README_HEAD = 2500;
+  if (!fs.existsSync(path.join(root, 'README.md'))) {
+    fail('README.md is missing: the head of the README states the released version');
+  } else {
+    const line = /^Latest release: \*\*v(\d+\.\d+\.\d+)\*\* \((\d{4}-\d{2}-\d{2})\)/m.exec(readText('README.md'));
+    if (!line) {
+      fail('README.md has no line `Latest release: **vX.Y.Z** (YYYY-MM-DD)`: state the released version where a reader and a crawler both find it');
+    } else {
+      if (line[1] !== version) fail(`README.md announces v${line[1]}: its release line must carry package.json ${version}`);
+      if (line.index > README_HEAD) {
+        fail(`README.md has its release line at byte ${line.index}: keep it within the first ${README_HEAD}, the head that a directory or a search engine reads`);
+      }
+      // A fixed pattern over every dated heading, compared as text: no pattern is built from the version.
+      const dated = [...readText('CHANGELOG.md').matchAll(/^## \[(\d+\.\d+\.\d+)\] - (\d{4}-\d{2}-\d{2})/gm)]
+        .find((m) => m[1] === version);
+      if (dated && dated[2] !== line[2]) {
+        fail(`README.md dates ${version} ${line[2]}, CHANGELOG.md ${dated[2]}: the two must agree`);
+      }
     }
   }
 
