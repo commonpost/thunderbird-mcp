@@ -46,6 +46,10 @@ These notes add to the server's instructions; each tool's description stays the 
   open a dialog. The user sends or saves from there. A result such as "Compose window opened" or "Event dialog
   opened" means nothing has been sent or saved yet: never tell the user a message was sent, or an event or task
   created, unless the result says so ("Message sent", "Event ... added to calendar ...").
+- The dialog of `createEvent` or `createTask` comes with a `reviewId`: `listEvents` (or `listTasks`) with it says
+  whether the user saved the event or task (with its id), closed the dialog without saving, or still has it open.
+  Check it before saying an event or task exists; if the dialog was closed, nothing was created: ask the user before
+  opening it again.
 - Direct sending (`skipReview: true`, or `mode: "send"`) is refused while the user's safety block is on, which is the
   default; `skipReview` on `createEvent` and `createTask` has a block of its own, on by default too. Do not try
   another way around them: open the review window or dialog, or save a draft.
