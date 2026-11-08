@@ -1054,3 +1054,32 @@ bridgeRefreshBtn.addEventListener("click", () => {
   loadBridgeStatus().catch(e => console.error("commonpost-mcp options:", "loadBridgeStatus failed:", e));
 });
 loadBridgeStatus().catch(e => console.error("commonpost-mcp options:", "loadBridgeStatus failed:", e));
+
+// --- Unsaved changes ---
+// A setting changes nothing until its Save button is pressed. Once a box or a choice that a Save button covers
+// changes, the status beside that button says so, until the button's own handler writes "Saving..." then "Saved.".
+// The lists built at load (accounts, tools) are watched through their container: change events bubble to it.
+const UNSAVED_WATCH = [
+  ["saveStatus", ["accountList"]],
+  ["saveToolsStatus", ["toolList"]],
+  ["saveSkipReviewStatus", ["blockSkipReview", "blockCalendarSkipReview"]],
+  ["saveFilterSendRulePolicyStatus", ["filterSendRulePolicyBlock", "filterSendRulePolicyConfirm"]],
+  ["saveEncryptedContentStatus", ["allowEncryptedContent"]],
+  ["saveListenAllStatus", ["listenAll"]],
+];
+
+function wireUnsavedNotice() {
+  for (const [statusId, watchedIds] of UNSAVED_WATCH) {
+    const status = document.getElementById(statusId);
+    if (!status) continue;
+    for (const id of watchedIds) {
+      const element = document.getElementById(id);
+      if (!element) continue;
+      element.addEventListener("change", () => {
+        status.textContent = t("unsaved", null, "Not saved yet: press Save.");
+        status.className = "save-status pending";
+      });
+    }
+  }
+}
+wireUnsavedNotice();
