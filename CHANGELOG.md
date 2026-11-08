@@ -15,6 +15,13 @@ this repository.
 - Options: after a box or a choice changes, the status beside its Save button reads "Not saved yet: press Save."
   until it is saved. Nothing said that a cleared box does nothing before Save.
 
+### Removed
+
+- The add-on no longer declares the six WebExtension permissions it never used (`accountsRead`, `addressBooks`,
+  `messagesRead`, `messagesMove`, `accountsFolders`, `compose`), kept from the original thunderbird-mcp. Everything
+  goes through its Experiment, which is what Thunderbird's "full, unrestricted access" line in the Permissions tab
+  stands for; that line stays, as for every Experiment add-on. A test keeps the list empty.
+
 ## [0.21.0] - 2026-11-08
 
 - New: the options page opens in its own tab (the wrench button of the add-on). It speaks in plain words, folds the
