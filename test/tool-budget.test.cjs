@@ -44,9 +44,12 @@ const byName = Object.fromEntries(tools.map(t => [t.name, t]));
 // targeted by createContact, since its id appeared only in searchContacts rows. The same change spent
 // about 200 characters telling sendMail, saveDraft, the reply and forward modes, updateMessage and
 // deleteMessages apart, and saying what a category label not in listCategories does.
+// About 500 more characters (November 2026), measured on Glama's per-tool scores (TDQS: a server's score weighs
+// its weakest tool at 40%). The seven weakest tools, all at 3 of 5 on usage guidelines, now say which sibling to use
+// instead: reorderFilters, the three folder tools, updateContact, getContact and replyToMessage.
 const MAX_TOOLS = 42;
 const MAX_TOOL_CHARS = 4100;
-const MAX_TOTAL_CHARS = 54100;
+const MAX_TOTAL_CHARS = 54600;
 const MIN_DESCRIPTION_CHARS = 30;
 const BOUNDED_RESULT_TOOLS = {
   searchMessages: 'maxResults', getRecentMessages: 'maxResults', searchContacts: 'maxResults',

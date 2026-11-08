@@ -21,6 +21,14 @@ this repository.
 
 ### Changed
 
+- The seven tools that scored lowest in Glama's review of the tool list (TDQS, which weighs a server's weakest tool at
+  40%) now say when to use another tool instead. All seven were at 3 of 5 on usage guidelines.
+  - `reorderFilters` points to `updateFilter`.
+  - `renameFolder` and `moveFolder` point to each other, and say that special folders are refused.
+  - `deleteFolder` points to `deleteMessages`.
+  - `updateContact` and `getContact` name `createContact` / `searchContacts` and what an unknown id does.
+  - `replyToMessage` points to `sendMail` and `forwardMessage`.
+
 - Options, section Bridge: a bridge that should be updated now gets numbered steps instead of one sentence and a
   link to the release page. The first step links the file itself: `mcp-bridge.cjs`, or the `.mcpb` bundle for Claude
   Desktop, taken from the add-on's own release. A user sent to the release page had to pick one file out of seven,
