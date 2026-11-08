@@ -4,7 +4,19 @@ All notable changes since 0.8.0, the first release of this project, are listed h
 before is the git history of [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) (MIT), kept in
 this repository.
 
-## [Unreleased]
+## [0.22.0] - 2026-11-08
+
+- Changed: the options page saves each change as soon as you make it; the Save buttons are gone. Account Access
+  offers "All accounts" or "Only the accounts checked below".
+- Changed: "Listen on all interfaces" lets in only the IPv4 addresses and networks you list, and asks for a
+  confirmation to turn on. **If you already use it,** it now allows the private networks and Tailscale's range
+  (`10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10`) and refuses public addresses; edit the list in
+  Options > Advanced.
+- New: the README and the options explain why Thunderbird says the add-on gets "full, unrestricted access", and
+  what it does with it. The options also explain the session token, and the review boxes say "Mail:" and
+  "Calendar:".
+- Removed: six WebExtension permissions the add-on never used.
+- **Bridge 0.20.0, unchanged.** Updating is optional.
 
 ### Added
 
