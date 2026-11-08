@@ -221,7 +221,7 @@ describe("options.js translations", () => {
   it("has an English message equal to the fallback of every t() call, with the substitutions in place", () => {
     const found = calls("t");
     assert.equal(found.length, (js.match(/\bt\(\s*"/g) || []).length);
-    assert.ok(found.length > 70, "expected many messages");
+    assert.ok(found.length > 50, "expected many messages");
     for (const { key, args } of found) {
       assert.ok(en[key], `options.js uses ${key}, missing from en/messages.json`);
       assert.equal(args.length, 3, `t("${key}") takes a key, the substitutions and the English`);

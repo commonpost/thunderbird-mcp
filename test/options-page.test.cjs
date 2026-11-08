@@ -55,6 +55,8 @@ class FakeElement {
     this._listeners = new Map();
   }
 
+  get parentElement() { return this.parentNode; }
+
   // Own text first, then the text of the children (the order in which options.js builds its labels).
   get textContent() {
     return this._text + this.children.map((child) => child.textContent).join("");
@@ -190,6 +192,7 @@ function makeDocument() {
     el.hidden = attrs.has("hidden");
     el.disabled = attrs.has("disabled");
     if (attrs.has("type")) el.type = attrs.get("type");
+    if (attrs.has("href")) el.href = attrs.get("href");
     if (attrs.has("name")) el.name = attrs.get("name");
     if (attrs.has("value")) el.value = attrs.get("value");
     const display = /display:\s*(\w+)/.exec(attrs.get("style") || "");
@@ -201,7 +204,9 @@ function makeDocument() {
     ids: [...byId.keys()],
     document: {
       body,
-      getElementById: (id) => byId.get(id) || null,
+      // The elements of the markup, then the ones a script built and attached (account and tool boxes), as in a
+      // browser: an element that is no longer in the page is not found.
+      getElementById: (id) => byId.get(id) || descendants(body).find((el) => el.id === id) || null,
       createElement: (tagName) => new FakeElement(tagName),
       createTextNode: (text) => new FakeText(text),
       querySelectorAll: (selector) => body.querySelectorAll(selector),
@@ -326,6 +331,7 @@ async function openPage(overrides = {}, options = {}) {
   const opened = [];
   const clipboardWrites = [];
   const consoleErrors = [];
+  const timers = [];
   const openDefaultBrowser = options.openDefaultBrowser || (async (url) => { opened.push(url); });
   const { browser, calls } = makeBrowser(overrides, openDefaultBrowser, options.messages);
   let clipboard = options.clipboard;
@@ -337,6 +343,9 @@ async function openPage(overrides = {}, options = {}) {
     browser,
     navigator: { clipboard: clipboard === null ? undefined : clipboard },
     console: { error: (...args) => consoleErrors.push(args) },
+    // The saved marks clear themselves after a delay: timers are recorded, never run on their own.
+    setTimeout: (fn, ms) => { timers.push({ fn, ms, cleared: false }); return timers.length - 1; },
+    clearTimeout: (id) => { if (timers[id]) timers[id].cleared = true; },
   });
   vm.runInContext(optionsSource, context, { filename: optionsPath });
   await settle();
@@ -352,6 +361,7 @@ async function openPage(overrides = {}, options = {}) {
     opened,
     clipboardWrites,
     consoleErrors,
+    timers,
     // Arguments of every call to a commonpostMcp method, in order.
     callsTo: (name) => calls.filter((call) => call.name === name).map((call) => call.args),
     // Dispatch an event, then let everything it started finish.
@@ -390,6 +400,14 @@ function toolRows(list) {
     if (li.className === "tool-crud-header") return `crud ${li.textContent}`;
     return `tool ${li.children[1].ownText}`;
   });
+}
+
+// The "Saved." / error mark next to a control: a span.saved-mark in its nearest LI, else in its parent.
+function markOf(control) {
+  let host = control.parentNode;
+  while (host && host.tagName !== "LI") host = host.parentNode;
+  host = host || control.parentNode;
+  return host.children.find((child) => String(child.className).split(/\s+/).includes("saved-mark")) || null;
 }
 
 function limitInput(page) {
@@ -639,6 +657,17 @@ describe("options page: retry start", () => {
   });
 });
 
+describe("options page: full access note", () => {
+  it("opens the README link in the default browser instead of following it", async () => {
+    const page = await openPage();
+    const link = page.$("fullAccessLink");
+    const event = await page.fire(link, "click");
+    assert.equal(event.defaultPrevented, true);
+    assert.deepEqual(page.opened, [link.getAttribute("href")]);
+    assert.match(page.opened[0], /^https:\/\/github\.com\/commonpost\/thunderbird-mcp#/);
+  });
+});
+
 describe("options page: authentication", () => {
   it("shows the session token and an unchecked stable-token setting", async () => {
     const page = await openPage();
@@ -842,6 +871,9 @@ describe("options page: authentication", () => {
 });
 
 describe("options page: account access", () => {
+  const accountModeAll = (page) => page.$("accountModeAll");
+  const accountModeOnly = (page) => page.$("accountModeOnly");
+
   it("lists every account with its type, checked as allowed", async () => {
     const page = await openPage();
     const boxes = accountCheckboxes(page);
@@ -853,20 +885,29 @@ describe("options page: account access", () => {
     assert.deepEqual(rows.map((li) => li.children[1].children[0].textContent), ["IMAP", "POP3", "local"]);
     assert.deepEqual(rows.map((li) => li.children[1].htmlFor), ["acct-id1", "acct-id2", "acct-id3"]);
     assert.equal(rows[0].children[1].children[0].className, "account-type");
-    assert.equal(page.$("saveBtn").disabled, false);
     assert.equal(page.$("saveStatus").textContent, "");
   });
 
-  it("reflects a restriction already saved", async () => {
-    const page = await openPage(statefulAccounts(["id2"]));
-    assert.deepEqual(accountCheckboxes(page).map((b) => b.checked), [false, true, false]);
+  it("shows mode all: All accounts selected, every box checked and disabled", async () => {
+    const page = await openPage();
+    assert.equal(accountModeAll(page).checked, true);
+    assert.equal(accountModeOnly(page).checked, false);
+    assert.deepEqual(accountCheckboxes(page).map((b) => b.checked), [true, true, true]);
+    assert.deepEqual(accountCheckboxes(page).map((b) => b.disabled), [true, true, true]);
   });
 
-  it("says so when there are no accounts, and leaves Save disabled", async () => {
+  it("reflects a restriction already saved: Only selected, boxes enabled and checked as allowed", async () => {
+    const page = await openPage(statefulAccounts(["id2"]));
+    assert.equal(accountModeAll(page).checked, false);
+    assert.equal(accountModeOnly(page).checked, true);
+    assert.deepEqual(accountCheckboxes(page).map((b) => b.checked), [false, true, false]);
+    assert.deepEqual(accountCheckboxes(page).map((b) => b.disabled), [false, false, false]);
+  });
+
+  it("says so when there are no accounts", async () => {
     const page = await openPage({ getAccountAccessConfig: { mode: "all", accounts: [] } });
     assert.equal(page.$("accountList").children.length, 1);
     assert.equal(page.$("accountList").children[0].textContent, "No accounts found.");
-    assert.equal(page.$("saveBtn").disabled, true);
   });
 
   it("treats a missing account list as empty", async () => {
@@ -878,112 +919,131 @@ describe("options page: account access", () => {
     const page = await openPage({ getAccountAccessConfig: () => { throw new Error("accounts unavailable"); } });
     assert.equal(page.$("accountList").children.length, 1);
     assert.equal(page.$("accountList").children[0].textContent, "Error loading accounts: accounts unavailable");
-    assert.equal(page.$("saveBtn").disabled, true);
   });
 
-  it("saves the checked accounts, then reloads the list", async () => {
-    const page = await openPage(statefulAccounts([]));
-    await page.setChecked(accountCheckboxes(page)[1], false);
-    await page.click("saveBtn");
+  it("saves the checked accounts as soon as a box changes, with a saved mark and no reload", async () => {
+    const page = await openPage(statefulAccounts(["id1", "id2", "id3"]));
+    const box = accountCheckboxes(page)[1];
+    await page.setChecked(box, false);
     assert.deepEqual(page.callsTo("setAccountAccess"), [[["id1", "id3"]]]);
-    assert.equal(page.callsTo("getAccountAccessConfig").length, 2);
-    assert.deepEqual(accountCheckboxes(page).map((b) => b.checked), [true, false, true]);
-    assert.equal(page.$("saveStatus").textContent, "Saved.");
-    assert.equal(page.$("saveBtn").disabled, false);
-  });
-
-  it("sends an empty list (all accounts) when every account is checked", async () => {
-    const page = await openPage(statefulAccounts(["id1"]));
-    for (const box of accountCheckboxes(page)) await page.setChecked(box, true);
-    await page.click("saveBtn");
-    assert.deepEqual(page.callsTo("setAccountAccess"), [[[]]]);
-    assert.deepEqual(accountCheckboxes(page).map((b) => b.checked), [true, true, true]);
-  });
-
-  it("refuses an empty selection instead of opening every account", async () => {
-    const page = await openPage();
-    for (const box of accountCheckboxes(page)) await page.setChecked(box, false);
-    await page.click("saveBtn");
-    assert.equal(page.callsTo("setAccountAccess").length, 0);
-    assert.equal(page.$("saveStatus").textContent, "Select at least one account.");
-    assert.equal(page.$("saveStatus").className, "save-status error");
-    assert.equal(page.$("saveBtn").disabled, false);
-  });
-
-  it("clears an old message when a checkbox is changed", async () => {
-    const page = await openPage();
-    page.$("saveStatus").textContent = "Select at least one account.";
-    await page.setChecked(accountCheckboxes(page)[0], false);
+    assert.equal(page.callsTo("getAccountAccessConfig").length, 1);
+    const mark = markOf(box);
+    assert.equal(mark.textContent, "✓ Saved.");
+    assert.equal(mark.className, "saved-mark");
+    assert.equal(mark.parentNode, box.parentNode, "the mark sits in the row of the box");
     assert.equal(page.$("saveStatus").textContent, "");
   });
 
-  it("shows the error returned by the host and does not reload", async () => {
-    const page = await openPage({ setAccountAccess: { error: "Unknown account id3" } });
-    await page.setChecked(accountCheckboxes(page)[2], false);
-    await page.click("saveBtn");
-    assert.equal(page.$("saveStatus").textContent, "Unknown account id3");
-    assert.equal(page.$("saveStatus").className, "save-status error");
-    assert.equal(page.callsTo("getAccountAccessConfig").length, 1);
-    assert.equal(page.$("saveBtn").disabled, false);
+  it("clears the saved mark after 2.5 seconds", async () => {
+    const page = await openPage(statefulAccounts(["id1", "id2", "id3"]));
+    const box = accountCheckboxes(page)[1];
+    await page.setChecked(box, false);
+    const timer = page.timers.filter((t) => !t.cleared).at(-1);
+    assert.equal(timer.ms, 2500);
+    assert.equal(markOf(box).textContent, "✓ Saved.");
+    timer.fn();
+    assert.equal(markOf(box).textContent, "");
   });
 
-  it("shows the error when the save throws", async () => {
-    const page = await openPage({ setAccountAccess: () => { throw new Error("prefs locked"); } });
-    await page.setChecked(accountCheckboxes(page)[2], false);
-    await page.click("saveBtn");
-    assert.equal(page.$("saveStatus").textContent, "Error: prefs locked");
-    assert.equal(page.$("saveStatus").className, "save-status error");
-    assert.equal(page.$("saveBtn").disabled, false);
+  it("choosing All accounts writes an empty list and checks and locks every box", async () => {
+    const page = await openPage(statefulAccounts(["id1"]));
+    await page.setChecked(accountModeAll(page), true);
+    assert.deepEqual(page.callsTo("setAccountAccess"), [[[]]]);
+    assert.deepEqual(accountCheckboxes(page).map((b) => b.checked), [true, true, true]);
+    assert.deepEqual(accountCheckboxes(page).map((b) => b.disabled), [true, true, true]);
+    assert.equal(markOf(accountModeAll(page)).textContent, "✓ Saved.");
+  });
+
+  it("choosing Only the accounts checked, from All, writes every account id and opens the boxes", async () => {
+    const page = await openPage();
+    await page.setChecked(accountModeOnly(page), true);
+    assert.deepEqual(page.callsTo("setAccountAccess"), [[["id1", "id2", "id3"]]]);
+    assert.equal(accountModeAll(page).checked, false);
+    assert.deepEqual(accountCheckboxes(page).map((b) => b.disabled), [false, false, false]);
+    assert.equal(markOf(accountModeOnly(page)).textContent, "✓ Saved.");
+  });
+
+  it("clearing the last checked box checks it again, writes nothing and says what to do", async () => {
+    const page = await openPage(statefulAccounts(["id1"]));
+    const box = accountCheckboxes(page)[0];
+    await page.setChecked(box, false);
+    assert.equal(box.checked, true);
+    assert.deepEqual(page.callsTo("setAccountAccess"), []);
+    const mark = markOf(box);
+    assert.equal(mark.textContent, "Keep at least one account checked, or choose All accounts.");
+    assert.equal(mark.className, "saved-mark error");
+  });
+
+  it("shows the error returned by the host and reloads what is stored", async () => {
+    const page = await openPage({ ...statefulAccounts(["id1", "id2", "id3"]), setAccountAccess: { error: "Unknown account id3" } });
+    const box = accountCheckboxes(page)[2];
+    await page.setChecked(box, false);
+    assert.equal(page.callsTo("getAccountAccessConfig").length, 2);
+    assert.deepEqual(accountCheckboxes(page).map((b) => b.checked), [true, true, true], "the stored choice is shown again");
+    const shown = accountCheckboxes(page)[2];
+    assert.notEqual(shown, box, "the list was rebuilt");
+    const mark = markOf(shown);
+    assert.equal(mark.textContent, "Error: Unknown account id3");
+    assert.equal(mark.className, "saved-mark error");
+  });
+
+  it("shows the error and reloads when the save throws", async () => {
+    const page = await openPage({ ...statefulAccounts(["id1", "id2", "id3"]), setAccountAccess: () => { throw new Error("prefs locked"); } });
+    const box = accountCheckboxes(page)[2];
+    await page.setChecked(box, false);
+    assert.equal(page.callsTo("getAccountAccessConfig").length, 2);
+    const mark = markOf(accountCheckboxes(page)[2]);
+    assert.equal(mark.textContent, "Error: prefs locked");
+    assert.equal(mark.className, "saved-mark error");
   });
 
   describe("after an unreadable saved restriction", () => {
     const unreadable = (allowed) => ({
       getAccountAccessConfig: { mode: "invalid", accounts: ACCOUNTS.map((a) => ({ ...a, allowed })) },
     });
-    const WARNING = "The saved account restriction could not be read: every account is blocked until you save a new choice.";
+    const WARNING = "The saved account restriction could not be read: every account is blocked until you choose All accounts or check the accounts to allow.";
 
-    it("warns and keeps the warning when a checkbox changes", async () => {
+    it("warns, selects neither mode and opens the boxes", async () => {
       const page = await openPage(unreadable(false));
       assert.equal(page.$("saveStatus").textContent, WARNING);
       assert.equal(page.$("saveStatus").className, "save-status error");
-      assert.equal(page.$("saveBtn").disabled, false);
-      await page.setChecked(accountCheckboxes(page)[0], true);
-      assert.equal(page.$("saveStatus").textContent, WARNING);
+      assert.equal(accountModeAll(page).checked, false);
+      assert.equal(accountModeOnly(page).checked, false);
+      assert.deepEqual(accountCheckboxes(page).map((b) => b.disabled), [false, false, false]);
+      assert.deepEqual(accountCheckboxes(page).map((b) => b.checked), [false, false, false]);
     });
 
-    it("saves a partial selection at once", async () => {
+    it("checking a box before a mode is chosen selects Only and writes the checked ids", async () => {
       const page = await openPage(unreadable(false));
       await page.setChecked(accountCheckboxes(page)[0], true);
-      await page.click("saveBtn");
+      assert.equal(accountModeOnly(page).checked, true);
+      assert.equal(accountModeAll(page).checked, false);
       assert.deepEqual(page.callsTo("setAccountAccess"), [[["id1"]]]);
+      assert.equal(page.$("saveStatus").textContent, "");
     });
 
-    it("asks for a second click before allowing every account", async () => {
+    it("choosing Only with no box checked writes nothing and asks to check one", async () => {
       const page = await openPage(unreadable(false));
-      for (const box of accountCheckboxes(page)) await page.setChecked(box, true);
-      await page.click("saveBtn");
-      assert.equal(page.callsTo("setAccountAccess").length, 0);
-      assert.equal(
-        page.$("saveStatus").textContent,
-        "The saved restriction was unreadable and everything is blocked. Click Save again to allow every account.",
-      );
-      assert.equal(page.$("saveStatus").className, "save-status error");
-      assert.equal(page.$("saveBtn").disabled, false);
-      await page.click("saveBtn");
-      assert.deepEqual(page.callsTo("setAccountAccess"), [[[]]]);
+      await page.setChecked(accountModeOnly(page), true);
+      assert.deepEqual(page.callsTo("setAccountAccess"), []);
+      assert.equal(page.$("saveStatus").textContent, "Check the accounts the assistant may use.");
     });
 
-    it("asks again if the selection changed between the two clicks", async () => {
-      const page = await openPage(unreadable(true));
-      await page.click("saveBtn");
-      assert.equal(page.callsTo("setAccountAccess").length, 0);
-      // The user unchecks and rechecks an account: the confirmation no longer counts.
-      await page.setChecked(accountCheckboxes(page)[0], false);
+    it("saves a partial selection at once once Only is chosen and a box is checked", async () => {
+      const page = await openPage(unreadable(false));
+      await page.setChecked(accountModeOnly(page), true);
       await page.setChecked(accountCheckboxes(page)[0], true);
-      await page.click("saveBtn");
-      assert.equal(page.callsTo("setAccountAccess").length, 0);
-      await page.click("saveBtn");
+      assert.deepEqual(page.callsTo("setAccountAccess"), [[["id1"]]]);
+      assert.equal(page.$("saveStatus").textContent, "");
+      assert.equal(page.$("saveStatus").className, "save-status");
+    });
+
+    it("choosing All accounts writes an empty list and clears the warning", async () => {
+      const page = await openPage(unreadable(false));
+      await page.setChecked(accountModeAll(page), true);
       assert.deepEqual(page.callsTo("setAccountAccess"), [[[]]]);
+      assert.equal(page.$("saveStatus").textContent, "");
+      assert.equal(page.$("saveStatus").className, "save-status");
     });
   });
 });
@@ -997,7 +1057,6 @@ describe("options page: tool access", () => {
       "crud Create", "tool sendMail",
       "crud Delete", "tool deleteMessages",
     ]);
-    assert.equal(page.$("saveToolsBtn").disabled, false);
     assert.equal(page.$("saveToolsStatus").textContent, "");
   });
 
@@ -1094,10 +1153,9 @@ describe("options page: tool access", () => {
     ]);
   });
 
-  it("says so when there are no tools, and leaves Save disabled", async () => {
+  it("says so when there are no tools", async () => {
     const page = await openPage({ getToolAccessConfig: { tools: [] } });
     assert.equal(page.$("toolList").children[0].textContent, "No tools found.");
-    assert.equal(page.$("saveToolsBtn").disabled, true);
   });
 
   it("treats a missing tool list as empty", async () => {
@@ -1109,7 +1167,6 @@ describe("options page: tool access", () => {
     const page = await openPage({ getToolAccessConfig: () => { throw new Error("tools unavailable"); } });
     assert.equal(page.$("toolList").children.length, 1);
     assert.equal(page.$("toolList").children[0].textContent, "Error loading tools: tools unavailable");
-    assert.equal(page.$("saveToolsBtn").disabled, true);
   });
 
   describe("getMessages limit", () => {
@@ -1197,7 +1254,7 @@ describe("options page: tool access", () => {
       ["5 6", null],
     ];
     for (const [typed, expected] of LIMIT_CASES) {
-      it(`input ${JSON.stringify(typed)} is ${expected === null ? "rejected" : "accepted as " + expected}`, async () => {
+      it(`typing ${JSON.stringify(typed)} is ${expected === null ? "rejected" : "accepted as " + expected}`, async () => {
         const page = await openPage();
         const input = limitInput(page);
         const status = input.parentNode.parentNode.children[3];
@@ -1209,8 +1266,13 @@ describe("options page: tool access", () => {
         } else {
           assert.equal(input.getAttribute("aria-invalid"), null);
           assert.equal(status.textContent, "");
-          await page.click("saveToolsBtn");
+        }
+        await page.fire(input, "change");
+        if (expected === null) {
+          assert.deepEqual(page.callsTo("setToolAccess"), [], "an invalid limit is not written");
+        } else {
           assert.deepEqual(page.callsTo("setToolAccess").map((args) => args[1]), [expected]);
+          assert.equal(markOf(input).textContent, "\u2713 Saved.");
         }
       });
     }
@@ -1269,32 +1331,59 @@ describe("options page: tool access", () => {
   });
 
   describe("saving", () => {
-    it("sends the unchecked tools and the limit, then reloads the list", async () => {
+    it("sends the unchecked tools and the limit at once, with a saved mark and no reload", async () => {
+      const page = await openPage(statefulTools([], 10));
+      const box = toolCheckboxes(page)[1];
+      await page.setChecked(box, false);
+      assert.deepEqual(page.callsTo("setToolAccess"), [[["searchMessages"], 10]]);
+      assert.equal(page.callsTo("getToolAccessConfig").length, 1);
+      const mark = markOf(box);
+      assert.equal(mark.textContent, "✓ Saved.");
+      assert.equal(mark.className, "saved-mark");
+      assert.equal(page.$("saveToolsStatus").textContent, "");
+    });
+
+    it("writes the whole choice at every change", async () => {
       const page = await openPage(statefulTools([], 10));
       const boxes = toolCheckboxes(page);
       await page.setChecked(boxes[1], false);
       await page.setChecked(boxes[2], false);
       await page.setChecked(boxes[3], true);
-      limitInput(page).value = "15";
-      await page.fire(limitInput(page), "input");
-      await page.click("saveToolsBtn");
-      // getMessages is unchecked, so its (disabled) limit field is not sent and the stored limit stays
-      assert.deepEqual(page.callsTo("setToolAccess"), [[["searchMessages", "getMessages"], undefined]]);
-      assert.equal(page.callsTo("getToolAccessConfig").length, 2);
-      assert.deepEqual(toolCheckboxes(page).map((b) => b.checked), [true, false, false, true, true]);
-      assert.equal(limitInput(page).value, "10");
-      assert.equal(page.$("saveToolsStatus").textContent, "Saved.");
-      assert.equal(page.$("saveToolsBtn").disabled, false);
+      // getMessages unchecked: its (disabled) limit field is not sent and the stored limit stays
+      assert.deepEqual(page.callsTo("setToolAccess"), [
+        [["searchMessages"], 10],
+        [["searchMessages", "getMessages"], undefined],
+        [["searchMessages", "getMessages"], undefined],
+      ]);
+      assert.equal(page.callsTo("getToolAccessConfig").length, 1);
     });
 
-    it("saves a new limit while getMessages stays enabled, and says Saved. after the reload", async () => {
+    it("saves a new limit when the field changes while getMessages stays enabled", async () => {
       const page = await openPage(statefulTools([], 10));
       limitInput(page).value = "15";
       await page.fire(limitInput(page), "input");
-      await page.click("saveToolsBtn");
+      assert.deepEqual(page.callsTo("setToolAccess"), [], "typing alone writes nothing");
+      await page.fire(limitInput(page), "change");
       assert.deepEqual(page.callsTo("setToolAccess"), [[[], 15]]);
-      assert.equal(limitInput(page).value, "15");
-      assert.equal(page.$("saveToolsStatus").textContent, "Saved.");
+      assert.equal(markOf(limitInput(page)).textContent, "✓ Saved.");
+    });
+
+    it("writes nothing when the limit is invalid on change, and the field keeps its error", async () => {
+      const page = await openPage(statefulTools([], 10));
+      limitInput(page).value = "99";
+      await page.fire(limitInput(page), "input");
+      await page.fire(limitInput(page), "change");
+      assert.deepEqual(page.callsTo("setToolAccess"), []);
+      assert.equal(limitInput(page).getAttribute("aria-invalid"), "true");
+      assert.equal(markOf(limitInput(page)), null);
+    });
+
+    it("sends no limit but still saves a tool change while the limit is invalid", async () => {
+      const page = await openPage(statefulTools([], 10));
+      limitInput(page).value = "99";
+      await page.setChecked(toolCheckboxes(page)[1], false);
+      assert.deepEqual(page.callsTo("setToolAccess"), [[["searchMessages"], undefined]]);
+      assert.equal(limitInput(page).getAttribute("aria-invalid"), "true");
     });
 
     it("does not block the save on an invalid limit once getMessages is unchecked", async () => {
@@ -1303,21 +1392,20 @@ describe("options page: tool access", () => {
       await page.fire(limitInput(page), "input");
       const getMessagesBox = toolCheckboxes(page).find((b) => b.value === "getMessages");
       await page.setChecked(getMessagesBox, false);
-      await page.click("saveToolsBtn");
       assert.deepEqual(page.callsTo("setToolAccess"), [[["getMessages"], undefined]]);
-      assert.equal(page.$("saveToolsStatus").textContent, "Saved.");
+      assert.equal(markOf(getMessagesBox).textContent, "✓ Saved.");
     });
 
     it("never lists a required tool as disabled", async () => {
       const page = await openPage();
       toolCheckboxes(page)[0].checked = false;
-      await page.click("saveToolsBtn");
-      assert.deepEqual(page.callsTo("setToolAccess")[0][0], ["sendMail"]);
+      await page.setChecked(toolCheckboxes(page)[1], false);
+      assert.deepEqual(page.callsTo("setToolAccess")[0][0], ["searchMessages", "sendMail"]);
     });
 
     it("sends the limit as a number", async () => {
       const page = await openPage();
-      await page.click("saveToolsBtn");
+      await page.setChecked(toolCheckboxes(page)[1], false);
       assert.equal(page.callsTo("setToolAccess")[0][1], 10);
     });
 
@@ -1325,52 +1413,100 @@ describe("options page: tool access", () => {
       const page = await openPage({
         getToolAccessConfig: { tools: [{ name: "searchMessages", group: "messages", crud: "read", enabled: true }] },
       });
-      await page.click("saveToolsBtn");
-      assert.deepEqual(page.callsTo("setToolAccess"), [[[], undefined]]);
-    });
-
-    it("blocks the save while the limit is invalid", async () => {
-      const page = await openPage();
-      limitInput(page).value = "99";
-      await page.click("saveToolsBtn");
-      assert.equal(page.callsTo("setToolAccess").length, 0);
-      assert.equal(page.$("saveToolsStatus").textContent, "Fix the highlighted getMessages limit before saving.");
-      assert.equal(page.$("saveToolsStatus").className, "save-status error");
-      assert.equal(limitInput(page).getAttribute("aria-invalid"), "true");
-      assert.equal(page.$("saveToolsBtn").disabled, false);
+      await page.setChecked(toolCheckboxes(page)[0], false);
+      assert.deepEqual(page.callsTo("setToolAccess"), [[["searchMessages"], undefined]]);
     });
 
     it("clears an old message when a tool is toggled", async () => {
       const page = await openPage();
-      page.$("saveToolsStatus").textContent = "Fix the highlighted getMessages limit before saving.";
+      page.$("saveToolsStatus").textContent = "Error: old";
       await page.setChecked(toolCheckboxes(page)[1], false);
       assert.equal(page.$("saveToolsStatus").textContent, "");
     });
 
-    it("shows the error returned by the host and does not reload", async () => {
-      const page = await openPage({ setToolAccess: { error: "getMessagesLimit must be between 1 and 20" } });
-      await page.click("saveToolsBtn");
-      assert.equal(page.$("saveToolsStatus").textContent, "getMessagesLimit must be between 1 and 20");
-      assert.equal(page.$("saveToolsStatus").className, "save-status error");
+    it("after a save, hides the new-tools note and removes the new badges, without reloading", async () => {
+      const page = await openPage({
+        getToolAccessConfig: {
+          ...TOOL_CONFIG,
+          newTools: ["deleteTask"],
+          tools: [...TOOL_CONFIG.tools, { name: "deleteTask", group: "calendar", crud: "delete", enabled: false, isNew: true }],
+        },
+      });
+      const box = toolCheckboxes(page).find((b) => b.value === "deleteTask");
+      const row = page.$("toolList").children.find((li) => li.children[0] === box);
+      assert.equal(row.children[1].children.length, 1, "the new badge is shown");
+      assert.equal(page.$("newToolsNote").hidden, false);
+      await page.setChecked(box, true);
+      assert.equal(page.$("newToolsNote").hidden, true);
+      assert.equal(row.children[1].children.length, 0, "the new badge is gone");
       assert.equal(page.callsTo("getToolAccessConfig").length, 1);
-      assert.equal(page.$("saveToolsBtn").disabled, false);
     });
 
-    it("shows the error when the save throws", async () => {
-      const page = await openPage({ setToolAccess: () => { throw new Error("prefs locked"); } });
-      await page.click("saveToolsBtn");
+    it("keeps the new-tools note when the save fails (the list is reloaded)", async () => {
+      const page = await openPage({
+        setToolAccess: { error: "refused" },
+        getToolAccessConfig: {
+          ...TOOL_CONFIG,
+          newTools: ["deleteTask"],
+          tools: [...TOOL_CONFIG.tools, { name: "deleteTask", group: "calendar", crud: "delete", enabled: false, isNew: true }],
+        },
+      });
+      await page.setChecked(toolCheckboxes(page).find((b) => b.value === "deleteTask"), true);
+      assert.equal(page.$("newToolsNote").hidden, false);
+    });
+
+    it("runs two quick toggles one after the other, the last write reflecting the final state", async () => {
+      let release;
+      const gate = new Promise((resolve) => { release = resolve; });
+      let first = true;
+      const page = await openPage({
+        setToolAccess: () => {
+          if (first) {
+            first = false;
+            return gate.then(() => ({ success: true }));
+          }
+          return { success: true };
+        },
+      });
+      const box = toolCheckboxes(page)[1];
+      box.checked = false;
+      box.dispatch("change");
+      await settle();
+      assert.deepEqual(page.callsTo("setToolAccess"), [[["searchMessages", "sendMail"], 10]]);
+      box.checked = true;
+      box.dispatch("change");
+      await settle();
+      assert.equal(page.callsTo("setToolAccess").length, 1, "the second write waits for the first");
+      release();
+      await settle();
+      assert.deepEqual(page.callsTo("setToolAccess"), [[["searchMessages", "sendMail"], 10], [["sendMail"], 10]]);
+    });
+
+    it("on a host error, reloads the list and shows the error under the tools", async () => {
+      const page = await openPage({ ...statefulTools([], 10), setToolAccess: { error: "getMessagesLimit must be between 1 and 20" } });
+      await page.setChecked(toolCheckboxes(page)[1], false);
+      assert.equal(page.callsTo("getToolAccessConfig").length, 2);
+      assert.equal(toolCheckboxes(page)[1].checked, true, "the stored choice is shown again");
+      assert.equal(page.$("saveToolsStatus").textContent, "Error: getMessagesLimit must be between 1 and 20");
+      assert.equal(page.$("saveToolsStatus").className, "save-status error");
+    });
+
+    it("on a throw, reloads the list and shows the error under the tools", async () => {
+      const page = await openPage({ ...statefulTools([], 10), setToolAccess: () => { throw new Error("prefs locked"); } });
+      await page.setChecked(toolCheckboxes(page)[1], false);
+      assert.equal(page.callsTo("getToolAccessConfig").length, 2);
       assert.equal(page.$("saveToolsStatus").textContent, "Error: prefs locked");
       assert.equal(page.$("saveToolsStatus").className, "save-status error");
-      assert.equal(page.$("saveToolsBtn").disabled, false);
     });
   });
 });
 
 describe("options page: send safety (skipReview)", () => {
-  it("loads the setting and enables Save", async () => {
+  it("loads the setting and enables the boxes", async () => {
     const page = await openPage({ getBlockSkipReview: { blockSkipReview: true } });
     assert.equal(page.$("blockSkipReview").checked, true);
-    assert.equal(page.$("saveSkipReviewBtn").disabled, false);
+    assert.equal(page.$("blockSkipReview").disabled, false);
+    assert.equal(page.$("blockCalendarSkipReview").disabled, false);
     assert.equal(page.$("saveSkipReviewStatus").textContent, "");
   });
 
@@ -1389,47 +1525,29 @@ describe("options page: send safety (skipReview)", () => {
     assert.equal(page.$("blockCalendarSkipReview").checked, false);
   });
 
-  it("keeps Save disabled when the block for events and tasks cannot be read", async () => {
+  it("keeps the boxes disabled when the block for events and tasks cannot be read", async () => {
     const page = await openPage({ getBlockCalendarSkipReview: () => { throw new Error("pref unreadable"); } });
-    assert.equal(page.$("saveSkipReviewBtn").disabled, true);
+    assert.equal(page.$("blockSkipReview").disabled, true);
+    assert.equal(page.$("blockCalendarSkipReview").disabled, true);
     assert.equal(page.$("saveSkipReviewStatus").textContent, "Error loading setting: pref unreadable");
   });
 
-  it("keeps Save disabled and shows the error when the setting cannot be read", async () => {
+  it("keeps the boxes disabled and shows the error when the setting cannot be read", async () => {
     const page = await openPage({ getBlockSkipReview: () => { throw new Error("pref unreadable"); } });
-    assert.equal(page.$("saveSkipReviewBtn").disabled, true);
+    assert.equal(page.$("blockSkipReview").disabled, true);
+    assert.equal(page.$("blockCalendarSkipReview").disabled, true);
     assert.equal(page.$("saveSkipReviewStatus").textContent, "Error loading setting: pref unreadable");
     assert.equal(page.$("saveSkipReviewStatus").className, "save-status error");
   });
 
-  it("saves the state of the box", async () => {
+  it("saves the state of the box as soon as it changes", async () => {
     const page = await openPage({ getBlockSkipReview: { blockSkipReview: true } });
-    page.$("blockSkipReview").checked = false;
-    await page.click("saveSkipReviewBtn");
+    await page.setChecked(page.$("blockSkipReview"), false);
     assert.deepEqual(page.callsTo("setBlockSkipReview"), [[false]]);
     assert.deepEqual(page.callsTo("setBlockCalendarSkipReview"), [[true]], "the untouched box is saved as shown");
-    assert.equal(page.$("saveSkipReviewStatus").textContent, "Saved.");
-    assert.equal(page.$("saveSkipReviewStatus").className, "save-status");
-    assert.equal(page.$("saveSkipReviewBtn").disabled, false);
-  });
-
-  it("says a changed box is not saved yet, until Save is pressed", async () => {
-    const page = await openPage();
-    await page.setChecked(page.$("blockCalendarSkipReview"), false);
-    assert.equal(page.$("saveSkipReviewStatus").textContent, "Not saved yet: press Save.");
-    assert.equal(page.$("saveSkipReviewStatus").className, "save-status pending");
-    assert.deepEqual(page.callsTo("setBlockCalendarSkipReview"), [], "nothing is written before Save");
-    await page.click("saveSkipReviewBtn");
-    assert.equal(page.$("saveSkipReviewStatus").textContent, "Saved.");
-    assert.equal(page.$("saveSkipReviewStatus").className, "save-status");
-  });
-
-  it("marks only the Save button that covers the changed setting", async () => {
-    const page = await openPage();
-    await page.setChecked(page.$("listenAll"), true);
-    assert.equal(page.$("saveListenAllStatus").className, "save-status pending");
-    assert.equal(page.$("saveSkipReviewStatus").textContent, "");
-    assert.equal(page.$("saveEncryptedContentStatus").textContent, "");
+    const mark = markOf(page.$("blockSkipReview"));
+    assert.equal(mark.textContent, "✓ Saved.");
+    assert.equal(mark.className, "saved-mark");
   });
 
   it("saves the block for events and tasks before the one for mail", async () => {
@@ -1439,49 +1557,38 @@ describe("options page: send safety (skipReview)", () => {
       setBlockCalendarSkipReview: (v) => { order.push(["calendar", v]); return { success: true }; },
       setBlockSkipReview: (v) => { order.push(["mail", v]); return { success: true }; },
     });
-    page.$("blockCalendarSkipReview").checked = false;
-    await page.click("saveSkipReviewBtn");
+    await page.setChecked(page.$("blockCalendarSkipReview"), false);
     assert.deepEqual(order, [["calendar", false], ["mail", true]]);
-    assert.equal(page.$("saveSkipReviewStatus").textContent, "Saved.");
+    assert.equal(markOf(page.$("blockCalendarSkipReview")).textContent, "✓ Saved.");
   });
 
   it("does not save the block for mail when the one for events and tasks fails", async () => {
     const page = await openPage({ setBlockCalendarSkipReview: { error: "not allowed" } });
-    page.$("blockSkipReview").checked = false;
-    await page.click("saveSkipReviewBtn");
+    await page.setChecked(page.$("blockSkipReview"), false);
     assert.deepEqual(page.callsTo("setBlockSkipReview"), []);
-    assert.equal(page.$("saveSkipReviewStatus").textContent, "not allowed");
-    assert.equal(page.$("saveSkipReviewStatus").className, "save-status error");
-    assert.equal(page.$("saveSkipReviewBtn").disabled, false);
+    assert.equal(page.callsTo("getBlockSkipReview").length, 2, "the setting is reloaded");
+    const mark = markOf(page.$("blockSkipReview"));
+    assert.equal(mark.textContent, "Error: not allowed");
+    assert.equal(mark.className, "saved-mark error");
   });
 
-  it("shows 'Saving...' and disables the button during the save", async () => {
-    const ref = {};
-    const seen = [];
-    ref.page = await openPage({
-      setBlockSkipReview: () => {
-        seen.push([ref.page.$("saveSkipReviewBtn").disabled, ref.page.$("saveSkipReviewStatus").textContent]);
-        return { success: true };
-      },
-    });
-    await ref.page.click("saveSkipReviewBtn");
-    assert.deepEqual(seen, [[true, "Saving..."]]);
-  });
-
-  it("shows the error returned by the host", async () => {
+  it("shows the error returned by the host, and reloads the setting", async () => {
     const page = await openPage({ setBlockSkipReview: { error: "not allowed" } });
-    await page.click("saveSkipReviewBtn");
-    assert.equal(page.$("saveSkipReviewStatus").textContent, "not allowed");
-    assert.equal(page.$("saveSkipReviewStatus").className, "save-status error");
-    assert.equal(page.$("saveSkipReviewBtn").disabled, false);
+    await page.setChecked(page.$("blockSkipReview"), false);
+    assert.equal(page.$("blockSkipReview").checked, true, "the stored value is shown again");
+    assert.equal(page.callsTo("getBlockSkipReview").length, 2);
+    const mark = markOf(page.$("blockSkipReview"));
+    assert.equal(mark.textContent, "Error: not allowed");
+    assert.equal(mark.className, "saved-mark error");
   });
 
-  it("shows the error when the save throws", async () => {
+  it("shows the error when the save throws, and reloads the setting", async () => {
     const page = await openPage({ setBlockSkipReview: () => { throw new Error("prefs locked"); } });
-    await page.click("saveSkipReviewBtn");
-    assert.equal(page.$("saveSkipReviewStatus").textContent, "Error: prefs locked");
-    assert.equal(page.$("saveSkipReviewStatus").className, "save-status error");
-    assert.equal(page.$("saveSkipReviewBtn").disabled, false);
+    await page.setChecked(page.$("blockSkipReview"), false);
+    assert.equal(page.callsTo("getBlockSkipReview").length, 2);
+    const mark = markOf(page.$("blockSkipReview"));
+    assert.equal(mark.textContent, "Error: prefs locked");
+    assert.equal(mark.className, "saved-mark error");
   });
 });
 
@@ -1489,9 +1596,10 @@ describe("options page: filter rules that send mail", () => {
   const block = (page) => page.$("filterSendRulePolicyBlock");
   const confirm = (page) => page.$("filterSendRulePolicyConfirm");
 
-  function choose(radio, others) {
+  // A radio chosen by the user: the others of the group are cleared, then "change" fires on the chosen one.
+  async function choose(page, radio, others) {
     for (const other of others) other.checked = false;
-    radio.checked = true;
+    await page.setChecked(radio, true);
   }
 
   it("has both options from the markup", async () => {
@@ -1499,6 +1607,12 @@ describe("options page: filter rules that send mail", () => {
     assert.equal(block(page).type, "radio");
     assert.equal(block(page).value, "block");
     assert.equal(confirm(page).value, "confirm");
+  });
+
+  it("starts with both options disabled until the setting is loaded", async () => {
+    const page = await openPage({ getBlockFilterForwardReply: () => new Promise(() => {}) });
+    assert.equal(block(page).disabled, true);
+    assert.equal(confirm(page).disabled, true);
   });
 
   for (const [label, answer, expectBlock] of [
@@ -1510,59 +1624,58 @@ describe("options page: filter rules that send mail", () => {
       const page = await openPage({ getBlockFilterForwardReply: answer });
       assert.equal(block(page).checked, expectBlock);
       assert.equal(confirm(page).checked, !expectBlock);
-      assert.equal(page.$("saveFilterSendRulePolicyBtn").disabled, false);
+      assert.equal(block(page).disabled, false);
+      assert.equal(confirm(page).disabled, false);
       assert.equal(page.$("saveFilterSendRulePolicyStatus").textContent, "");
     });
   }
 
-  it("keeps Save disabled and shows the error when the setting cannot be read", async () => {
+  it("keeps the options disabled and shows the error when the setting cannot be read", async () => {
     const page = await openPage({ getBlockFilterForwardReply: () => { throw new Error("pref unreadable"); } });
-    assert.equal(page.$("saveFilterSendRulePolicyBtn").disabled, true);
+    assert.equal(block(page).disabled, true);
+    assert.equal(confirm(page).disabled, true);
     assert.equal(page.$("saveFilterSendRulePolicyStatus").textContent, "Error loading setting: pref unreadable");
     assert.equal(page.$("saveFilterSendRulePolicyStatus").className, "save-status error");
   });
 
   it("saves 'ask each time' as blockFilterForwardReply false", async () => {
     const page = await openPage();
-    choose(confirm(page), [block(page)]);
-    await page.click("saveFilterSendRulePolicyBtn");
+    await choose(page, confirm(page), [block(page)]);
     assert.deepEqual(page.callsTo("setBlockFilterForwardReply"), [[false]]);
-    assert.equal(page.$("saveFilterSendRulePolicyStatus").textContent, "Saved.");
-    assert.equal(page.$("saveFilterSendRulePolicyStatus").className, "save-status");
-    assert.equal(page.$("saveFilterSendRulePolicyBtn").disabled, false);
+    const mark = markOf(confirm(page));
+    assert.equal(mark.textContent, "✓ Saved.");
+    assert.equal(mark.className, "saved-mark");
   });
 
   it("saves 'always block' as blockFilterForwardReply true", async () => {
     const page = await openPage({ getBlockFilterForwardReply: { blockFilterForwardReply: false } });
-    choose(block(page), [confirm(page)]);
-    await page.click("saveFilterSendRulePolicyBtn");
+    await choose(page, block(page), [confirm(page)]);
     assert.deepEqual(page.callsTo("setBlockFilterForwardReply"), [[true]]);
   });
 
-  it("asks to choose an option when none is selected", async () => {
+  it("writes nothing when a change event arrives on a radio that is not checked", async () => {
     const page = await openPage();
-    block(page).checked = false;
-    confirm(page).checked = false;
-    await page.click("saveFilterSendRulePolicyBtn");
-    assert.equal(page.callsTo("setBlockFilterForwardReply").length, 0);
-    assert.equal(page.$("saveFilterSendRulePolicyStatus").textContent, "Choose one of the two options.");
-    assert.equal(page.$("saveFilterSendRulePolicyStatus").className, "save-status error");
+    await page.setChecked(confirm(page), false);
+    assert.deepEqual(page.callsTo("setBlockFilterForwardReply"), []);
   });
 
-  it("shows the error returned by the host", async () => {
+  it("shows the error returned by the host, and reloads the setting", async () => {
     const page = await openPage({ setBlockFilterForwardReply: { error: "not allowed" } });
-    await page.click("saveFilterSendRulePolicyBtn");
-    assert.equal(page.$("saveFilterSendRulePolicyStatus").textContent, "not allowed");
-    assert.equal(page.$("saveFilterSendRulePolicyStatus").className, "save-status error");
-    assert.equal(page.$("saveFilterSendRulePolicyBtn").disabled, false);
+    await choose(page, confirm(page), [block(page)]);
+    assert.equal(page.callsTo("getBlockFilterForwardReply").length, 2);
+    assert.equal(block(page).checked, true, "the stored choice is shown again");
+    const mark = markOf(confirm(page));
+    assert.equal(mark.textContent, "Error: not allowed");
+    assert.equal(mark.className, "saved-mark error");
   });
 
-  it("shows the error when the save throws", async () => {
+  it("shows the error when the save throws, and reloads the setting", async () => {
     const page = await openPage({ setBlockFilterForwardReply: () => { throw new Error("prefs locked"); } });
-    await page.click("saveFilterSendRulePolicyBtn");
-    assert.equal(page.$("saveFilterSendRulePolicyStatus").textContent, "Error: prefs locked");
-    assert.equal(page.$("saveFilterSendRulePolicyStatus").className, "save-status error");
-    assert.equal(page.$("saveFilterSendRulePolicyBtn").disabled, false);
+    await choose(page, confirm(page), [block(page)]);
+    assert.equal(page.callsTo("getBlockFilterForwardReply").length, 2);
+    const mark = markOf(confirm(page));
+    assert.equal(mark.textContent, "Error: prefs locked");
+    assert.equal(mark.className, "saved-mark error");
   });
 });
 
@@ -1576,51 +1689,63 @@ describe("options page: encrypted messages", () => {
     ]) {
       const page = await openPage({ getAllowEncryptedContent: answer });
       assert.equal(page.$("allowEncryptedContent").checked, expected, JSON.stringify(answer));
-      assert.equal(page.$("saveEncryptedContentBtn").disabled, false);
+      assert.equal(page.$("allowEncryptedContent").disabled, false);
     }
   });
 
-  it("keeps Save disabled and shows the error when the setting cannot be read", async () => {
+  it("starts disabled until the setting is loaded", async () => {
+    const page = await openPage({ getAllowEncryptedContent: () => new Promise(() => {}) });
+    assert.equal(page.$("allowEncryptedContent").disabled, true);
+  });
+
+  it("keeps the box disabled and shows the error when the setting cannot be read", async () => {
     const page = await openPage({ getAllowEncryptedContent: () => { throw new Error("pref unreadable"); } });
-    assert.equal(page.$("saveEncryptedContentBtn").disabled, true);
+    assert.equal(page.$("allowEncryptedContent").disabled, true);
     assert.equal(page.$("saveEncryptedContentStatus").textContent, "Error loading setting: pref unreadable");
     assert.equal(page.$("saveEncryptedContentStatus").className, "save-status error");
   });
 
-  it("saves the state of the box", async () => {
+  it("saves the state of the box as soon as it changes", async () => {
     const page = await openPage();
-    page.$("allowEncryptedContent").checked = true;
-    await page.click("saveEncryptedContentBtn");
+    await page.setChecked(page.$("allowEncryptedContent"), true);
     assert.deepEqual(page.callsTo("setAllowEncryptedContent"), [[true]]);
-    assert.equal(page.$("saveEncryptedContentStatus").textContent, "Saved.");
-    assert.equal(page.$("saveEncryptedContentStatus").className, "save-status");
-    assert.equal(page.$("saveEncryptedContentBtn").disabled, false);
+    const mark = markOf(page.$("allowEncryptedContent"));
+    assert.equal(mark.textContent, "✓ Saved.");
+    assert.equal(mark.className, "saved-mark");
   });
 
-  it("shows the error returned by the host", async () => {
+  it("shows the error returned by the host, and reloads the setting", async () => {
     const page = await openPage({ setAllowEncryptedContent: { error: "not allowed" } });
-    await page.click("saveEncryptedContentBtn");
-    assert.equal(page.$("saveEncryptedContentStatus").textContent, "not allowed");
-    assert.equal(page.$("saveEncryptedContentStatus").className, "save-status error");
-    assert.equal(page.$("saveEncryptedContentBtn").disabled, false);
+    await page.setChecked(page.$("allowEncryptedContent"), true);
+    assert.equal(page.$("allowEncryptedContent").checked, false, "the stored value is shown again");
+    assert.equal(page.callsTo("getAllowEncryptedContent").length, 2);
+    const mark = markOf(page.$("allowEncryptedContent"));
+    assert.equal(mark.textContent, "Error: not allowed");
+    assert.equal(mark.className, "saved-mark error");
   });
 
-  it("shows the error when the save throws", async () => {
+  it("shows the error when the save throws, and reloads the setting", async () => {
     const page = await openPage({ setAllowEncryptedContent: () => { throw new Error("prefs locked"); } });
-    await page.click("saveEncryptedContentBtn");
-    assert.equal(page.$("saveEncryptedContentStatus").textContent, "Error: prefs locked");
-    assert.equal(page.$("saveEncryptedContentStatus").className, "save-status error");
-    assert.equal(page.$("saveEncryptedContentBtn").disabled, false);
+    await page.setChecked(page.$("allowEncryptedContent"), true);
+    assert.equal(page.callsTo("getAllowEncryptedContent").length, 2);
+    const mark = markOf(page.$("allowEncryptedContent"));
+    assert.equal(mark.textContent, "Error: prefs locked");
+    assert.equal(mark.className, "saved-mark error");
   });
 });
 
 describe("options page: listen on all interfaces", () => {
-  it("starts with the warning hidden and Save enabled once loaded", async () => {
+  it("starts with the warning hidden and the box enabled once loaded", async () => {
     const page = await openPage();
     assert.equal(page.$("listenAll").checked, false);
     assert.equal(page.$("listenAllWarning").style.display, "none");
-    assert.equal(page.$("saveListenAllBtn").disabled, false);
+    assert.equal(page.$("listenAll").disabled, false);
     assert.equal(page.$("saveListenAllStatus").textContent, "");
+  });
+
+  it("starts disabled until the setting is loaded", async () => {
+    const page = await openPage({ getListenAll: () => new Promise(() => {}) });
+    assert.equal(page.$("listenAll").disabled, true);
   });
 
   it("shows the warning when the setting is already on", async () => {
@@ -1637,39 +1762,41 @@ describe("options page: listen on all interfaces", () => {
     assert.equal(page.$("listenAllWarning").style.display, "none");
   });
 
-  it("keeps Save disabled and shows the error when the setting cannot be read", async () => {
+  it("keeps the box disabled and shows the error when the setting cannot be read", async () => {
     const page = await openPage({ getListenAll: () => { throw new Error("pref unreadable"); } });
-    assert.equal(page.$("saveListenAllBtn").disabled, true);
+    assert.equal(page.$("listenAll").disabled, true);
     assert.equal(page.$("saveListenAllStatus").textContent, "Error loading setting: pref unreadable");
     assert.equal(page.$("saveListenAllStatus").className, "save-status error");
   });
 
-  it("saves the state of the box, then refreshes the server status", async () => {
+  it("saves the state of the box as soon as it changes, then refreshes the server status", async () => {
     const page = await openPage();
-    page.$("listenAll").checked = true;
-    await page.click("saveListenAllBtn");
+    await page.setChecked(page.$("listenAll"), true);
     assert.deepEqual(page.callsTo("setListenAll"), [[true]]);
-    assert.equal(page.$("saveListenAllStatus").textContent, "Saved.");
-    assert.equal(page.$("saveListenAllStatus").className, "save-status");
-    assert.equal(page.$("saveListenAllBtn").disabled, false);
+    const mark = markOf(page.$("listenAll"));
+    assert.equal(mark.textContent, "✓ Saved.");
+    assert.equal(mark.className, "saved-mark");
     assert.equal(page.callsTo("getServerInfo").length, 2);
   });
 
-  it("shows the error returned by the host and does not refresh", async () => {
+  it("shows the error returned by the host, reloads the setting and does not refresh the status", async () => {
     const page = await openPage({ setListenAll: { error: "cannot bind 0.0.0.0" } });
-    await page.click("saveListenAllBtn");
-    assert.equal(page.$("saveListenAllStatus").textContent, "cannot bind 0.0.0.0");
-    assert.equal(page.$("saveListenAllStatus").className, "save-status error");
+    await page.setChecked(page.$("listenAll"), true);
+    assert.equal(page.callsTo("getListenAll").length, 2);
+    assert.equal(page.$("listenAll").checked, false, "the stored value is shown again");
+    assert.equal(page.$("listenAllWarning").style.display, "none");
+    const mark = markOf(page.$("listenAll"));
+    assert.equal(mark.textContent, "Error: cannot bind 0.0.0.0");
+    assert.equal(mark.className, "saved-mark error");
     assert.equal(page.callsTo("getServerInfo").length, 1);
-    assert.equal(page.$("saveListenAllBtn").disabled, false);
   });
 
   it("shows the error when the save throws", async () => {
     const page = await openPage({ setListenAll: () => { throw new Error("prefs locked"); } });
-    await page.click("saveListenAllBtn");
-    assert.equal(page.$("saveListenAllStatus").textContent, "Error: prefs locked");
-    assert.equal(page.$("saveListenAllStatus").className, "save-status error");
-    assert.equal(page.$("saveListenAllBtn").disabled, false);
+    await page.setChecked(page.$("listenAll"), true);
+    const mark = markOf(page.$("listenAll"));
+    assert.equal(mark.textContent, "Error: prefs locked");
+    assert.equal(mark.className, "saved-mark error");
   });
 });
 
@@ -1962,10 +2089,9 @@ describe("options page: in French", () => {
   const fr = readMessages("fr");
   const openFrench = (overrides) => openPage(overrides, { messages: fr });
 
-  it("translates the page, its buttons and the placeholder of the token field", async () => {
+  it("translates the page, its button and the placeholder of the token field", async () => {
     const page = await openFrench();
     assert.equal(page.$("retryStartBtn").textContent, "Réessayer de démarrer");
-    assert.equal(page.$("saveBtn").textContent, "Enregistrer");
     assert.equal(page.$("bridgeEmpty").textContent, "Aucune passerelle ne s'est connectée depuis le démarrage de Thunderbird.");
     assert.equal(page.$("currentAuthToken").getAttribute("placeholder"), "Non disponible");
     assert.equal(page.$("listenAllWarning").textContent, fr.listenAllWarning.message);
@@ -1979,8 +2105,8 @@ describe("options page: in French", () => {
       page.$("bridgeThresholds").textContent,
       "Ce module (version 0.18.0) recommande la passerelle 0.17.0 ou plus récente. La passerelle publiée avec lui est la 0.18.0.",
     );
-    await page.click("saveBtn");
-    assert.equal(page.$("saveStatus").textContent, "Enregistré.");
+    await page.setChecked(page.$("allowEncryptedContent"), true);
+    assert.equal(markOf(page.$("allowEncryptedContent")).textContent, "\u2713 Enregistré.");
   });
 
   it("translates group names and tool titles by id, and keeps a label it does not know", async () => {

@@ -1848,7 +1848,7 @@ describe("wiring", () => {
     const js = fs.readFileSync(path.resolve(__dirname, "../extension/options.js"), "utf8");
     assert.match(html, /value="block"[\s\S]*Always block[\s\S]*value="confirm"[\s\S]*Ask me each time/);
     assert.doesNotMatch(html, /value="allow"/);
-    assert.match(js, /browser\.commonpostMcp\.setBlockFilterForwardReply\(chosen\.value === "block"\)/);
+    assert.match(js, /browser\.commonpostMcp\.setBlockFilterForwardReply\(radio\.value === "block"\)/);
     assert.match(apiSource, /__commonpostMcpFilterConfirmations\.shutdown\(/);
   });
   it("listFilters carries the confirmation view and stays a read-only tool; getFilterConfirmation is gone", () => {

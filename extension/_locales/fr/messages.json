@@ -12,8 +12,12 @@
     "description": "Title of the options tab. Keep the add-on name \"Commonpost MCP for Thunderbird\" as is."
   },
   "pageTagline": {
-    "message": "Permet aux assistants IA (MCP) de travailler avec votre courrier, votre agenda, vos contacts et vos filtres. Tout reste sur cet ordinateur.",
+    "message": "Permet aux assistants IA (MCP) de travailler avec votre courrier, votre agenda, vos contacts et vos filtres. Le module fonctionne sur cet ordinateur ; ce que l'assistant lit va à l'application d'IA que vous branchez.",
     "description": "Line under the add-on name at the top of the options page."
+  },
+  "autoSaveNote": {
+    "message": "Chaque modification est enregistrée dès que vous la faites.",
+    "description": "Under the page title: there is no Save button."
   },
   "navAriaLabel": {
     "message": "Sections",
@@ -50,6 +54,22 @@
   "statusHeading": {
     "message": "État du serveur",
     "description": "Heading of the server status section."
+  },
+  "fullAccessSummary": {
+    "message": "Pourquoi Thunderbird indique « un accès complet et illimité »",
+    "description": "Folded note in the status section, about the line Thunderbird shows in the add-on's Permissions tab. Quote Thunderbird's own wording in your language."
+  },
+  "fullAccessWhy": {
+    "message": "Thunderbird affiche cette phrase pour tout module bâti sur une Experiment, quoi que fasse le module : un module ne peut ni la changer ni la restreindre. Celui-ci a besoin d'une Experiment pour son serveur local, les filtres de messages et l'agenda.",
+    "description": "Body of the note, first paragraph."
+  },
+  "fullAccessWhat": {
+    "message": "Ce qu'il en fait : par défaut, il n'écoute que sur cet ordinateur, derrière un jeton ; il n'écrit de fichiers que dans son propre dossier temporaire ; son code ne fait aucune requête Internet. Ce que l'assistant lit va à l'application d'IA que vous branchez, et nulle part ailleurs.",
+    "description": "Body of the note, second paragraph."
+  },
+  "fullAccessLink": {
+    "message": "Détails dans le README (en anglais)",
+    "description": "Link to the README section."
   },
   "statusChecking": {
     "message": "Vérification…",
@@ -396,16 +416,40 @@
     "description": "Heading of the account section. The English name stays in parentheses: the add-on's messages to the assistant name the section in English."
   },
   "accountIntro": {
-    "message": "Choisissez les comptes que l'assistant peut voir. Si aucun n'est coché, il les voit tous.",
+    "message": "Choisissez les comptes que l'assistant peut voir.",
     "description": "Introduction of the account section."
+  },
+  "accountModeAllTitle": {
+    "message": "Tous les comptes",
+    "description": "Radio button: the assistant sees every account."
+  },
+  "accountModeAllDefault": {
+    "message": "(choix par défaut)",
+    "description": "After the radio button title."
+  },
+  "accountModeAllHelp": {
+    "message": "Les comptes que vous ajouterez plus tard à Thunderbird sont inclus.",
+    "description": "Help of the radio button."
+  },
+  "accountModeOnlyTitle": {
+    "message": "Seulement les comptes cochés ci-dessous",
+    "description": "Radio button: the assistant sees the checked accounts only."
+  },
+  "accountModeOnlyHelp": {
+    "message": "Un compte que vous ajouterez plus tard à Thunderbird reste caché jusqu'à ce que vous le cochiez ici.",
+    "description": "Help of the radio button."
+  },
+  "checkAccountsToAllow": {
+    "message": "Cochez les comptes que l'assistant peut utiliser.",
+    "description": "Shown after choosing 'Only the accounts checked below' when none is checked yet."
+  },
+  "keepOneAccount": {
+    "message": "Gardez au moins un compte coché, ou choisissez Tous les comptes.",
+    "description": "Shown beside the last checked account when it is cleared; the box is checked again."
   },
   "loading": {
     "message": "Chargement…",
     "description": "Placeholder of a list while it loads."
-  },
-  "save": {
-    "message": "Enregistrer",
-    "description": "Button that saves a section."
   },
   "saving": {
     "message": "Enregistrement…",
@@ -414,10 +458,6 @@
   "saved": {
     "message": "Enregistré.",
     "description": "Status after a setting was saved."
-  },
-  "unsaved": {
-    "message": "Pas encore enregistré : cliquez sur Enregistrer.",
-    "description": "Shown next to a Save button after a setting above it changed, until it is saved."
   },
   "errorWithMessage": {
     "message": "Erreur : $MESSAGE$",
@@ -456,7 +496,7 @@
     "description": "Account type of a feed account, shown in small capitals."
   },
   "accountRestrictionUnreadable": {
-    "message": "La restriction de comptes enregistrée n'a pas pu être lue : tous les comptes sont bloqués jusqu'à ce que vous enregistriez un nouveau choix.",
+    "message": "La restriction de comptes enregistrée n'a pas pu être lue : tous les comptes sont bloqués jusqu'à ce que vous choisissiez Tous les comptes ou cochiez les comptes à autoriser.",
     "description": "Error: the stored account choice is damaged."
   },
   "errorLoadingAccounts": {
@@ -468,14 +508,6 @@
         "example": "timeout"
       }
     }
-  },
-  "selectOneAccount": {
-    "message": "Sélectionnez au moins un compte.",
-    "description": "Error: Save was pressed with no account checked."
-  },
-  "confirmOpenAll": {
-    "message": "La restriction enregistrée était illisible et tout est bloqué. Cliquez de nouveau sur Enregistrer pour autoriser tous les comptes.",
-    "description": "Asks for a second click before every account is opened. \"Save\" is the button of the section."
   },
   "toolHeading": {
     "message": "Accès aux outils",
@@ -514,11 +546,11 @@
     }
   },
   "toolLockedNote": {
-    "message": "Les outils qui trouvent les comptes et les dossiers (listAccounts, listFolders, getAccountAccess) ne peuvent pas être désactivés. Dès que des outils sont désactivés, un outil ajouté par une mise à jour ultérieure est lui aussi désactivé, jusqu'à ce que vous l'activiez et enregistriez.",
+    "message": "Les outils qui trouvent les comptes et les dossiers (listAccounts, listFolders, getAccountAccess) ne peuvent pas être désactivés. Dès que des outils sont désactivés, un outil ajouté par une mise à jour ultérieure est lui aussi désactivé, jusqu'à ce que vous l'activiez.",
     "description": "Note above the tool list. Keep the tool names as is."
   },
   "newToolsNote": {
-    "message": "Ajoutés par une mise à jour et désactivés parce que vous avez restreint les outils : $TOOLS$. Cochez-les et enregistrez pour les activer.",
+    "message": "Ajoutés par une mise à jour et désactivés parce que vous avez restreint les outils : $TOOLS$. Cochez-en un pour l'activer.",
     "description": "Tools a recent update added, off until the user turns them on. $TOOLS$: their names.",
     "placeholders": {
       "tools": {
@@ -582,10 +614,6 @@
         "example": "20"
       }
     }
-  },
-  "fixLimit": {
-    "message": "Corrigez la limite de getMessages en surbrillance avant d'enregistrer.",
-    "description": "Error: Save was pressed with an invalid limit. Keep getMessages as is."
   },
   "safetyHeading": {
     "message": "Sécurité d'envoi",
@@ -820,10 +848,6 @@
   "stableTokenCleared": {
     "message": "Jeton stable effacé.",
     "description": "Status after the stable token was removed."
-  },
-  "chooseOneOption": {
-    "message": "Choisissez l'une des deux options.",
-    "description": "Error: Save was pressed with no choice selected."
   },
   "toolGroup_system": {
     "message": "Comptes et accès",

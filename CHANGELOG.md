@@ -6,14 +6,32 @@ this repository.
 
 ## [Unreleased]
 
+### Added
+
+- Options and README: why Thunderbird says the add-on gets "full, unrestricted access to Thunderbird and your
+  computer", and what the add-on does with it. Thunderbird shows that line for every add-on that uses an Experiment
+  and an add-on cannot change it; a user who reads it at install had nothing to weigh it against. The README's
+  Security section starts with it, the install step links it, and the options page has it folded under the server
+  status.
+
 ### Changed
 
 - Options, section Send Safety: the two review boxes start with what they cover, "Mail:" and "Calendar:", and their
   help says on two lines what happens when the box is checked and when it is unchecked. The calendar box also says
   that changing or deleting an existing event or task never opens a dialog. A user who wanted events added at once
   could not tell which box to clear, nor what "turned off" meant in a sentence that also named the default.
-- Options: after a box or a choice changes, the status beside its Save button reads "Not saved yet: press Save."
-  until it is saved. Nothing said that a cleared box does nothing before Save.
+- Options: each change is saved as soon as it is made, and a mark beside the control says "Saved." or why it was not.
+  The six Save buttons are gone. A cleared box did nothing until the Save button of its section was pressed, and
+  nothing said so; Thunderbird's own settings, and Firefox's, apply at once, and several Save buttons on one page
+  leave a user guessing which one saves what. A write that fails reloads the setting, so the page never shows a
+  choice that is not in force.
+- Options, section Account Access: two choices, "All accounts" (including the ones added later) and "Only the
+  accounts checked below". The page said that with no box checked the assistant saw every account, while the
+  page refused to save an empty choice. Saving at once from a list where "every box checked" meant "all accounts"
+  would also have let a click open accounts added later; the choice is now explicit, and the last checked account
+  cannot be cleared.
+- The options page's tagline says that what the assistant reads goes to the AI app you connect; it said "Everything
+  stays on this computer".
 
 ### Removed
 

@@ -12,8 +12,12 @@
     "description": "Title of the options tab. Keep the add-on name \"Commonpost MCP for Thunderbird\" as is."
   },
   "pageTagline": {
-    "message": "Lets AI assistants (MCP) work with your mail, calendar, contacts and filters. Everything stays on this computer.",
+    "message": "Lets AI assistants (MCP) work with your mail, calendar, contacts and filters. The add-on runs on this computer; what the assistant reads goes to the AI app you connect.",
     "description": "Line under the add-on name at the top of the options page."
+  },
+  "autoSaveNote": {
+    "message": "Each change is saved as soon as you make it.",
+    "description": "Under the page title: there is no Save button."
   },
   "navAriaLabel": {
     "message": "Sections",
@@ -50,6 +54,22 @@
   "statusHeading": {
     "message": "Server Status",
     "description": "Heading of the server status section."
+  },
+  "fullAccessSummary": {
+    "message": "Why Thunderbird says \"full, unrestricted access\"",
+    "description": "Folded note in the status section, about the line Thunderbird shows in the add-on's Permissions tab. Quote Thunderbird's own wording in your language."
+  },
+  "fullAccessWhy": {
+    "message": "Thunderbird shows that line for every add-on built on an Experiment, whatever the add-on does: an add-on cannot change or narrow it. This one needs an Experiment for its local server, message filters and the calendar.",
+    "description": "Body of the note, first paragraph."
+  },
+  "fullAccessWhat": {
+    "message": "What it does with it: by default it listens on this computer only, behind a token; it writes files only in its own temporary folder; its code makes no Internet request. What the assistant reads goes to the AI app you connect, and nowhere else.",
+    "description": "Body of the note, second paragraph."
+  },
+  "fullAccessLink": {
+    "message": "Details in the README",
+    "description": "Link to the README section."
   },
   "statusChecking": {
     "message": "Checking...",
@@ -396,16 +416,40 @@
     "description": "Heading of the account section."
   },
   "accountIntro": {
-    "message": "Choose the accounts the assistant can see. With none checked, it sees all of them.",
+    "message": "Choose the accounts the assistant can see.",
     "description": "Introduction of the account section."
+  },
+  "accountModeAllTitle": {
+    "message": "All accounts",
+    "description": "Radio button: the assistant sees every account."
+  },
+  "accountModeAllDefault": {
+    "message": "(the default)",
+    "description": "After the radio button title."
+  },
+  "accountModeAllHelp": {
+    "message": "Accounts you add to Thunderbird later are included.",
+    "description": "Help of the radio button."
+  },
+  "accountModeOnlyTitle": {
+    "message": "Only the accounts checked below",
+    "description": "Radio button: the assistant sees the checked accounts only."
+  },
+  "accountModeOnlyHelp": {
+    "message": "An account you add to Thunderbird later stays hidden until you check it here.",
+    "description": "Help of the radio button."
+  },
+  "checkAccountsToAllow": {
+    "message": "Check the accounts the assistant may use.",
+    "description": "Shown after choosing 'Only the accounts checked below' when none is checked yet."
+  },
+  "keepOneAccount": {
+    "message": "Keep at least one account checked, or choose All accounts.",
+    "description": "Shown beside the last checked account when it is cleared; the box is checked again."
   },
   "loading": {
     "message": "Loading...",
     "description": "Placeholder of a list while it loads."
-  },
-  "save": {
-    "message": "Save",
-    "description": "Button that saves a section."
   },
   "saving": {
     "message": "Saving...",
@@ -414,10 +458,6 @@
   "saved": {
     "message": "Saved.",
     "description": "Status after a setting was saved."
-  },
-  "unsaved": {
-    "message": "Not saved yet: press Save.",
-    "description": "Shown next to a Save button after a setting above it changed, until it is saved."
   },
   "errorWithMessage": {
     "message": "Error: $MESSAGE$",
@@ -456,7 +496,7 @@
     "description": "Account type of a feed account, shown in small capitals."
   },
   "accountRestrictionUnreadable": {
-    "message": "The saved account restriction could not be read: every account is blocked until you save a new choice.",
+    "message": "The saved account restriction could not be read: every account is blocked until you choose All accounts or check the accounts to allow.",
     "description": "Error: the stored account choice is damaged."
   },
   "errorLoadingAccounts": {
@@ -468,14 +508,6 @@
         "example": "timeout"
       }
     }
-  },
-  "selectOneAccount": {
-    "message": "Select at least one account.",
-    "description": "Error: Save was pressed with no account checked."
-  },
-  "confirmOpenAll": {
-    "message": "The saved restriction was unreadable and everything is blocked. Click Save again to allow every account.",
-    "description": "Asks for a second click before every account is opened. \"Save\" is the button of the section."
   },
   "toolHeading": {
     "message": "Tool Access",
@@ -514,11 +546,11 @@
     }
   },
   "toolLockedNote": {
-    "message": "The tools that find accounts and folders (listAccounts, listFolders, getAccountAccess) cannot be turned off. Once some tools are off, a tool added by a later update starts off too, until you turn it on and save.",
+    "message": "The tools that find accounts and folders (listAccounts, listFolders, getAccountAccess) cannot be turned off. Once some tools are off, a tool added by a later update starts off too, until you turn it on.",
     "description": "Note above the tool list. Keep the tool names as is."
   },
   "newToolsNote": {
-    "message": "Added by an update and disabled because you restricted the tools: $TOOLS$. Check and save to enable.",
+    "message": "Added by an update and off because you restricted the tools: $TOOLS$. Check one to turn it on.",
     "description": "Tools a recent update added, off until the user turns them on. $TOOLS$: their names.",
     "placeholders": {
       "tools": {
@@ -582,10 +614,6 @@
         "example": "20"
       }
     }
-  },
-  "fixLimit": {
-    "message": "Fix the highlighted getMessages limit before saving.",
-    "description": "Error: Save was pressed with an invalid limit. Keep getMessages as is."
   },
   "safetyHeading": {
     "message": "Send Safety",
@@ -820,10 +848,6 @@
   "stableTokenCleared": {
     "message": "Stable token cleared.",
     "description": "Status after the stable token was removed."
-  },
-  "chooseOneOption": {
-    "message": "Choose one of the two options.",
-    "description": "Error: Save was pressed with no choice selected."
   },
   "toolGroup_system": {
     "message": "Accounts and access",
