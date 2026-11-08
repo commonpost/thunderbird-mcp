@@ -1608,6 +1608,8 @@ describe("options page: bridge status", () => {
   const lines = (li) => li.children.map((line) => line.textContent);
   const seenText = (iso) => "Last seen: " + new Date(iso).toLocaleString();
   const links = (li) => descendants(li).filter((el) => el.tagName === "A");
+  const steps = (li) => li.children.find((el) => el.tagName === "OL").children.map((step) => step.textContent);
+  const DL = "https://github.com/commonpost/thunderbird-mcp/releases/";
 
   it("says that no bridge connected, and recommends the minimum version", async () => {
     const page = await openPage();
@@ -1665,8 +1667,28 @@ describe("options page: bridge status", () => {
     const page = await openPage({ getBridgeStatus: status([{ ...BRIDGE, state: "newer-available" }]) });
     const li = page.$("bridgeList").children[0];
     assert.equal(lines(li)[4], "Status: Newer version available (0.18.0): this bridge works, the update is optional.");
-    assert.match(lines(li)[5], /^Download mcp-bridge\.cjs from the release page/);
-    assert.equal(lines(li)[6], "Release page: " + RELEASE_LATEST);
+    assert.equal(lines(li)[5], "To update this bridge:");
+    const [download, replace, restart] = steps(li);
+    assert.equal(download, "Download mcp-bridge.cjs.");
+    assert.match(replace, /^Put the downloaded file in place of the mcp-bridge\.cjs that your MCP client starts: same name, same folder\./);
+    assert.match(replace, /Claude Code: claude mcp list names the server, claude mcp get <name> shows the path\./);
+    assert.match(replace, /Other clients: the path is in the arguments of the server/);
+    assert.equal(restart, "Restart the MCP client, or reconnect the server (in Claude Code: /mcp).");
+    assert.equal(lines(li)[7],
+      "Claude Code with the Commonpost plugin: nothing to download. Run /plugin marketplace update commonpost, then /reload-plugins.");
+    const codes = descendants(li).filter((el) => el.tagName === "CODE").map((el) => el.textContent);
+    assert.deepEqual(codes, ["mcp-bridge.cjs", "claude mcp list", "claude mcp get <name>", "/mcp",
+      "/plugin marketplace update commonpost", "/reload-plugins"]);
+    assert.equal(lines(li)[8], "Release notes: " + RELEASE_LATEST);
+    assert.deepEqual(links(li).map((a) => [a.textContent, a.href]), [
+      ["mcp-bridge.cjs", DL + "latest/download/mcp-bridge.cjs"],
+      [RELEASE_LATEST, RELEASE_LATEST],
+    ]);
+  });
+
+  it("links the file of the add-on's own release, not the latest one, when the release is named", async () => {
+    const page = await openPage({ getBridgeStatus: status([{ ...BRIDGE, state: "update-recommended", releaseUrl: RELEASE_TAG }]) });
+    assert.equal(links(page.$("bridgeList").children[0])[0].href, DL + "download/v0.18.0/mcp-bridge.cjs");
   });
 
   it("falls back to the plain label when the published version is not usable", async () => {
@@ -1686,8 +1708,22 @@ describe("options page: bridge status", () => {
     const li = page.$("bridgeList").children[0];
     assert.equal(lines(li)[1], "Installed as: .mcpb bundle (Claude Desktop)");
     assert.equal(lines(li)[4], "Status: Update recommended.");
-    assert.match(lines(li)[5], /^Download the \.mcpb bundle from the release page and install it in Claude Desktop again/);
-    assert.equal(lines(li)[6], "Release page: " + RELEASE_TAG);
+    const [download, open] = steps(li);
+    assert.equal(download, "Download commonpost-mcp-v0.18.0.mcpb.");
+    assert.match(open, /^Open the downloaded file with Claude Desktop: it replaces the installed bundle/);
+    assert.equal(steps(li).length, 2);
+    assert.ok(!lines(li).some((line) => line.includes("plugin")));
+    assert.deepEqual(links(li).map((a) => a.href), [DL + "download/v0.18.0/commonpost-mcp-v0.18.0.mcpb", RELEASE_TAG]);
+  });
+
+  it("names no .mcpb file when the published bridge version is not usable, and still links the release", async () => {
+    const page = await openPage({
+      getBridgeStatus: status([{ ...BRIDGE, packaging: "mcpb", state: "update-recommended", releaseUrl: RELEASE_TAG }],
+        { currentBridgeVersion: "x" }),
+    });
+    const li = page.$("bridgeList").children[0];
+    assert.match(steps(li)[0], /^Download the \.mcpb bundle from the release of this add-on/);
+    assert.deepEqual(links(li).map((a) => a.href), [RELEASE_TAG]);
   });
 
   it("reports a bridge without a readable version", async () => {
@@ -1700,9 +1736,9 @@ describe("options page: bridge status", () => {
       "Installed as: unknown",
       seenText(SEEN),
       "Status: Update recommended: this bridge does not report a readable version.",
-      lines(li)[4],
+      "To update this bridge:",
     ]);
-    assert.match(lines(li)[4], /^Download mcp-bridge\.cjs/);
+    assert.equal(steps(li)[0], "Download mcp-bridge.cjs.");
   });
 
   it("calls a version that could not be parsed unreadable", async () => {
@@ -1719,7 +1755,7 @@ describe("options page: bridge status", () => {
       lines(li)[4],
       "Status: Refused: older than the security floor of this add-on (no tool works with it).",
     );
-    assert.equal(links(li).length, 1);
+    assert.equal(links(li).length, 2);
     assert.match(page.$("bridgeThresholds").textContent, /It refuses bridges older than 0\.12\.0\./);
   });
 
@@ -1774,20 +1810,23 @@ describe("options page: bridge status", () => {
       });
       const li = page.$("bridgeList").children[0];
       assert.equal(links(li).length, 0);
-      assert.ok(!lines(li).some((line) => line.startsWith("Release page")));
+      assert.ok(!lines(li).some((line) => line.startsWith("Release")));
+      assert.match(steps(li)[0], /^Download mcp-bridge\.cjs from the release of this add-on, on the Releases page/);
     });
   }
 
-  it("opens the release page in the default browser instead of following the link", async () => {
+  it("opens the file and the release page in the default browser instead of following the links", async () => {
     const page = await openPage({
       getBridgeStatus: status([{ ...BRIDGE, state: "update-recommended", releaseUrl: RELEASE_TAG }]),
     });
-    const [link] = links(page.$("bridgeList").children[0]);
-    assert.equal(link.href, RELEASE_TAG);
-    assert.equal(link.textContent, RELEASE_TAG);
-    const event = await page.fire(link, "click");
-    assert.equal(event.defaultPrevented, true);
-    assert.deepEqual(page.opened, [RELEASE_TAG]);
+    const [file, release] = links(page.$("bridgeList").children[0]);
+    assert.equal(release.href, RELEASE_TAG);
+    assert.equal(release.textContent, RELEASE_TAG);
+    for (const link of [file, release]) {
+      const event = await page.fire(link, "click");
+      assert.equal(event.defaultPrevented, true);
+    }
+    assert.deepEqual(page.opened, [DL + "download/v0.18.0/mcp-bridge.cjs", RELEASE_TAG]);
     assert.deepEqual(page.consoleErrors, []);
   });
 
