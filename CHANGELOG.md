@@ -4,6 +4,17 @@ All notable changes since 0.8.0, the first release of this project, are listed h
 before is the git history of [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) (MIT), kept in
 this repository.
 
+## [Unreleased]
+
+### Changed
+
+- Options, section Send Safety: the two review boxes start with what they cover, "Mail:" and "Calendar:", and their
+  help says on two lines what happens when the box is checked and when it is unchecked. The calendar box also says
+  that changing or deleting an existing event or task never opens a dialog. A user who wanted events added at once
+  could not tell which box to clear, nor what "turned off" meant in a sentence that also named the default.
+- Options: after a box or a choice changes, the status beside its Save button reads "Not saved yet: press Save."
+  until it is saved. Nothing said that a cleared box does nothing before Save.
+
 ## [0.21.0] - 2026-11-08
 
 - New: the options page opens in its own tab (the wrench button of the add-on). It speaks in plain words, folds the

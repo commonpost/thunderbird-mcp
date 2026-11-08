@@ -254,6 +254,10 @@
     .save-status.error {
       color: var(--danger);
     }
+    .save-status.pending {
+      color: var(--warning);
+      font-weight: 600;
+    }
 
     /* Page layout: a header, a section menu on wide windows, one readable column. */
     .page-header {
@@ -454,20 +458,23 @@
 
 <div class="section" id="safetySection">
   <h2 data-i18n="safetyHeading">Send Safety</h2>
-  <p class="mode-note" data-i18n="safetyIntro">What the assistant may do on its own, and what waits for you.</p>
+  <p class="mode-note" data-i18n="safetyIntro">What the assistant may do on its own, and what waits for you: mail, calendar, filter rules.</p>
   <ul class="account-list setting-list">
     <li>
       <label>
         <input type="checkbox" id="blockSkipReview">
-        <span><strong data-i18n="reviewMailTitle">Review every message before it is sent</strong> <span data-i18n="reviewMailDefault">(recommended, on by default)</span>
-          <span class="setting-help" data-i18n="reviewMailHelp">The assistant fills in a compose window; you read it and press Send. Turned off, it can send mail by itself.</span></span>
+        <span><strong data-i18n="reviewMailTitle">Mail: review every message before it is sent</strong> <span data-i18n="reviewMailDefault">(recommended, on by default)</span>
+          <span class="setting-help" data-i18n="reviewMailHelpOn">Checked: the assistant fills in a compose window; you read it and press Send.</span>
+          <span class="setting-help" data-i18n="reviewMailHelpOff">Unchecked: it can send mail by itself.</span></span>
       </label>
     </li>
     <li>
       <label>
         <input type="checkbox" id="blockCalendarSkipReview">
-        <span><strong data-i18n="reviewCalendarTitle">Review every event and task it creates</strong>
-          <span class="setting-help" data-i18n="reviewCalendarHelp">Thunderbird's own dialog opens filled in, and the item exists once you save it. Turned off, the default for a new installation, events and tasks are added at once: nobody is invited, but people the calendar is shared with see them.</span></span>
+        <span><strong data-i18n="reviewCalendarTitle">Calendar: review every event and task it creates</strong>
+          <span class="setting-help" data-i18n="reviewCalendarHelpOn">Checked: Thunderbird's own dialog opens filled in, and the item exists once you save it in that dialog.</span>
+          <span class="setting-help" data-i18n="reviewCalendarHelpOff">Unchecked (the default for a new installation): events and tasks are added to the calendar at once. Nobody is invited, but people the calendar is shared with see them.</span>
+          <span class="setting-help" data-i18n="reviewCalendarHelpChanges">Changing or deleting an existing event or task never opens a dialog, checked or not.</span></span>
       </label>
     </li>
   </ul>

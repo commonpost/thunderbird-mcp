@@ -415,6 +415,10 @@
     "message": "Saved.",
     "description": "Status after a setting was saved."
   },
+  "unsaved": {
+    "message": "Not saved yet: press Save.",
+    "description": "Shown next to a Save button after a setting above it changed, until it is saved."
+  },
   "errorWithMessage": {
     "message": "Error: $MESSAGE$",
     "description": "An error; $MESSAGE$ is its text (English, from Thunderbird or the add-on).",
@@ -588,28 +592,40 @@
     "description": "Heading of the send safety section."
   },
   "safetyIntro": {
-    "message": "What the assistant may do on its own, and what waits for you.",
+    "message": "What the assistant may do on its own, and what waits for you: mail, calendar, filter rules.",
     "description": "Introduction of the send safety section."
   },
   "reviewMailTitle": {
-    "message": "Review every message before it is sent",
-    "description": "Checkbox: mail is sent only from a compose window the user checks."
+    "message": "Mail: review every message before it is sent",
+    "description": "Checkbox: mail is sent only from a compose window the user checks. \"Mail:\" tells it apart from the calendar checkbox below."
   },
   "reviewMailDefault": {
     "message": "(recommended, on by default)",
     "description": "After the checkbox title."
   },
-  "reviewMailHelp": {
-    "message": "The assistant fills in a compose window; you read it and press Send. Turned off, it can send mail by itself.",
-    "description": "Help of the checkbox. Send is the button of Thunderbird's compose window."
+  "reviewMailHelpOn": {
+    "message": "Checked: the assistant fills in a compose window; you read it and press Send.",
+    "description": "Help of the checkbox, checked state. Send is the button of Thunderbird's compose window."
+  },
+  "reviewMailHelpOff": {
+    "message": "Unchecked: it can send mail by itself.",
+    "description": "Help of the checkbox, unchecked state."
   },
   "reviewCalendarTitle": {
-    "message": "Review every event and task it creates",
+    "message": "Calendar: review every event and task it creates",
     "description": "Checkbox: events and tasks are created only from Thunderbird's dialog."
   },
-  "reviewCalendarHelp": {
-    "message": "Thunderbird's own dialog opens filled in, and the item exists once you save it. Turned off, the default for a new installation, events and tasks are added at once: nobody is invited, but people the calendar is shared with see them.",
-    "description": "Help of the checkbox."
+  "reviewCalendarHelpOn": {
+    "message": "Checked: Thunderbird's own dialog opens filled in, and the item exists once you save it in that dialog.",
+    "description": "Help of the checkbox, checked state."
+  },
+  "reviewCalendarHelpOff": {
+    "message": "Unchecked (the default for a new installation): events and tasks are added to the calendar at once. Nobody is invited, but people the calendar is shared with see them.",
+    "description": "Help of the checkbox, unchecked state."
+  },
+  "reviewCalendarHelpChanges": {
+    "message": "Changing or deleting an existing event or task never opens a dialog, checked or not.",
+    "description": "Help of the checkbox: what it does not cover."
   },
   "technicalDetails": {
     "message": "Technical details",

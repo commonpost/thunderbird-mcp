@@ -415,6 +415,10 @@
     "message": "Enregistré.",
     "description": "Status after a setting was saved."
   },
+  "unsaved": {
+    "message": "Pas encore enregistré : cliquez sur Enregistrer.",
+    "description": "Shown next to a Save button after a setting above it changed, until it is saved."
+  },
   "errorWithMessage": {
     "message": "Erreur : $MESSAGE$",
     "description": "An error; $MESSAGE$ is its text (English, from Thunderbird or the add-on).",
@@ -588,28 +592,40 @@
     "description": "Heading of the send safety section."
   },
   "safetyIntro": {
-    "message": "Ce que l'assistant peut faire seul, et ce qui attend votre accord.",
+    "message": "Ce que l'assistant peut faire seul, et ce qui attend votre accord : courriel, agenda, règles de filtre.",
     "description": "Introduction of the send safety section."
   },
   "reviewMailTitle": {
-    "message": "Relire chaque message avant son envoi",
-    "description": "Checkbox: mail is sent only from a compose window the user checks."
+    "message": "Courriel : relire chaque message avant son envoi",
+    "description": "Checkbox: mail is sent only from a compose window the user checks. \"Mail:\" tells it apart from the calendar checkbox below."
   },
   "reviewMailDefault": {
     "message": "(recommandé, activé par défaut)",
     "description": "After the checkbox title."
   },
-  "reviewMailHelp": {
-    "message": "L'assistant remplit une fenêtre de rédaction; vous la relisez et cliquez sur Envoyer. Si ce réglage est désactivé, il peut envoyer du courrier par lui-même.",
-    "description": "Help of the checkbox. Send is the button of Thunderbird's compose window."
+  "reviewMailHelpOn": {
+    "message": "Cochée : l'assistant remplit une fenêtre de rédaction ; vous la relisez et cliquez sur Envoyer.",
+    "description": "Help of the checkbox, checked state. Send is the button of Thunderbird's compose window."
+  },
+  "reviewMailHelpOff": {
+    "message": "Décochée : il peut envoyer du courrier par lui-même.",
+    "description": "Help of the checkbox, unchecked state."
   },
   "reviewCalendarTitle": {
-    "message": "Relire chaque événement et chaque tâche qu'il crée",
+    "message": "Agenda : relire chaque événement et chaque tâche qu'il crée",
     "description": "Checkbox: events and tasks are created only from Thunderbird's dialog."
   },
-  "reviewCalendarHelp": {
-    "message": "La boîte de dialogue de Thunderbird s'ouvre déjà remplie, et l'élément n'existe qu'une fois que vous l'enregistrez. Si ce réglage est désactivé, ce qui est le cas par défaut dans une nouvelle installation, les événements et les tâches sont ajoutés aussitôt : personne n'est invité, mais les personnes avec qui l'agenda est partagé les voient.",
-    "description": "Help of the checkbox."
+  "reviewCalendarHelpOn": {
+    "message": "Cochée : la boîte de dialogue de Thunderbird s'ouvre déjà remplie, et l'élément n'existe qu'une fois enregistré dans cette boîte.",
+    "description": "Help of the checkbox, checked state."
+  },
+  "reviewCalendarHelpOff": {
+    "message": "Décochée (le choix par défaut d'une nouvelle installation) : les événements et les tâches sont ajoutés à l'agenda aussitôt. Personne n'est invité, mais les personnes avec qui l'agenda est partagé les voient.",
+    "description": "Help of the checkbox, unchecked state."
+  },
+  "reviewCalendarHelpChanges": {
+    "message": "Modifier ou supprimer un événement ou une tâche existante n'ouvre jamais de boîte de dialogue, que la case soit cochée ou non.",
+    "description": "Help of the checkbox: what it does not cover."
   },
   "technicalDetails": {
     "message": "Détails techniques",

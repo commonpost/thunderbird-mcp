@@ -1413,6 +1413,25 @@ describe("options page: send safety (skipReview)", () => {
     assert.equal(page.$("saveSkipReviewBtn").disabled, false);
   });
 
+  it("says a changed box is not saved yet, until Save is pressed", async () => {
+    const page = await openPage();
+    await page.setChecked(page.$("blockCalendarSkipReview"), false);
+    assert.equal(page.$("saveSkipReviewStatus").textContent, "Not saved yet: press Save.");
+    assert.equal(page.$("saveSkipReviewStatus").className, "save-status pending");
+    assert.deepEqual(page.callsTo("setBlockCalendarSkipReview"), [], "nothing is written before Save");
+    await page.click("saveSkipReviewBtn");
+    assert.equal(page.$("saveSkipReviewStatus").textContent, "Saved.");
+    assert.equal(page.$("saveSkipReviewStatus").className, "save-status");
+  });
+
+  it("marks only the Save button that covers the changed setting", async () => {
+    const page = await openPage();
+    await page.setChecked(page.$("listenAll"), true);
+    assert.equal(page.$("saveListenAllStatus").className, "save-status pending");
+    assert.equal(page.$("saveSkipReviewStatus").textContent, "");
+    assert.equal(page.$("saveEncryptedContentStatus").textContent, "");
+  });
+
   it("saves the block for events and tasks before the one for mail", async () => {
     // Not yet set, it follows the block for mail: written second, it could be lifted by the mail block alone.
     const order = [];
