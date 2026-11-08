@@ -127,6 +127,7 @@ describe("getServerInfo", () => {
       buildDate: "2026-11-03T10:00:00Z",
       startError: null,
       startErrorAt: null,
+      listenProblem: null,
       originalExtensionActive: false,
     });
   });
@@ -218,7 +219,7 @@ describe("getServerInfo", () => {
   });
 });
 
-function makeListenAllWorld({ server = null, connectionFileExists = true, dirsvcFails = false, clearFails = false } = {}) {
+function makeListenAllWorld({ server = null, connectionFileExists = true, dirsvcFails = false, clearFails = false, allow = null } = {}) {
   const events = [];
   const prefs = new Map();
   const sandbox = {
@@ -254,11 +255,14 @@ function makeListenAllWorld({ server = null, connectionFileExists = true, dirsvc
   vm.runInContext([
     constSource("PREF_LISTEN_ALL"),
     topLevelFunctionSource("stopConnectionInfoRefreshTimer"),
+    // The list of addresses allowed to connect, as readListenAllowFrom returns it (see listen-allow-from.test.cjs).
+    "function readListenAllowFrom() { return this.__allow; }",
     `this.api = {
   start: async function() { events.push(["start"]); return { success: true, port: 8781 }; },
 ${methodSource("setListenAll")}};`,
   ].join("\n"), sandbox);
   sandbox.__cpMcpServer = server;
+  sandbox.__allow = allow || { entries: [{ base: 0xac100000, mask: 0xfff00000, text: "172.16.0.0/12" }], errors: [], text: "172.16.0.0/12" };
   return { api: sandbox.api, sandbox, events, prefs };
 }
 
@@ -270,6 +274,18 @@ describe("setListenAll", () => {
     }
     assert.deepEqual(world.events, []);
     assert.ok(world.sandbox.__cpMcpServer, "the running server is left alone");
+  });
+
+  it("refuses to turn it on without a valid list of addresses allowed to connect, and changes nothing", async () => {
+    for (const allow of [
+      { entries: [], errors: [], text: "" },
+      { entries: [{ base: 0xac100000, mask: 0xfff00000, text: "172.16.0.0/12" }], errors: ["::1: IPv6 is not supported"], text: "172.16.0.0/12" },
+    ]) {
+      const world = makeListenAllWorld({ allow, server: { stop() { throw new Error("must not stop"); } } });
+      assert.deepEqual(plain(await world.api.setListenAll(true)), { error: "Set the addresses allowed to connect first (Options > Advanced > Network)." });
+      assert.deepEqual(world.events, []);
+      assert.ok(world.sandbox.__cpMcpServer, "the running server is left alone");
+    }
   });
 
   it("turning it on stores the preference, stops the running server, clears the connection file and starts again", async () => {

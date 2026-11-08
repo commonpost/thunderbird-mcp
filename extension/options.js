@@ -204,6 +204,13 @@ async function loadServerInfo() {
       connFile.textContent = "--";
     }
     originalExtensionRow.hidden = !info.originalExtensionActive;
+    // Listening on all interfaces is on but its list of addresses is not usable: the server fell back to this
+    // computer only, and the Network section says why.
+    if (info.listenProblem) {
+      const listenStatus = document.getElementById("saveListenAllStatus");
+      listenStatus.textContent = info.listenProblem;
+      listenStatus.className = "save-status error";
+    }
     if (!info.running) {
       // Offered whenever the server is not bound (failed or never started).
       startErrorText.textContent = info.startError
@@ -809,16 +816,38 @@ loadToolAccess().catch(e => console.error("commonpost-mcp options:", "loadToolAc
 loadSkipReviewPref().catch(e => console.error("commonpost-mcp options:", "loadSkipReviewPref failed:", e));
 
 const listenAllCheckbox = document.getElementById("listenAll");
-const listenAllWarning = document.getElementById("listenAllWarning");
+const listenAllPanel = document.getElementById("listenAllPanel");
+const listenAllowFromInput = document.getElementById("listenAllowFrom");
+const listenAllConfirmRow = document.getElementById("listenAllConfirmRow");
+const listenAllConfirmBtn = document.getElementById("listenAllConfirmBtn");
+const listenAllCancelBtn = document.getElementById("listenAllCancelBtn");
 const saveListenAllStatus = document.getElementById("saveListenAllStatus");
+// Whether listening on all interfaces is saved as on. Checking the box only opens the panel: the list of
+// addresses allowed to connect and a "Turn on" button. Clearing it saves at once.
+let listenAllSaved = false;
+
+function showListenAllPanel(open, pending) {
+  listenAllPanel.hidden = !open;
+  listenAllConfirmRow.hidden = !pending;
+}
 
 async function loadListenAllPref() {
   try {
-    const { listenAll } = await browser.commonpostMcp.getListenAll();
-    listenAllCheckbox.checked = !!listenAll;
-    listenAllWarning.style.display = listenAllCheckbox.checked ? "block" : "none";
+    const [{ listenAll }, { allowFrom, errors }] = await Promise.all([
+      browser.commonpostMcp.getListenAll(),
+      browser.commonpostMcp.getListenAllowFrom(),
+    ]);
+    listenAllSaved = !!listenAll;
+    listenAllCheckbox.checked = listenAllSaved;
+    listenAllowFromInput.value = allowFrom || "";
+    showListenAllPanel(listenAllSaved, false);
     listenAllCheckbox.disabled = false;
-    saveListenAllStatus.textContent = "";
+    // A stored list that is not valid: the server listens on this computer only (loadServerInfo says so too).
+    const problem = listenAllSaved && errors && errors.length ? errors.join("; ") : "";
+    if (problem || !saveListenAllStatus.textContent) {
+      saveListenAllStatus.textContent = problem;
+      saveListenAllStatus.className = problem ? "save-status error" : "save-status";
+    }
   } catch (e) {
     saveListenAllStatus.textContent = t("errorLoadingSetting", [e.message], `Error loading setting: ${e.message}`);
     saveListenAllStatus.className = "save-status error";
@@ -828,16 +857,77 @@ async function loadListenAllPref() {
 const queueListenAllSave = serialQueue();
 
 listenAllCheckbox.addEventListener("change", () => {
-  listenAllWarning.style.display = listenAllCheckbox.checked ? "block" : "none";
-  queueListenAllSave(async () => {
+  if (listenAllCheckbox.checked) {
+    if (listenAllSaved) return;
+    showListenAllPanel(true, true);
+    listenAllowFromInput.focus();
+    return;
+  }
+  showListenAllPanel(false, false);
+  if (!listenAllSaved) return;
+  return queueListenAllSave(async () => {
     try {
-      const result = await browser.commonpostMcp.setListenAll(listenAllCheckbox.checked);
+      const result = await browser.commonpostMcp.setListenAll(false);
       if (result.error) throw new Error(result.error);
+      listenAllSaved = false;
+      saveListenAllStatus.textContent = "";
+      saveListenAllStatus.className = "save-status";
       markSaved(listenAllCheckbox);
       await loadServerInfo();
     } catch (e) {
       await loadListenAllPref();
       markControl(listenAllCheckbox, errorText(e), true);
+    }
+  });
+});
+
+// Saves the list, then turns listening on all interfaces on; the server restarts with the list.
+listenAllConfirmBtn.addEventListener("click", () => queueListenAllSave(async () => {
+  listenAllConfirmBtn.disabled = true;
+  try {
+    let result = await browser.commonpostMcp.setListenAllowFrom(listenAllowFromInput.value);
+    if (result.error) {
+      markControl(listenAllowFromInput, result.error, true);
+      return;
+    }
+    listenAllowFromInput.value = result.allowFrom || listenAllowFromInput.value;
+    result = await browser.commonpostMcp.setListenAll(true);
+    if (result.error) throw new Error(result.error);
+    listenAllSaved = true;
+    showListenAllPanel(true, false);
+    saveListenAllStatus.textContent = "";
+    saveListenAllStatus.className = "save-status";
+    markSaved(listenAllCheckbox);
+    await loadServerInfo();
+  } catch (e) {
+    await loadListenAllPref();
+    markControl(listenAllCheckbox, errorText(e), true);
+  } finally {
+    listenAllConfirmBtn.disabled = false;
+  }
+}));
+
+listenAllCancelBtn.addEventListener("click", () => {
+  listenAllCheckbox.checked = false;
+  showListenAllPanel(false, false);
+});
+
+// While on, a changed list is saved at once and the server restarts with it; a list that is refused is not
+// written, and the field says why.
+listenAllowFromInput.addEventListener("change", () => {
+  if (!listenAllSaved) return;
+  return queueListenAllSave(async () => {
+    try {
+      const result = await browser.commonpostMcp.setListenAllowFrom(listenAllowFromInput.value);
+      if (result.error) {
+        markControl(listenAllowFromInput, result.error, true);
+        return;
+      }
+      listenAllowFromInput.value = result.allowFrom || listenAllowFromInput.value;
+      markSaved(listenAllowFromInput);
+      await loadServerInfo();
+    } catch (e) {
+      markControl(listenAllowFromInput, errorText(e), true);
     }
   });
 });
@@ -1075,11 +1165,11 @@ bridgeRefreshBtn.addEventListener("click", () => {
 });
 loadBridgeStatus().catch(e => console.error("commonpost-mcp options:", "loadBridgeStatus failed:", e));
 
-// The README link of the note on Thunderbird's "full, unrestricted access" line opens in the default browser.
-const fullAccessLink = document.getElementById("fullAccessLink");
-if (fullAccessLink) {
-  fullAccessLink.addEventListener("click", (event) => {
+// Links to the README (the note on Thunderbird's "full, unrestricted access" line, the SSH section) open in the
+// default browser.
+for (const link of document.querySelectorAll("[data-external]")) {
+  link.addEventListener("click", (event) => {
     event.preventDefault();
-    browser.windows.openDefaultBrowser(fullAccessLink.href).catch((e) => console.error("commonpost-mcp options:", "openDefaultBrowser failed:", e));
+    browser.windows.openDefaultBrowser(link.href).catch((e) => console.error("commonpost-mcp options:", "openDefaultBrowser failed:", e));
   });
 }

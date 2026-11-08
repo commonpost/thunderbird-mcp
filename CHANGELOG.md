@@ -16,6 +16,18 @@ this repository.
 
 ### Changed
 
+- "Listen on all interfaces" lets in only the IPv4 addresses and networks you list, plus this computer. Before, any
+  device that could reach the computer could connect (the token still being required). Thunderbird gives add-ons no
+  way to bind one interface (`nsIServerSocket.initWithAddress` is closed to them), so the server listens on every
+  IPv4 interface and closes any other connection before reading it. Turning the option on now opens the list and a
+  "Turn on" button instead of applying at once; a list that is empty, not valid, IPv6 or wider than /8 is refused.
+  A profile that had the option on gets `10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10` (private
+  networks and Tailscale), so local setups keep working and public addresses are refused; a stored list that is not
+  valid keeps the server on this computer, and the options page says why. Checked in Thunderbird 156 on an internal
+  Docker network: an address outside the list is cut off unread, one inside it reaches the server.
+- Options, section Network: before the option, SSH (nothing listens, everything encrypted) and WSL2's mirrored
+  networking are offered as safer ways.
+- Options, section Authentication: says what the session token is for, and that the bridge finds it by itself.
 - Options, section Send Safety: the two review boxes start with what they cover, "Mail:" and "Calendar:", and their
   help says on two lines what happens when the box is checked and when it is unchecked. The calendar box also says
   that changing or deleting an existing event or task never opens a dialog. A user who wanted events added at once

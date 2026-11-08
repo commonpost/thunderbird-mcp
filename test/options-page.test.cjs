@@ -136,6 +136,10 @@ class FakeElement {
     return this.querySelectorAll(selector)[0] || null;
   }
 
+  focus() {
+    this.focused = true;
+  }
+
   addEventListener(type, listener) {
     if (!this._listeners.has(type)) this._listeners.set(type, []);
     this._listeners.get(type).push(listener);
@@ -265,6 +269,8 @@ const DEFAULT_RESULTS = {
   setAllowEncryptedContent: { success: true },
   getListenAll: { listenAll: false },
   setListenAll: { success: true },
+  getListenAllowFrom: { allowFrom: "", errors: [] },
+  setListenAllowFrom: { success: true, allowFrom: "172.16.0.0/12" },
   retryStart: { success: true },
   getBridgeStatus: {
     extensionVersion: "0.18.0",
@@ -1735,10 +1741,10 @@ describe("options page: encrypted messages", () => {
 });
 
 describe("options page: listen on all interfaces", () => {
-  it("starts with the warning hidden and the box enabled once loaded", async () => {
+  it("starts with the panel hidden and the box enabled once loaded", async () => {
     const page = await openPage();
     assert.equal(page.$("listenAll").checked, false);
-    assert.equal(page.$("listenAllWarning").style.display, "none");
+    assert.equal(page.$("listenAllPanel").hidden, true);
     assert.equal(page.$("listenAll").disabled, false);
     assert.equal(page.$("saveListenAllStatus").textContent, "");
   });
@@ -1748,18 +1754,113 @@ describe("options page: listen on all interfaces", () => {
     assert.equal(page.$("listenAll").disabled, true);
   });
 
-  it("shows the warning when the setting is already on", async () => {
-    const page = await openPage({ getListenAll: { listenAll: true } });
+  it("shows the panel and the stored list, without the confirmation, when the setting is already on", async () => {
+    const page = await openPage({ getListenAll: { listenAll: true }, getListenAllowFrom: { allowFrom: "172.16.0.0/12", errors: [] } });
     assert.equal(page.$("listenAll").checked, true);
-    assert.equal(page.$("listenAllWarning").style.display, "block");
+    assert.equal(page.$("listenAllPanel").hidden, false);
+    assert.equal(page.$("listenAllConfirmRow").hidden, true);
+    assert.equal(page.$("listenAllowFrom").value, "172.16.0.0/12");
   });
 
-  it("shows and hides the warning as the box is toggled", async () => {
+  it("checking the box only opens the panel with the confirmation: nothing is written", async () => {
     const page = await openPage();
     await page.setChecked(page.$("listenAll"), true);
-    assert.equal(page.$("listenAllWarning").style.display, "block");
+    assert.equal(page.$("listenAllPanel").hidden, false);
+    assert.equal(page.$("listenAllConfirmRow").hidden, false);
+    assert.equal(page.$("listenAllowFrom").focused, true);
+    assert.deepEqual(page.callsTo("setListenAll"), []);
+    assert.deepEqual(page.callsTo("setListenAllowFrom"), []);
+  });
+
+  it("Cancel clears the box and closes the panel, writing nothing", async () => {
+    const page = await openPage();
+    await page.setChecked(page.$("listenAll"), true);
+    await page.click("listenAllCancelBtn");
+    assert.equal(page.$("listenAll").checked, false);
+    assert.equal(page.$("listenAllPanel").hidden, true);
+    assert.deepEqual(page.callsTo("setListenAll"), []);
+  });
+
+  it("Turn on saves the list, then turns it on, then refreshes the server status", async () => {
+    const order = [];
+    const page = await openPage({
+      setListenAllowFrom: (v) => { order.push(["list", v]); return { success: true, allowFrom: "172.16.0.0/12" }; },
+      setListenAll: (v) => { order.push(["on", v]); return { success: true }; },
+    });
+    await page.setChecked(page.$("listenAll"), true);
+    page.$("listenAllowFrom").value = " 172.16.0.0/12 ";
+    await page.click("listenAllConfirmBtn");
+    assert.deepEqual(order, [["list", " 172.16.0.0/12 "], ["on", true]]);
+    assert.equal(page.$("listenAllowFrom").value, "172.16.0.0/12", "the canonical list is shown");
+    assert.equal(page.$("listenAllConfirmRow").hidden, true);
+    assert.equal(markOf(page.$("listenAll")).textContent, "✓ Saved.");
+    assert.equal(page.callsTo("getServerInfo").length, 2);
+  });
+
+  it("a list the host refuses is not turned on: the field says why and the panel stays open", async () => {
+    const page = await openPage({ setListenAllowFrom: { error: "0.0.0.0/0: wider than /8, it would let too much of the Internet in" } });
+    await page.setChecked(page.$("listenAll"), true);
+    page.$("listenAllowFrom").value = "0.0.0.0/0";
+    await page.click("listenAllConfirmBtn");
+    assert.deepEqual(page.callsTo("setListenAll"), []);
+    const mark = markOf(page.$("listenAllowFrom"));
+    assert.equal(mark.textContent, "0.0.0.0/0: wider than /8, it would let too much of the Internet in");
+    assert.equal(mark.className, "saved-mark error");
+    assert.equal(page.$("listenAllConfirmRow").hidden, false);
+    assert.equal(page.$("listenAllConfirmBtn").disabled, false);
+  });
+
+  it("when turning on fails, the stored setting is shown again with the error", async () => {
+    const page = await openPage({ setListenAll: { error: "cannot bind 0.0.0.0" } });
+    await page.setChecked(page.$("listenAll"), true);
+    await page.click("listenAllConfirmBtn");
+    assert.equal(page.callsTo("getListenAll").length, 2);
+    assert.equal(page.$("listenAll").checked, false);
+    assert.equal(page.$("listenAllPanel").hidden, true);
+    assert.equal(markOf(page.$("listenAll")).textContent, "Error: cannot bind 0.0.0.0");
+  });
+
+  it("clearing the box while on turns it off at once and refreshes the server status", async () => {
+    const page = await openPage({ getListenAll: { listenAll: true }, getListenAllowFrom: { allowFrom: "172.16.0.0/12", errors: [] } });
     await page.setChecked(page.$("listenAll"), false);
-    assert.equal(page.$("listenAllWarning").style.display, "none");
+    assert.deepEqual(page.callsTo("setListenAll"), [[false]]);
+    assert.equal(page.$("listenAllPanel").hidden, true);
+    assert.equal(markOf(page.$("listenAll")).textContent, "✓ Saved.");
+    assert.equal(page.callsTo("getServerInfo").length, 2);
+  });
+
+  it("clearing the box before Turn on writes nothing", async () => {
+    const page = await openPage();
+    await page.setChecked(page.$("listenAll"), true);
+    await page.setChecked(page.$("listenAll"), false);
+    assert.deepEqual(page.callsTo("setListenAll"), []);
+    assert.equal(page.$("listenAllPanel").hidden, true);
+  });
+
+  it("while on, a changed list is saved at once; a refused one is not", async () => {
+    const page = await openPage({ getListenAll: { listenAll: true }, getListenAllowFrom: { allowFrom: "172.16.0.0/12", errors: [] } });
+    page.$("listenAllowFrom").value = "172.16.0.0/12, 192.168.1.20";
+    await page.fire(page.$("listenAllowFrom"), "change");
+    assert.deepEqual(page.callsTo("setListenAllowFrom"), [["172.16.0.0/12, 192.168.1.20"]]);
+    assert.equal(markOf(page.$("listenAllowFrom")).textContent, "✓ Saved.");
+  });
+
+  it("before Turn on, editing the list writes nothing", async () => {
+    const page = await openPage();
+    await page.setChecked(page.$("listenAll"), true);
+    page.$("listenAllowFrom").value = "10.0.0.5";
+    await page.fire(page.$("listenAllowFrom"), "change");
+    assert.deepEqual(page.callsTo("setListenAllowFrom"), []);
+  });
+
+  it("says why the server stayed on this computer when the stored list is not valid", async () => {
+    const page = await openPage({
+      getListenAll: { listenAll: true },
+      getListenAllowFrom: { allowFrom: "::1", errors: ["::1: IPv6 is not supported, the server listens on IPv4 only"] },
+      getServerInfo: { running: true, port: 8765, listenProblem: "The list of addresses allowed to connect is not valid (::1: IPv6 is not supported, the server listens on IPv4 only): the server listens on this computer only." },
+    });
+    assert.match(page.$("saveListenAllStatus").textContent, /listens on this computer only|IPv6 is not supported/);
+    assert.equal(page.$("saveListenAllStatus").className, "save-status error");
   });
 
   it("keeps the box disabled and shows the error when the setting cannot be read", async () => {
@@ -1769,36 +1870,15 @@ describe("options page: listen on all interfaces", () => {
     assert.equal(page.$("saveListenAllStatus").className, "save-status error");
   });
 
-  it("saves the state of the box as soon as it changes, then refreshes the server status", async () => {
+  it("the SSH link opens in the default browser", async () => {
     const page = await openPage();
-    await page.setChecked(page.$("listenAll"), true);
-    assert.deepEqual(page.callsTo("setListenAll"), [[true]]);
-    const mark = markOf(page.$("listenAll"));
-    assert.equal(mark.textContent, "✓ Saved.");
-    assert.equal(mark.className, "saved-mark");
-    assert.equal(page.callsTo("getServerInfo").length, 2);
-  });
-
-  it("shows the error returned by the host, reloads the setting and does not refresh the status", async () => {
-    const page = await openPage({ setListenAll: { error: "cannot bind 0.0.0.0" } });
-    await page.setChecked(page.$("listenAll"), true);
-    assert.equal(page.callsTo("getListenAll").length, 2);
-    assert.equal(page.$("listenAll").checked, false, "the stored value is shown again");
-    assert.equal(page.$("listenAllWarning").style.display, "none");
-    const mark = markOf(page.$("listenAll"));
-    assert.equal(mark.textContent, "Error: cannot bind 0.0.0.0");
-    assert.equal(mark.className, "saved-mark error");
-    assert.equal(page.callsTo("getServerInfo").length, 1);
-  });
-
-  it("shows the error when the save throws", async () => {
-    const page = await openPage({ setListenAll: () => { throw new Error("prefs locked"); } });
-    await page.setChecked(page.$("listenAll"), true);
-    const mark = markOf(page.$("listenAll"));
-    assert.equal(mark.textContent, "Error: prefs locked");
-    assert.equal(mark.className, "saved-mark error");
+    const link = page.$("sshLink");
+    const event = await page.fire(link, "click");
+    assert.equal(event.defaultPrevented, true);
+    assert.deepEqual(page.opened, ["https://github.com/commonpost/thunderbird-mcp#from-another-computer-ssh"]);
   });
 });
+
 
 describe("options page: bridge status", () => {
   const RELEASE_LATEST = "https://github.com/commonpost/thunderbird-mcp/releases/latest";

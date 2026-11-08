@@ -763,21 +763,49 @@
     "message": "Réseau",
     "description": "Sub-heading of the advanced section."
   },
+  "networkSaferWays": {
+    "message": "Pour utiliser Thunderbird depuis un autre ordinateur, préférez SSH : rien n'écoute sur le réseau et tout est chiffré. Depuis WSL2, le mode réseau « mirrored » atteint cet ordinateur sans cette option.",
+    "description": "Before the 'listen on all interfaces' box: safer ways. 'mirrored' is a WSL setting name; keep it."
+  },
+  "networkSaferLink": {
+    "message": "Se connecter depuis un autre ordinateur (SSH)",
+    "description": "Link to the README section on SSH."
+  },
   "listenAllTitle": {
     "message": "Écouter sur toutes les interfaces",
     "description": "Checkbox: the server accepts connections from other devices."
   },
   "listenAllHelp": {
-    "message": "Par défaut, seul cet ordinateur peut se connecter au serveur.",
+    "message": "Par défaut, seul cet ordinateur peut se connecter. Si l'option est activée, les adresses indiquées ci-dessous le peuvent aussi.",
     "description": "Help of the checkbox."
   },
   "listenAllWarning": {
-    "message": "Tous les appareils de votre réseau peuvent alors joindre le serveur, en HTTP non chiffré : le jeton d'accès circule en clair et n'importe qui sur ce réseau peut le lire, et la vérification de l'en-tête Host est désactivée dans ce mode. Activez ce réglage seulement sur un réseau en lequel vous avez entièrement confiance, et désactivez-le dès que vous n'en avez plus besoin.",
+    "message": "Les adresses autorisées ci-dessous peuvent alors joindre le serveur en HTTP non chiffré : le jeton d'accès circule en clair, et la vérification de l'en-tête Host est désactivée dans ce mode. Activez-la seulement sur un réseau de toute confiance, et désactivez-la dès que vous n'en avez plus besoin.",
     "description": "Warning shown while the checkbox is on. Keep Host (an HTTP header name) as is."
+  },
+  "listenAllowFromLabel": {
+    "message": "Adresses autorisées à se connecter",
+    "description": "Label of the field listing who may connect."
+  },
+  "listenAllowFromHelp": {
+    "message": "Adresses ou réseaux IPv4, séparés par des virgules. WSL2 et Docker utilisent 172.16.0.0/12 ; un ordinateur de votre réseau, c'est sa propre adresse, par exemple 192.168.1.20. Cet ordinateur peut toujours se connecter.",
+    "description": "Help of the field. Keep the addresses as they are."
+  },
+  "listenAllConfirm": {
+    "message": "Activer",
+    "description": "Button: confirm turning on listening on all interfaces."
+  },
+  "listenAllCancel": {
+    "message": "Annuler",
+    "description": "Button: give up turning it on."
   },
   "authenticationHeading": {
     "message": "Authentification",
     "description": "Sub-heading of the advanced section."
+  },
+  "authenticationIntro": {
+    "message": "Chaque requête au serveur doit porter ce jeton : ainsi, une page web ou un autre utilisateur de cet ordinateur ne peut pas s'en servir. La passerelle trouve le jeton d'elle-même dans le fichier de connexion : vous n'avez rien à copier. Copiez-le seulement pour un client MCP que vous configurez à la main, sans la passerelle. Il change à chaque démarrage de Thunderbird, sauf si vous utilisez un jeton stable.",
+    "description": "What the session token is for, under the Authentication heading."
   },
   "currentTokenLabel": {
     "message": "Jeton de la session en cours :",

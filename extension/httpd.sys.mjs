@@ -397,6 +397,21 @@ nsHttpServer.prototype = {
 
     dumpn(">>> new connection on " + trans.host + ":" + trans.port);
 
+    // Commonpost: while listening on all interfaces, a connection from an address that is not allowed is closed
+    // before anything is read from it. A filter that throws refuses too.
+    if (this.acceptFilter) {
+      let allowed = false;
+      try {
+        allowed = this.acceptFilter(trans) === true;
+      } catch (e) {
+        dumpn("*** acceptFilter threw: " + e);
+      }
+      if (!allowed) {
+        trans.close(Cr.NS_BINDING_ABORTED);
+        return;
+      }
+    }
+
     const SEGMENT_SIZE = 8192;
     const SEGMENT_COUNT = 1024;
     try {
