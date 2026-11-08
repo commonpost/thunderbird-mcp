@@ -4,6 +4,18 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
+## [Unreleased]
+
+### Changed
+
+- Options, section Bridge: a bridge that should be updated now gets numbered steps instead of one sentence and a
+  link to the release page. The first step links the file itself: `mcp-bridge.cjs`, or the `.mcpb` bundle for Claude
+  Desktop, taken from the add-on's own release. A user sent to the release page had to pick one file out of seven,
+  including a `.mcpb` named after the bridge version rather than the release. The next steps say where the file goes
+  (`claude mcp get <name>` in Claude Code, the server's arguments elsewhere, nothing to download with the Claude Code
+  plugin) and how to restart the client. The release page stays linked as the release notes. Each bridge is shown as a
+  block of lines instead of a row of narrow columns.
+
 ## [0.20.2] - 2026-11-07
 
 - Fixed: two tool descriptions named a parameter the way they name a tool. `getMessage` now says it writes only

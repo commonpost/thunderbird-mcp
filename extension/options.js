@@ -774,10 +774,61 @@ const BRIDGE_STATE_LABELS = {
   "refused": "Refused: older than the security floor of this add-on (no tool works with it).",
   "newer-than-add-on": "Newer than this add-on: in Add-ons and Themes, choose Check for Updates in the gear menu, then restart Thunderbird.",
 };
-const BRIDGE_ADVICE_LABELS = {
-  mcpb: "Download the .mcpb bundle from the release page and install it in Claude Desktop again: open the file with Claude Desktop, or use Settings > Extensions > Advanced settings > Install Extension.",
-  other: "Download mcp-bridge.cjs from the release page and put it in place of the copy your MCP client runs (its path is in the MCP configuration of the client; in Claude Code: claude mcp get <server name>), then restart the client or reconnect the server.",
+// How to update, step by step, with a direct link to the file: a user sent to the release page has to pick one file
+// out of seven and still find where it goes. A step is a list of parts: text, or { code } for a command or a name.
+const BRIDGE_UPDATE_STEPS = {
+  mcpb: [
+    { text: ["Open the downloaded file with Claude Desktop: it replaces the installed bundle. If it does not open there (Windows), use Settings > Extensions > Advanced settings > Install Extension."] },
+  ],
+  file: [
+    {
+      text: ["Put the downloaded file in place of the ", { code: "mcp-bridge.cjs" }, " that your MCP client starts: same name, same folder."],
+      where: [
+        ["Claude Code: ", { code: "claude mcp list" }, " names the server, ", { code: "claude mcp get <name>" }, " shows the path."],
+        ["Other clients: the path is in the arguments of the server, in the MCP configuration of the client."],
+      ],
+    },
+    { text: ["Restart the MCP client, or reconnect the server (in Claude Code: ", { code: "/mcp" }, ")."] },
+  ],
 };
+const BRIDGE_PLUGIN_NOTE = ["Claude Code with the Commonpost plugin: nothing to download. Run ", { code: "/plugin marketplace update commonpost" }, ", then ", { code: "/reload-plugins" }, "."];
+
+function bridgeRich(el, parts) {
+  for (const part of parts) {
+    if (typeof part === "string") {
+      el.append(part);
+    } else {
+      const code = document.createElement("code");
+      code.textContent = part.code;
+      el.append(code);
+    }
+  }
+  return el;
+}
+
+// A direct link to the file of the release the add-on points at: the .mcpb is named after the bridge version it
+// carries, mcp-bridge.cjs after nothing. Built only from a release URL that passed BRIDGE_RELEASE_URL_PATTERN.
+function bridgeDownload(bridge, currentBridgeVersion) {
+  const m = /\/releases\/(?:tag\/(v\d{1,6}\.\d{1,6}\.\d{1,6})|latest)$/.exec(bridge.releaseUrl);
+  if (!m) return null;
+  const base = "https://github.com/commonpost/thunderbird-mcp/releases/" + (m[1] ? `download/${m[1]}/` : "latest/download/");
+  if (bridge.packaging !== "mcpb") return { name: "mcp-bridge.cjs", url: base + "mcp-bridge.cjs" };
+  const current = validBridgeVersion(currentBridgeVersion);
+  if (!current) return null;
+  const name = `commonpost-mcp-v${current}.mcpb`;
+  return { name, url: base + name };
+}
+
+function bridgeLink(url, text) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.textContent = text;
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    browser.windows.openDefaultBrowser(url).catch((e) => console.error("commonpost-mcp options:", "openDefaultBrowser failed:", e));
+  });
+  return link;
+}
 
 function bridgeVersionLabel(bridge) {
   if (bridge.version === null) {
@@ -808,6 +859,7 @@ function bridgeStatusLabel(bridge, currentBridgeVersion) {
 
 function renderBridge(bridge, currentBridgeVersion) {
   const li = document.createElement("li");
+  li.className = "bridge-entry";
   li.appendChild(bridgeLine("Version: " + bridgeVersionLabel(bridge)));
   li.appendChild(bridgeLine("Installed as: " + (BRIDGE_PACKAGING_LABELS[bridge.packaging] || "unknown")));
   if (bridge.profile) {
@@ -818,19 +870,35 @@ function renderBridge(bridge, currentBridgeVersion) {
   li.appendChild(bridgeLine("Last seen: " + new Date(bridge.lastSeen).toLocaleString()));
   li.appendChild(bridgeLine("Status: " + bridgeStatusLabel(bridge, currentBridgeVersion)));
   const needsUpdate = ["newer-available", "update-recommended", "unversioned", "refused"].includes(bridge.state);
+  const releaseOk = BRIDGE_RELEASE_URL_PATTERN.test(bridge.releaseUrl);
   if (needsUpdate) {
-    li.appendChild(bridgeLine(bridge.packaging === "mcpb" ? BRIDGE_ADVICE_LABELS.mcpb : BRIDGE_ADVICE_LABELS.other));
+    li.appendChild(bridgeLine("To update this bridge:"));
+    const steps = document.createElement("ol");
+    steps.className = "bridge-steps";
+    const download = releaseOk ? bridgeDownload(bridge, currentBridgeVersion) : null;
+    const first = document.createElement("li");
+    if (download) {
+      first.append("Download ", bridgeLink(download.url, download.name), ".");
+    } else {
+      first.textContent = (bridge.packaging === "mcpb" ? "Download the .mcpb bundle" : "Download mcp-bridge.cjs")
+        + " from the release of this add-on, on the Releases page of github.com/commonpost/thunderbird-mcp.";
+    }
+    steps.appendChild(first);
+    for (const step of BRIDGE_UPDATE_STEPS[bridge.packaging === "mcpb" ? "mcpb" : "file"]) {
+      const item = bridgeRich(document.createElement("li"), step.text);
+      if (step.where) {
+        const where = document.createElement("ul");
+        for (const parts of step.where) where.appendChild(bridgeRich(document.createElement("li"), parts));
+        item.appendChild(where);
+      }
+      steps.appendChild(item);
+    }
+    li.appendChild(steps);
+    if (bridge.packaging !== "mcpb") li.appendChild(bridgeRich(bridgeLine(""), BRIDGE_PLUGIN_NOTE));
   }
-  if ((needsUpdate || bridge.state === "newer-than-add-on") && BRIDGE_RELEASE_URL_PATTERN.test(bridge.releaseUrl)) {
-    const line = bridgeLine("Release page: ");
-    const link = document.createElement("a");
-    link.href = bridge.releaseUrl;
-    link.textContent = bridge.releaseUrl;
-    link.addEventListener("click", (event) => {
-      event.preventDefault();
-      browser.windows.openDefaultBrowser(bridge.releaseUrl).catch((e) => console.error("commonpost-mcp options:", "openDefaultBrowser failed:", e));
-    });
-    line.appendChild(link);
+  if ((needsUpdate || bridge.state === "newer-than-add-on") && releaseOk) {
+    const line = bridgeLine(needsUpdate ? "Release notes: " : "Release page: ");
+    line.appendChild(bridgeLink(bridge.releaseUrl, bridge.releaseUrl));
     li.appendChild(line);
   }
   return li;
