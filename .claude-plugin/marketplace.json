@@ -13,8 +13,8 @@
         "source": "git-subdir",
         "url": "https://github.com/commonpost/thunderbird-mcp.git",
         "path": "plugins/claude-code",
-        "ref": "v0.20.2",
-        "sha": "62f7bdece9f7588869c5b48e7be65fde9c1b25b4"
+        "ref": "v0.21.0",
+        "sha": "9e6e7265163a9d9bbb6f2a47056b9c82de759d16"
       },
       "description": "Thunderbird mail, contacts, calendars and filters as MCP tools (needs the Commonpost MCP add-on in Thunderbird).",
       "category": "productivity",
