@@ -20,6 +20,8 @@ const saveBtn = document.getElementById("saveBtn");
 const saveStatus = document.getElementById("saveStatus");
 
 const toolList = document.getElementById("toolList");
+const toolDetails = document.getElementById("toolDetails");
+const toolSummary = document.getElementById("toolSummary");
 const saveToolsBtn = document.getElementById("saveToolsBtn");
 const saveToolsStatus = document.getElementById("saveToolsStatus");
 const newToolsNote = document.getElementById("newToolsNote");
@@ -40,7 +42,21 @@ let getMessagesLimitInput = null;
 let getMessagesLimitStatus = null;
 
 // CRUD labels for sub-group headers
-const CRUD_LABELS = { read: "Read", create: "Create", update: "Update", delete: "Delete" };
+// Thunderbird's account types as a user knows them; Local Folders has the type "none".
+const ACCOUNT_TYPE_LABELS = { none: "local", pop3: "POP3", imap: "IMAP", nntp: "news", rss: "feeds", ews: "Exchange", owl: "Exchange" };
+
+const CRUD_LABELS = { read: "Read", create: "Create", update: "Change", delete: "Delete" };
+
+// "all 42 on" or "38 of 42 on", next to "Choose tools one by one", so a closed list still tells its state.
+function updateToolSummary() {
+  const boxes = [...toolList.querySelectorAll('input[type="checkbox"]')];
+  if (boxes.length === 0) {
+    toolSummary.textContent = "";
+    return;
+  }
+  const on = boxes.filter((cb) => cb.checked).length;
+  toolSummary.textContent = on === boxes.length ? `(all ${on} on)` : `(${on} of ${boxes.length} on)`;
+}
 
 function validateGetMessagesLimitInput() {
   if (!getMessagesLimitInput) return undefined;
@@ -286,7 +302,7 @@ async function loadAccountAccess() {
 
       const typeSpan = document.createElement("span");
       typeSpan.className = "account-type";
-      typeSpan.textContent = acct.type;
+      typeSpan.textContent = ACCOUNT_TYPE_LABELS[acct.type] || acct.type;
       label.appendChild(typeSpan);
 
       li.appendChild(checkbox);
@@ -376,6 +392,8 @@ async function loadToolAccess() {
       ? `Added by an update and disabled because you restricted the tools: ${newTools.join(", ")}. Check and save to enable.`
       : "";
     newToolsNote.hidden = newTools.length === 0;
+    // Tools that wait for the user's choice are shown, not folded away.
+    if (newTools.length) toolDetails.open = true;
 
     if (currentTools.length === 0) {
       toolList.innerHTML = "<li>No tools found.</li>";
@@ -428,6 +446,7 @@ async function loadToolAccess() {
       }
       checkbox.addEventListener("change", () => {
         saveToolsStatus.textContent = "";
+        updateToolSummary();
         if (tool.name === "getMessages" && getMessagesLimitInput) {
           getMessagesLimitInput.disabled = !checkbox.checked;
           if (checkbox.checked) {
@@ -441,7 +460,14 @@ async function loadToolAccess() {
 
       const label = document.createElement("label");
       label.htmlFor = checkbox.id;
-      label.textContent = tool.name;
+      // The tool's title in words, then its name as clients see it.
+      label.textContent = tool.title || tool.name;
+      if (tool.title) {
+        const nameSpan = document.createElement("code");
+        nameSpan.className = "tool-name";
+        nameSpan.textContent = tool.name;
+        label.append(" ", nameSpan);
+      }
       if (tool.undisableable) {
         const lockSpan = document.createElement("span");
         lockSpan.className = "account-type";
@@ -497,6 +523,7 @@ async function loadToolAccess() {
 
     saveToolsBtn.disabled = false;
     saveToolsStatus.textContent = "";
+    updateToolSummary();
   } catch (e) {
     toolList.innerHTML = "";
     const li = document.createElement("li");

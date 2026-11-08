@@ -118,7 +118,7 @@ describe("getToolAccessConfig", () => {
     assert.equal(config.getMessagesLimit, 10);
     assert.equal(config.getMessagesLimitMin, 1);
     assert.equal(config.getMessagesLimitMax, 20);
-    assert.equal(config.groups.messages, "Messages");
+    assert.equal(config.groups.messages, "Mail");
     assert.deepEqual(config.tools.map((t) => t.name), [
       "listAccounts", "listFolders", "getAccountAccess", // system, all "read": kept in the order given
       "getMessages", "sendMail", "deleteMessages", "oddOne", "oddTwo", // messages: a CRUD kind that is not known goes last

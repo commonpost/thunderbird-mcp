@@ -824,7 +824,7 @@ describe("options page: account access", () => {
     assert.deepEqual(boxes.map((b) => b.checked), [true, true, true]);
     const rows = page.$("accountList").children;
     assert.deepEqual(rows.map((li) => li.children[1].ownText), ["Work", "Home", "Local Folders"]);
-    assert.deepEqual(rows.map((li) => li.children[1].children[0].textContent), ["imap", "pop3", "none"]);
+    assert.deepEqual(rows.map((li) => li.children[1].children[0].textContent), ["IMAP", "POP3", "local"]);
     assert.deepEqual(rows.map((li) => li.children[1].htmlFor), ["acct-id1", "acct-id2", "acct-id3"]);
     assert.equal(rows[0].children[1].children[0].className, "account-type");
     assert.equal(page.$("saveBtn").disabled, false);
@@ -1015,6 +1015,42 @@ describe("options page: tool access", () => {
     assert.equal(page.$("newToolsNote").textContent, "");
   });
 
+  it("keeps the list folded unless an update brought tools that wait for the user", async () => {
+    const folded = await openPage();
+    assert.ok(!folded.$("toolDetails").open);
+    const opened = await openPage({
+      getToolAccessConfig: {
+        ...TOOL_CONFIG,
+        newTools: ["deleteTask"],
+        tools: [...TOOL_CONFIG.tools, { name: "deleteTask", group: "calendar", crud: "delete", enabled: false, isNew: true }],
+      },
+    });
+    assert.equal(opened.$("toolDetails").open, true);
+  });
+
+  it("says next to the folded list how many tools are on, and follows the checkboxes", async () => {
+    const page = await openPage();
+    const boxes = toolCheckboxes(page);
+    const total = boxes.length;
+    const on = boxes.filter((b) => b.checked).length;
+    assert.equal(page.$("toolSummary").textContent, on === total ? `(all ${total} on)` : `(${on} of ${total} on)`);
+    const box = boxes.find((b) => b.checked && !b.disabled);
+    box.checked = false;
+    await page.fire(box, "change");
+    assert.equal(page.$("toolSummary").textContent, `(${on - 1} of ${total} on)`);
+  });
+
+  it("names a tool by its title, with the name clients see beside it", async () => {
+    const page = await openPage({
+      getToolAccessConfig: { tools: [{ name: "searchContacts", title: "Search Contacts", group: "contacts", crud: "read", enabled: true }] },
+    });
+    const row = page.$("toolList").children.find((li) => li.className !== "tool-group-header" && li.className !== "tool-crud-header");
+    const label = row.children[1];
+    assert.equal(label.ownText.trim(), "Search Contacts");
+    const code = label.children.find((el) => el.tagName === "CODE");
+    assert.equal(code.textContent, "searchContacts");
+  });
+
   it("capitalizes the group and CRUD names it has no label for", async () => {
     const page = await openPage({
       getToolAccessConfig: {
@@ -1026,7 +1062,7 @@ describe("options page: tool access", () => {
       },
     });
     assert.deepEqual(toolRows(page.$("toolList")), [
-      "group Calendar", "crud Update", "tool alpha",
+      "group Calendar", "crud Change", "tool alpha",
       "crud Archive", "tool gamma",
       "group Other", "crud Other", "tool beta",
     ]);

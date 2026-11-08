@@ -1685,7 +1685,7 @@ const PREF_ALLOW_ENCRYPTED_CONTENT = "extensions.commonpost-mcp.allowEncryptedCo
 // A refusal that comes from a default names it, so that a new user can act on it; one that comes from a restriction
 // the user set (a tool or an account turned off) only states it, and does not invite the client to have it lifted.
 const ADDON_OPTIONS_PATH =
-  "Tools > Add-ons and Themes > Commonpost MCP for Thunderbird > Options (Preferences outside Windows)";
+  "Tools > Add-ons and Themes > Commonpost MCP for Thunderbird > wrench button (Options)";
 const ENCRYPTED_CONTENT_NOTICE =
   "message chiffré : contenu non transmis (option à activer) / "
   + "encrypted message: content not sent (the user can allow it in Thunderbird: " + ADDON_OPTIONS_PATH
@@ -8296,7 +8296,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
     // Group display order for settings UI
     const GROUP_ORDER = { system: 0, messages: 1, folders: 2, contacts: 3, calendar: 4, filters: 5 };
     // Group display labels
-    const GROUP_LABELS = { system: "System", messages: "Messages", folders: "Folders", contacts: "Contacts", calendar: "Calendar", filters: "Filters" };
+    const GROUP_LABELS = { system: "Accounts and access", messages: "Mail", folders: "Folders", contacts: "Contacts", calendar: "Calendar and tasks", filters: "Filters" };
 
     /**
      * Generate a cryptographically random auth token (hex string).
@@ -20035,6 +20035,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           const toolList = buildTools()
             .map(t => ({
               name: t.name,
+              title: t.title,
               group: t.group,
               crud: t.crud,
               enabled: !isToolOffFor(access, t.name),
