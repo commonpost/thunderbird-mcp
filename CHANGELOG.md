@@ -15,6 +15,12 @@ project is kept in this repository.
   `package.json` and the date of its section here, or that sits beyond the first 2500 bytes of the README, so the
   line moves with the other version files instead of going stale.
 
+### Changed
+
+- The descriptions of `getMessage` and `updateMessage` name `saveAttachments` and `addTags` as parameters ("the
+  saveAttachments parameter", "see the addTags parameter"). Written as bare names, an automated review of the tool
+  list took them for tools that do not exist and reported attachments and tags as dead ends.
+
 ### Fixed
 
 - The short description is 99 characters instead of 104. The MCP registry refuses a description longer than 100
