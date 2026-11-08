@@ -40,6 +40,21 @@ this repository.
   paragraph in its License and credits section, with the same links and the note on Mozilla's trademark. The
   copyright line and the credits to upstream contributors are unchanged.
 
+- The options page opens in its own tab, from the wrench button of the add-on in Add-ons and Themes. It has a header,
+  a menu of its sections on wide windows, and one readable column. Inside the Add-ons Manager it was a narrow card
+  in the middle of the window. Messages that tell where to click, and the README, name the wrench button.
+- The options page speaks to the person using it:
+  - Each setting has a short label in plain words and one line of help.
+  - The technical details (`skipReview`, modes, limits, the confirmation log) fold under "Technical details".
+  - The port, connection file and build fold under "Connection details".
+  - Listening on all interfaces and the authentication token move to a section named Advanced.
+  - The tools fold under "Choose tools one by one", with the count of tools that are on. The list opens by itself
+    when an update brought tools that wait for a choice.
+  - Each tool shows its title, with its name beside it.
+  - Groups and kinds read "Mail", "Calendar and tasks", "Change"; account types read "local", "IMAP", "POP3"
+    instead of "none".
+  - Red is kept for the warning about listening on all interfaces.
+
 ### Fixed
 
 - The options page follows Thunderbird's dark theme. It had fixed light colors: a white page inside a dark Add-ons
