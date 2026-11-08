@@ -75,7 +75,9 @@
           {
             "name": "disabledTools",
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Array of tool names to disable. Empty array means all tools enabled."
           },
           {
@@ -94,7 +96,9 @@
           {
             "name": "allowedAccountIds",
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Array of account IDs to allow. Empty array means all accounts."
           }
         ]
@@ -227,15 +231,35 @@
         "parameters": []
       },
       {
+        "name": "getListenAllowFrom",
+        "type": "function",
+        "async": true,
+        "description": "Get the IPv4 addresses and networks allowed to connect while the server listens on all interfaces, in canonical form, and the errors of a stored list that is not valid.",
+        "parameters": []
+      },
+      {
+        "name": "setListenAllowFrom",
+        "type": "function",
+        "async": true,
+        "description": "Set the IPv4 addresses and networks (a.b.c.d or a.b.c.d/n, n from 8 to 32) allowed to connect while the server listens on all interfaces. An empty or invalid list is refused. Restarts the server when it listens on all interfaces.",
+        "parameters": [
+          {
+            "name": "allowFrom",
+            "type": "string",
+            "description": "Addresses and networks separated by commas or spaces."
+          }
+        ]
+      },
+      {
         "name": "setListenAll",
         "type": "function",
         "async": true,
-        "description": "Set whether the server listens on all network interfaces. When enabled, the server is accessible from other machines on your network (e.g. WSL, Docker). Warning: this bypasses localhost-only binding and exposes the MCP endpoint beyond this machine, though auth token is still required.",
+        "description": "Set whether the server listens on all IPv4 interfaces. Turning it on is refused until a list of addresses allowed to connect is set (setListenAllowFrom); only those addresses and this computer can then connect, and the auth token is still required. The server restarts.",
         "parameters": [
           {
             "name": "listenAll",
             "type": "boolean",
-            "description": "When true, server binds to 0.0.0.0 instead of 127.0.0.1. Server will be restarted."
+            "description": "When true, the server binds to 0.0.0.0 instead of 127.0.0.1 and closes connections from addresses not in the list. Server will be restarted."
           }
         ]
       }

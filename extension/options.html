@@ -230,6 +230,7 @@
       color: var(--danger);
       font-size: 12px;
     }
+    [hidden] { display: none !important; }
     .save-row {
       display: flex;
       align-items: center;
@@ -422,7 +423,7 @@
     <summary data-i18n="fullAccessSummary">Why Thunderbird says &quot;full, unrestricted access&quot;</summary>
     <p class="mode-note" data-i18n="fullAccessWhy">Thunderbird shows that line for every add-on built on an Experiment, whatever the add-on does: an add-on cannot change or narrow it. This one needs an Experiment for its local server, message filters and the calendar.</p>
     <p class="mode-note" data-i18n="fullAccessWhat">What it does with it: by default it listens on this computer only, behind a token; it writes files only in its own temporary folder; its code makes no Internet request. What the assistant reads goes to the AI app you connect, and nowhere else.</p>
-    <p class="mode-note"><a id="fullAccessLink" href="https://github.com/commonpost/thunderbird-mcp#why-thunderbird-says-full-unrestricted-access" data-i18n="fullAccessLink">Details in the README</a></p>
+    <p class="mode-note"><a id="fullAccessLink" data-external href="https://github.com/commonpost/thunderbird-mcp#why-thunderbird-says-full-unrestricted-access" data-i18n="fullAccessLink">Details in the README</a></p>
   </details>
 </div>
 
@@ -564,23 +565,33 @@
   <p class="mode-note" data-i18n="advancedIntro">Leave these as they are unless you know you need them.</p>
 
   <h3 data-i18n="networkHeading">Network</h3>
+  <p class="mode-note"><span data-i18n="networkSaferWays">To use Thunderbird from another computer, prefer SSH: nothing listens on the network and everything is encrypted. From WSL2, mirrored networking reaches this computer without this option.</span>
+    <a id="sshLink" href="https://github.com/commonpost/thunderbird-mcp#from-another-computer-ssh" data-external data-i18n="networkSaferLink">Connecting from another computer (SSH)</a></p>
   <ul class="account-list setting-list">
     <li>
       <label>
         <input type="checkbox" id="listenAll" disabled>
         <span><strong data-i18n="listenAllTitle">Listen on all interfaces</strong>
-          <span class="setting-help" data-i18n="listenAllHelp">By default only this computer can connect to the server.</span></span>
+          <span class="setting-help" data-i18n="listenAllHelp">By default only this computer can connect. Turned on, the addresses you list below can connect too.</span></span>
       </label>
     </li>
   </ul>
-  <p class="mode-note danger-note" id="listenAllWarning" style="display:none;" data-i18n="listenAllWarning">
-    Every device on your network can then reach the server, over plain HTTP: the access token travels in clear text
-    and anyone there can read it, and the check of the Host header is off in this mode. Turn it on only on a network you fully trust, and off again
-    when you no longer need it.
-  </p>
+  <div id="listenAllPanel" hidden>
+    <p class="mode-note danger-note" id="listenAllWarning" data-i18n="listenAllWarning">The addresses allowed below can then reach the server over plain HTTP: the access token travels in clear text, and the check of the Host header is off in this mode. Turn it on only on a network you fully trust, and off again when you no longer need it.</p>
+    <div class="token-row">
+      <label for="listenAllowFrom" data-i18n="listenAllowFromLabel">Addresses allowed to connect</label>
+      <input type="text" id="listenAllowFrom" autocomplete="off" spellcheck="false" placeholder="172.16.0.0/12, 192.168.1.20">
+    </div>
+    <p class="setting-help" data-i18n="listenAllowFromHelp">IPv4 addresses or networks, separated by commas. WSL2 and Docker use 172.16.0.0/12; one computer of your network is its own address, such as 192.168.1.20. This computer can always connect.</p>
+    <div class="save-row" id="listenAllConfirmRow">
+      <button id="listenAllConfirmBtn" data-i18n="listenAllConfirm">Turn on</button>
+      <button id="listenAllCancelBtn" class="secondary" data-i18n="listenAllCancel">Cancel</button>
+    </div>
+  </div>
   <p class="save-row"><span id="saveListenAllStatus" class="save-status" role="status" aria-live="polite"></span></p>
 
   <h3 data-i18n="authenticationHeading">Authentication</h3>
+  <p class="mode-note" data-i18n="authenticationIntro">Every request to the server must carry this token, so that a web page or another user of this computer cannot use it. The bridge finds the token by itself in the connection file: you have nothing to copy. Copy it only for an MCP client you configure by hand, without the bridge. It changes each time Thunderbird starts, unless you use a stable token.</p>
   <div class="token-row">
     <label for="currentAuthToken" data-i18n="currentTokenLabel">Current session token:</label>
     <input type="text" id="currentAuthToken" readonly placeholder="Not available" data-i18n-placeholder="notAvailable">

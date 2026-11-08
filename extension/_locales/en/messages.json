@@ -763,21 +763,49 @@
     "message": "Network",
     "description": "Sub-heading of the advanced section."
   },
+  "networkSaferWays": {
+    "message": "To use Thunderbird from another computer, prefer SSH: nothing listens on the network and everything is encrypted. From WSL2, mirrored networking reaches this computer without this option.",
+    "description": "Before the 'listen on all interfaces' box: safer ways. 'mirrored' is a WSL setting name; keep it."
+  },
+  "networkSaferLink": {
+    "message": "Connecting from another computer (SSH)",
+    "description": "Link to the README section on SSH."
+  },
   "listenAllTitle": {
     "message": "Listen on all interfaces",
     "description": "Checkbox: the server accepts connections from other devices."
   },
   "listenAllHelp": {
-    "message": "By default only this computer can connect to the server.",
+    "message": "By default only this computer can connect. Turned on, the addresses you list below can connect too.",
     "description": "Help of the checkbox."
   },
   "listenAllWarning": {
-    "message": "Every device on your network can then reach the server, over plain HTTP: the access token travels in clear text and anyone there can read it, and the check of the Host header is off in this mode. Turn it on only on a network you fully trust, and off again when you no longer need it.",
+    "message": "The addresses allowed below can then reach the server over plain HTTP: the access token travels in clear text, and the check of the Host header is off in this mode. Turn it on only on a network you fully trust, and off again when you no longer need it.",
     "description": "Warning shown while the checkbox is on. Keep Host (an HTTP header name) as is."
+  },
+  "listenAllowFromLabel": {
+    "message": "Addresses allowed to connect",
+    "description": "Label of the field listing who may connect."
+  },
+  "listenAllowFromHelp": {
+    "message": "IPv4 addresses or networks, separated by commas. WSL2 and Docker use 172.16.0.0/12; one computer of your network is its own address, such as 192.168.1.20. This computer can always connect.",
+    "description": "Help of the field. Keep the addresses as they are."
+  },
+  "listenAllConfirm": {
+    "message": "Turn on",
+    "description": "Button: confirm turning on listening on all interfaces."
+  },
+  "listenAllCancel": {
+    "message": "Cancel",
+    "description": "Button: give up turning it on."
   },
   "authenticationHeading": {
     "message": "Authentication",
     "description": "Sub-heading of the advanced section."
+  },
+  "authenticationIntro": {
+    "message": "Every request to the server must carry this token, so that a web page or another user of this computer cannot use it. The bridge finds the token by itself in the connection file: you have nothing to copy. Copy it only for an MCP client you configure by hand, without the bridge. It changes each time Thunderbird starts, unless you use a stable token.",
+    "description": "What the session token is for, under the Authentication heading."
   },
   "currentTokenLabel": {
     "message": "Current session token:",

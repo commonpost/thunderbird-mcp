@@ -70,6 +70,86 @@ function isListenAllEnabled() {
   try { return Services.prefs.getBoolPref(PREF_LISTEN_ALL, false); } catch { return false; }
 }
 
+// BEGIN LISTEN ALLOW-FROM
+// While the server listens on all interfaces, only these IPv4 addresses and networks may connect; this computer
+// (127.0.0.0/8) always may. Thunderbird gives add-ons no way to bind one interface (nsIServerSocket.initWithAddress
+// is [noscript]), so the server listens on every IPv4 interface and closes any other connection before reading it.
+// The server socket is IPv4 only: an IPv6 entry is refused, as is a network wider than /8. A list that is empty or
+// not valid keeps the server on this computer only.
+const LISTEN_ALLOW_FROM_MIN_PREFIX = 8;
+// Written once for a profile that turned "listen on all interfaces" on before the list existed: the private
+// networks and Tailscale's range, the local networks that option was meant for. Public addresses are refused.
+const LISTEN_ALLOW_FROM_LEGACY = "10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10";
+
+function parseIPv4(text) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(text));
+  if (!m) return null;
+  let value = 0;
+  for (const part of m.slice(1)) {
+    if (part.length > 1 && part[0] === "0") return null; // 010 could be read as octal elsewhere
+    const n = Number(part);
+    if (n > 255) return null;
+    value = value * 256 + n;
+  }
+  return value >>> 0;
+}
+
+function formatIPv4(value) {
+  return [24, 16, 8, 0].map((shift) => (value >>> shift) & 255).join(".");
+}
+
+// "a.b.c.d" or "a.b.c.d/n", separated by commas, semicolons or spaces. Returns the entries in a canonical text
+// (the network address of each block) and, for each piece that is not one, the reason.
+function parseListenAllowFrom(text) {
+  const entries = [];
+  const errors = [];
+  for (const piece of String(text || "").split(/[\s,;]+/).filter(Boolean)) {
+    const m = /^([^/]+)(?:\/(\d{1,2}))?$/.exec(piece);
+    const ip = m ? parseIPv4(m[1]) : null;
+    if (ip === null) {
+      errors.push(piece.includes(":") ? `${piece}: IPv6 is not supported, the server listens on IPv4 only` : `${piece}: not an IPv4 address or network`);
+      continue;
+    }
+    const prefix = m[2] === undefined ? 32 : Number(m[2]);
+    if (prefix > 32) { errors.push(`${piece}: the network size must be between /${LISTEN_ALLOW_FROM_MIN_PREFIX} and /32`); continue; }
+    if (prefix < LISTEN_ALLOW_FROM_MIN_PREFIX) { errors.push(`${piece}: wider than /${LISTEN_ALLOW_FROM_MIN_PREFIX}, it would let too much of the Internet in`); continue; }
+    const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+    const base = (ip & mask) >>> 0;
+    const canonical = prefix === 32 ? formatIPv4(base) : `${formatIPv4(base)}/${prefix}`;
+    if (!entries.some((e) => e.text === canonical)) entries.push({ base, mask, text: canonical });
+  }
+  return { entries, errors, text: entries.map((e) => e.text).join(", ") };
+}
+
+// Whether a peer may connect: this computer always, others when an entry covers them. Anything that is not a
+// plain IPv4 address is refused.
+function listenPeerAllowed(address, entries) {
+  const ip = parseIPv4(address);
+  if (ip === null) return false;
+  if ((ip >>> 24) === 127) return true;
+  return entries.some((e) => ((ip & e.mask) >>> 0) === e.base);
+}
+// END LISTEN ALLOW-FROM
+
+// The list in force while listening on all interfaces. A profile that has the option on and no list yet gets the
+// legacy one written (see LISTEN_ALLOW_FROM_LEGACY). Returns { entries, errors, text }.
+function readListenAllowFrom({ migrate = false } = {}) {
+  let raw = "";
+  let set = false;
+  try {
+    set = Services.prefs.prefHasUserValue(PREF_LISTEN_ALLOW_FROM);
+    raw = Services.prefs.getStringPref(PREF_LISTEN_ALLOW_FROM, "");
+  } catch (e) {
+    return { entries: [], errors: [`${PREF_LISTEN_ALLOW_FROM} unreadable (${e.message})`], text: "" };
+  }
+  if (!set && migrate && isListenAllEnabled()) {
+    raw = LISTEN_ALLOW_FROM_LEGACY;
+    try { Services.prefs.setStringPref(PREF_LISTEN_ALLOW_FROM, raw); } catch (e) { console.error("commonpost-mcp: could not write the legacy listen list:", e); }
+    console.warn(`commonpost-mcp: listening on all interfaces had no list of allowed addresses; set to ${raw}`);
+  }
+  return parseListenAllowFrom(raw);
+}
+
 function stopConnectionInfoRefreshTimer() {
   if (globalThis.__cpMcpConnectionInfoRefreshTimer) {
     try {
@@ -3245,6 +3325,7 @@ const PREF_BRIDGE_UPDATE_ALERT = "extensions.commonpost-mcp.bridgeUpdateAlert";
 const PREF_STABLE_AUTH_TOKEN = "extensions.commonpost-mcp.stableAuthToken";
 const PREF_GET_MESSAGES_LIMIT = "extensions.commonpost-mcp.getMessagesLimit";
 const PREF_LISTEN_ALL = "extensions.commonpost-mcp.listenAll";
+const PREF_LISTEN_ALLOW_FROM = "extensions.commonpost-mcp.listenAllowFrom";
 const AUTH_TOKEN_PATTERN = /^[0-9a-f]{64}$/;
 // Valid group and CRUD values for tool metadata validation
 const VALID_GROUPS = ["messages", "folders", "contacts", "calendar", "filters", "system"];
@@ -19838,7 +19919,22 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
             // Try the default port first, then fall back to nearby ports
             let boundPort = null;
-            const listenAll = isListenAllEnabled();
+            // All interfaces only with a valid list of who may connect; otherwise this computer only.
+            let listenAll = isListenAllEnabled();
+            globalThis.__cpMcpListenProblem = null;
+            if (listenAll) {
+              const allow = readListenAllowFrom({ migrate: true });
+              if (allow.entries.length === 0 || allow.errors.length) {
+                listenAll = false;
+                globalThis.__cpMcpListenProblem = allow.errors.length
+                  ? `The list of addresses allowed to connect is not valid (${allow.errors.join("; ")}): the server listens on this computer only.`
+                  : "No address is allowed to connect from the network: the server listens on this computer only.";
+                console.error(`commonpost-mcp: ${globalThis.__cpMcpListenProblem}`);
+              } else {
+                const entries = allow.entries;
+                server.acceptFilter = (trans) => listenPeerAllowed(trans.getScriptablePeerAddr().address, entries);
+              }
+            }
             for (let attempt = 0; attempt < MCP_MAX_PORT_ATTEMPTS; attempt++) {
               const tryPort = MCP_DEFAULT_PORT + attempt;
               try {
@@ -19876,7 +19972,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             console.log(`Commonpost MCP server listening on port ${boundPort}`);
             console.log(`Connection info written to ${connFilePath}`);
             if (listenAll) {
-              console.error(`commonpost-mcp: WARNING - server is listening on all interfaces (0.0.0.0/[::]). This exposes the MCP server to your local network. Only enable on trusted networks.`);
+              console.error(`commonpost-mcp: WARNING - server is listening on all IPv4 interfaces (0.0.0.0) for ${readListenAllowFrom().text} and this computer. Only enable on trusted networks.`);
             }
             return { success: true, port: boundPort };
           } catch (e) {
@@ -19969,6 +20065,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             buildDate,
             startError: runState.startError,
             startErrorAt: runState.startErrorAt,
+            listenProblem: globalThis.__cpMcpListenProblem || null,
             originalExtensionActive,
           };
         },
@@ -20263,12 +20360,36 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           return { listenAll };
         },
 
+        getListenAllowFrom: async function() {
+          const allow = readListenAllowFrom();
+          let raw = "";
+          try { raw = Services.prefs.getStringPref(PREF_LISTEN_ALLOW_FROM, ""); } catch { /* reported in errors */ }
+          return { allowFrom: allow.errors.length ? raw : allow.text, errors: allow.errors };
+        },
+
+        // Saves the list (canonical form). An empty list, an invalid entry or a network wider than /8 is refused
+        // and nothing is written. While the server listens on all interfaces it restarts with the new list.
+        setListenAllowFrom: async function(allowFrom) {
+          if (typeof allowFrom !== "string") return { error: "allowFrom must be a string" };
+          const allow = parseListenAllowFrom(allowFrom);
+          if (allow.errors.length) return { error: allow.errors.join("; ") };
+          if (allow.entries.length === 0) return { error: "Give at least one address or network, such as 172.16.0.0/12 or 192.168.1.20." };
+          Services.prefs.setStringPref(PREF_LISTEN_ALLOW_FROM, allow.text);
+          if (!isListenAllEnabled()) return { success: true, allowFrom: allow.text };
+          const result = await this.setListenAll(true);
+          return result && result.error ? result : { success: true, allowFrom: allow.text, restarted: true };
+        },
+
         setListenAll: async function(listenAll) {
           if (typeof listenAll !== "boolean") {
             return { error: "listenAll must be a boolean" };
           }
           console.log(`[MCP] setListenAll called with: ${listenAll}`);
           if (listenAll) {
+            const allow = readListenAllowFrom();
+            if (allow.entries.length === 0 || allow.errors.length) {
+              return { error: "Set the addresses allowed to connect first (Options > Advanced > Network)." };
+            }
             Services.prefs.setBoolPref(PREF_LISTEN_ALL, true);
           } else {
             try { Services.prefs.clearUserPref(PREF_LISTEN_ALL); } catch { /* ignore */ }
