@@ -17,8 +17,8 @@ versions, and moving functionality from the Experiment API to standard MailExten
 5. **Keep the privileged surface small.** Code that needs Thunderbird's full privileges stays in
    `extension/mcp_server/api.js` and `extension/httpd.sys.mjs`; do not add privileged calls elsewhere, and update
    [docs/experiment-inventory.md](docs/experiment-inventory.md) when you change what needs the Experiment.
-6. **Be respectful of upstream.** This project continues thunderbird-mcp by Tomasz Kasperczyk and keeps its history.
-   Where a change fits the original project, we offer it there too.
+6. **Credit what you take.** Code or ideas from another project, the original thunderbird-mcp included, keep their
+   authors in the commit message and the changelog.
 7. **License header in each source file.** A new source file starts (after any `#!` line) with the two SPDX lines the
    other files carry: `SPDX-License-Identifier: MIT` and `SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost
    contributors (see LICENSE)`. `test/spdx-headers.test.cjs` checks it.

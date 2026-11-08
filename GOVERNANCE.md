@@ -1,9 +1,9 @@
 # Governance
 
-Commonpost MCP for Thunderbird is a continuation of [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp)
-by Tomasz Kasperczyk, kept under its MIT license with its history. It lives in the
-[commonpost](https://github.com/commonpost) GitHub organization: this repository, and the
-[lab](https://github.com/commonpost/thunderbird-mcp-lab) that tests it in a real Thunderbird.
+Commonpost MCP for Thunderbird lives in the [commonpost](https://github.com/commonpost) GitHub organization: this
+repository, and the [lab](https://github.com/commonpost/thunderbird-mcp-lab) that tests it in a real Thunderbird. It
+started from [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk, under the same
+MIT license and with its history.
 
 ## Roles
 
@@ -11,7 +11,6 @@ by Tomasz Kasperczyk, kept under its MIT license with its history. It lives in t
 |---|---|---|
 | Maintainer | Guillaume Laforest ([@sacrefizz](https://github.com/sacrefizz)), owner of the organization | Merge pull requests, approve releases (the protected `release` environment), handle security reports and publish advisories, change repository settings |
 | Contributor | Anyone | Open issues and pull requests, review them, report vulnerabilities privately ([SECURITY.md](SECURITY.md)) |
-| Upstream | Tomasz Kasperczyk | Author of the original project; changes that fit it are offered there too ([CONTRIBUTING.md](CONTRIBUTING.md)) |
 
 Today the project has **one maintainer**. A second one is welcome; see "Becoming a maintainer" below.
 
