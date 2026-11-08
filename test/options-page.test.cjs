@@ -33,6 +33,7 @@ class FakeText {
 }
 
 const SIMPLE_SELECTOR = /^([a-z]+)\[([a-z-]+)="([^"]*)"\]$/;
+const ATTRIBUTE_SELECTOR = /^\[([a-z0-9-]+)\]$/;
 
 class FakeElement {
   constructor(tagName) {
@@ -115,8 +116,10 @@ class FakeElement {
     if (this.parentNode) this.parentNode.removeChild(this);
   }
 
-  // Only the selectors options.js uses: tag[attr="value"], matched in the whole subtree.
+  // Only the selectors options.js uses: tag[attr="value"] and [attr], matched in the whole subtree.
   querySelectorAll(selector) {
+    const attribute = ATTRIBUTE_SELECTOR.exec(selector);
+    if (attribute) return descendants(this).filter((el) => el._attrs.has(attribute[1]));
     const parsed = SIMPLE_SELECTOR.exec(selector);
     if (!parsed) throw new Error("FakeElement.querySelectorAll: unsupported selector " + selector);
     const [, tag, attr, expected] = parsed;
@@ -267,9 +270,31 @@ const DEFAULT_RESULTS = {
   },
 };
 
+// browser.i18n.getMessage on extension/_locales/en/messages.json, as Thunderbird resolves it: the $NAME$
+// placeholders take their content, then $1-$9 take the substitutions. So the English of the page comes from
+// messages.json, and every English assertion below also checks it.
+const readMessages = (lang) => JSON.parse(fs.readFileSync(path.resolve(__dirname, `../extension/_locales/${lang}/messages.json`), "utf8"));
+const enMessages = readMessages("en");
+
+function getMessage(messages, key, substitutions) {
+  const entry = messages[key];
+  if (!entry) return "";
+  const values = substitutions === undefined ? [] : [].concat(substitutions);
+  for (const value of values) assert.equal(typeof value, "string", `getMessage("${key}"): substitutions are strings`);
+  const placeholders = entry.placeholders || {};
+  const expanded = entry.message.replace(/\$([A-Za-z0-9_@]+)\$/g, (whole, name) => {
+    const placeholder = placeholders[name.toLowerCase()];
+    return placeholder ? placeholder.content : whole;
+  });
+  return expanded.replace(/\$(?:([1-9]\d*)|(\$+))/g, (whole, index, dollars) => {
+    if (index) return values[Number(index) - 1] ?? "";
+    return dollars;
+  });
+}
+
 // A result is a constant (returned as a copy), or a function of the call
 // arguments that returns the result or throws.
-function makeBrowser(overrides, openDefaultBrowser) {
+function makeBrowser(overrides, openDefaultBrowser, messages = enMessages) {
   const calls = [];
   const results = { ...DEFAULT_RESULTS, ...overrides };
   const commonpostMcp = {};
@@ -280,7 +305,7 @@ function makeBrowser(overrides, openDefaultBrowser) {
       return typeof result === "function" ? result(...args) : structuredClone(result);
     };
   }
-  return { calls, browser: { commonpostMcp, windows: { openDefaultBrowser } } };
+  return { calls, browser: { commonpostMcp, windows: { openDefaultBrowser }, i18n: { getMessage: (key, substitutions) => getMessage(messages, key, substitutions) } } };
 }
 
 // ---------------------------------------------------------------------------
@@ -295,13 +320,14 @@ async function settle() {
 
 // `options.clipboard`: undefined = a recording clipboard, null = no clipboard API, or a custom object.
 // `options.openDefaultBrowser`: replaces the recording fake.
+// `options.messages`: the messages.json the page reads (default: English).
 async function openPage(overrides = {}, options = {}) {
   const { document, ids } = makeDocument();
   const opened = [];
   const clipboardWrites = [];
   const consoleErrors = [];
   const openDefaultBrowser = options.openDefaultBrowser || (async (url) => { opened.push(url); });
-  const { browser, calls } = makeBrowser(overrides, openDefaultBrowser);
+  const { browser, calls } = makeBrowser(overrides, openDefaultBrowser, options.messages);
   let clipboard = options.clipboard;
   if (clipboard === undefined) {
     clipboard = { writeText: async (text) => { clipboardWrites.push(text); } };
@@ -1910,5 +1936,71 @@ describe("options page: bridge status", () => {
     assert.equal(page.$("bridgeRefreshStatus").textContent, "");
     assert.equal(page.$("bridgeRefreshStatus").className, "save-status");
     assert.equal(page.$("bridgeList").children.length, 1);
+  });
+});
+
+describe("options page: in French", () => {
+  const fr = readMessages("fr");
+  const openFrench = (overrides) => openPage(overrides, { messages: fr });
+
+  it("translates the page, its buttons and the placeholder of the token field", async () => {
+    const page = await openFrench();
+    assert.equal(page.$("retryStartBtn").textContent, "Réessayer de démarrer");
+    assert.equal(page.$("saveBtn").textContent, "Enregistrer");
+    assert.equal(page.$("bridgeEmpty").textContent, "Aucune passerelle ne s'est connectée depuis le démarrage de Thunderbird.");
+    assert.equal(page.$("currentAuthToken").getAttribute("placeholder"), "Non disponible");
+    assert.equal(page.$("listenAllWarning").textContent, fr.listenAllWarning.message);
+  });
+
+  it("builds its statuses and summaries in French", async () => {
+    const page = await openFrench();
+    assert.equal(page.$("statusText").textContent, "En marche");
+    assert.equal(page.$("toolSummary").textContent, "(4 sur 5 activés)");
+    assert.equal(
+      page.$("bridgeThresholds").textContent,
+      "Ce module (version 0.18.0) recommande la passerelle 0.17.0 ou plus récente. La passerelle publiée avec lui est la 0.18.0.",
+    );
+    await page.click("saveBtn");
+    assert.equal(page.$("saveStatus").textContent, "Enregistré.");
+  });
+
+  it("translates group names and tool titles by id, and keeps a label it does not know", async () => {
+    const page = await openFrench({
+      getToolAccessConfig: {
+        ...TOOL_CONFIG,
+        tools: TOOL_CONFIG.tools.map((tool) => (tool.name === "searchMessages" ? { ...tool, title: "Search Mail" } : tool)),
+      },
+    });
+    const rows = toolRows(page.$("toolList"));
+    assert.deepEqual(rows.slice(0, 5), ["group Accounts", "crud Lecture", "tool listAccounts", "group Courrier", "crud Lecture"]);
+    assert.ok(rows.includes("tool Rechercher dans le courrier"), rows.join("; "));
+    const required = descendants(page.$("toolList")).find((el) => el.className === "account-type");
+    assert.equal(required.textContent, "requis");
+  });
+
+  it("keeps code and links inside the translated bridge steps", async () => {
+    const page = await openFrench({
+      getBridgeStatus: {
+        ...DEFAULT_RESULTS.getBridgeStatus,
+        bridges: [{
+          version: "0.16.0", packaging: "file", profile: "", lastSeen: "2026-11-03T12:00:00.000Z",
+          state: "update-recommended", releaseUrl: "https://github.com/commonpost/thunderbird-mcp/releases/latest",
+        }],
+      },
+    });
+    const li = page.$("bridgeList").children[0];
+    const steps = li.children.find((el) => el.tagName === "OL").children;
+    assert.equal(steps[0].textContent, "Téléchargez mcp-bridge.cjs.");
+    assert.equal(steps[0].children.find((el) => el.tagName === "A").textContent, "mcp-bridge.cjs");
+    assert.equal(steps[1].children[0].textContent, "Mettez le fichier téléchargé à la place du ");
+    assert.equal(steps[1].children[1].tagName, "CODE");
+    assert.equal(steps[1].children[1].textContent, "mcp-bridge.cjs");
+    const where = steps[1].children.find((el) => el.tagName === "UL").children.map((item) => item.textContent);
+    assert.deepEqual(where, [
+      "Claude Code\u00a0: claude mcp list donne le nom du serveur, claude mcp get <name> affiche le chemin.",
+      "Autres clients\u00a0: le chemin figure dans les arguments du serveur, dans la configuration MCP du client.",
+    ]);
+    assert.equal(li.children[1].textContent, "Installée sous forme de\u00a0: fichier mcp-bridge.cjs");
+    assert.equal(li.children[3].textContent, "État\u00a0: Mise à jour recommandée.");
   });
 });

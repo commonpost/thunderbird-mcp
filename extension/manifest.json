@@ -2,7 +2,8 @@
   "manifest_version": 2,
   "name": "Commonpost MCP for Thunderbird",
   "version": "0.20.2",
-  "description": "Lets AI assistants (MCP) search and write your Thunderbird mail, calendar, contacts and filters. Runs on this computer only.",
+  "description": "__MSG_extensionDescription__",
+  "default_locale": "en",
   "homepage_url": "https://github.com/commonpost/thunderbird-mcp",
   "developer": {
     "name": "Commonpost contributors",

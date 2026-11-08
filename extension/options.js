@@ -36,6 +36,67 @@ const generateStableAuthTokenBtn = document.getElementById("generateStableAuthTo
 const regenerateStableAuthTokenBtn = document.getElementById("regenerateStableAuthTokenBtn");
 const stableAuthTokenStatus = document.getElementById("stableAuthTokenStatus");
 
+// --- Language ---
+// The page shows Thunderbird's language when _locales has it, English otherwise. The English text stays in
+// options.html and in the fallbacks below, so the page reads the same without browser.i18n (tests).
+const i18n = (typeof browser !== "undefined" && browser.i18n) ? browser.i18n : null;
+
+// The message `key` of _locales/<lang>/messages.json, with its $1-$9 `substitutions`, or `fallback` (the English text).
+function t(key, substitutions, fallback) {
+  if (!i18n || !key) return fallback;
+  try {
+    const text = substitutions == null
+      ? i18n.getMessage(key)
+      : i18n.getMessage(key, substitutions.map((value) => String(value)));
+    return text || fallback;
+  } catch (e) {
+    console.error("commonpost-mcp options:", "getMessage failed:", key, e);
+    return fallback;
+  }
+}
+
+// A message holding code or a link: `fallback` is the English as a list of parts (text, { code } or an element),
+// and the message has one placeholder per part that is not text, in the same order. Returns the parts in the
+// language of the page, for bridgeRich.
+const PART_MARK = "\u0001";
+function tParts(key, fallback) {
+  const parts = fallback.filter((part) => typeof part !== "string");
+  const text = t(key, parts.map((_, i) => `${PART_MARK}${i}${PART_MARK}`), "");
+  if (!text) return fallback;
+  return text.split(PART_MARK).map((piece, i) => (i % 2 ? parts[Number(piece)] : piece)).filter((piece) => piece !== "" && piece !== undefined);
+}
+
+// "en" when the page is in English (also without browser.i18n), else the language of _locales in use.
+const pageLanguage = t("pageLanguage", null, "en");
+
+// Labels sent by the add-on (group names, tool titles) are English: another language replaces them by id.
+function addonLabel(key, english) {
+  return pageLanguage === "en" ? english : t(key, null, english);
+}
+
+function errorText(e) {
+  return t("errorWithMessage", [e.message], `Error: ${e.message}`);
+}
+
+// Elements of options.html with data-i18n (text), data-i18n-placeholder or data-i18n-aria-label get their message.
+function localizePage() {
+  if (!i18n) return;
+  const attributes = [["data-i18n-placeholder", "placeholder"], ["data-i18n-aria-label", "aria-label"]];
+  for (const el of document.querySelectorAll("[data-i18n]")) {
+    const text = t(el.getAttribute("data-i18n"), null, "");
+    if (text) el.textContent = text;
+  }
+  for (const [marker, attribute] of attributes) {
+    for (const el of document.querySelectorAll(`[${marker}]`)) {
+      const text = t(el.getAttribute(marker), null, "");
+      if (text) el.setAttribute(attribute, text);
+    }
+  }
+  if (document.documentElement) document.documentElement.lang = pageLanguage;
+}
+
+localizePage();
+
 let currentAccounts = [];
 let currentTools = [];
 let getMessagesLimitInput = null;
@@ -45,7 +106,10 @@ let getMessagesLimitStatus = null;
 // Thunderbird's account types as a user knows them; Local Folders has the type "none".
 const ACCOUNT_TYPE_LABELS = { none: "local", pop3: "POP3", imap: "IMAP", nntp: "news", rss: "feeds", ews: "Exchange", owl: "Exchange" };
 
+const ACCOUNT_TYPE_MESSAGES = { none: "accountTypeLocal", nntp: "accountTypeNews", rss: "accountTypeFeeds" };
+
 const CRUD_LABELS = { read: "Read", create: "Create", update: "Change", delete: "Delete" };
+const CRUD_MESSAGES = { read: "crudRead", create: "crudCreate", update: "crudUpdate", delete: "crudDelete" };
 
 // "all 42 on" or "38 of 42 on", next to "Choose tools one by one", so a closed list still tells its state.
 function updateToolSummary() {
@@ -55,7 +119,9 @@ function updateToolSummary() {
     return;
   }
   const on = boxes.filter((cb) => cb.checked).length;
-  toolSummary.textContent = on === boxes.length ? `(all ${on} on)` : `(${on} of ${boxes.length} on)`;
+  toolSummary.textContent = on === boxes.length
+    ? t("toolSummaryAll", [on], `(all ${on} on)`)
+    : t("toolSummarySome", [on, boxes.length], `(${on} of ${boxes.length} on)`);
 }
 
 function validateGetMessagesLimitInput() {
@@ -68,7 +134,7 @@ function validateGetMessagesLimitInput() {
   if (!valid) {
     getMessagesLimitInput.setAttribute("aria-invalid", "true");
     if (getMessagesLimitStatus) {
-      getMessagesLimitStatus.textContent = `Enter an integer from ${min} to ${max}.`;
+      getMessagesLimitStatus.textContent = t("limitRange", [min, max], `Enter an integer from ${min} to ${max}.`);
     }
     return null;
   }
@@ -84,18 +150,18 @@ async function loadServerInfo() {
     const info = await browser.commonpostMcp.getServerInfo();
     if (info.running) {
       statusDot.className = "status-dot running";
-      statusText.textContent = "Running";
+      statusText.textContent = t("statusRunning", null, "Running");
       serverPort.textContent = info.port || "--";
       connFile.textContent = info.connectionFile || "--";
     } else if (info.startError) {
       // A failed start used to be shown as "Running" (#179): show the error.
       statusDot.className = "status-dot stopped";
-      statusText.textContent = "Start failed";
+      statusText.textContent = t("statusStartFailed", null, "Start failed");
       serverPort.textContent = "--";
       connFile.textContent = "--";
     } else {
       statusDot.className = "status-dot stopped";
-      statusText.textContent = "Not running";
+      statusText.textContent = t("statusNotRunning", null, "Not running");
       serverPort.textContent = "--";
       connFile.textContent = "--";
     }
@@ -104,7 +170,7 @@ async function loadServerInfo() {
       // Offered whenever the server is not bound (failed or never started).
       startErrorText.textContent = info.startError
         ? info.startError + (info.startErrorAt ? " (" + info.startErrorAt.replace("T", " ").replace(/\.\d+Z$/, " UTC") + ")" : "")
-        : "Server is not running.";
+        : t("serverNotRunning", null, "Server is not running.");
       startErrorRow.hidden = false;
     } else {
       startErrorRow.hidden = true;
@@ -134,7 +200,7 @@ async function loadServerInfo() {
     }
   } catch (e) {
     statusDot.className = "status-dot stopped";
-    statusText.textContent = "Error: " + e.message;
+    statusText.textContent = errorText(e);
   }
 }
 
@@ -160,14 +226,14 @@ async function requestGeneratedAuthToken() {
     throw new Error(result.error);
   }
   if (!result.authToken) {
-    throw new Error("Generated token was empty");
+    throw new Error(t("generatedTokenEmpty", null, "Generated token was empty"));
   }
   return result.authToken;
 }
 
-async function saveStableAuthTokenValue(value, successMessage = "Saved.") {
+async function saveStableAuthTokenValue(value, successMessage = t("saved", null, "Saved.")) {
   const stableAuthToken = value.trim();
-  setStableAuthTokenStatus("Saving...");
+  setStableAuthTokenStatus(t("saving", null, "Saving..."));
   const result = await browser.commonpostMcp.setStableAuthToken(stableAuthToken);
   if (result.error) {
     setStableAuthTokenStatus(result.error, true);
@@ -183,7 +249,7 @@ async function updateStoredStableAuthToken(value, successMessage) {
   try {
     await saveStableAuthTokenValue(value, successMessage);
   } catch (e) {
-    setStableAuthTokenStatus("Error: " + e.message, true);
+    setStableAuthTokenStatus(errorText(e), true);
   }
   setStableAuthTokenBusy(false);
   updateStableAuthTokenControls();
@@ -196,7 +262,7 @@ async function generateAndStoreStableAuthToken(successMessage) {
     stableAuthTokenInput.value = token;
     await saveStableAuthTokenValue(token, successMessage);
   } catch (e) {
-    setStableAuthTokenStatus("Error: " + e.message, true);
+    setStableAuthTokenStatus(errorText(e), true);
   }
   setStableAuthTokenBusy(false);
   updateStableAuthTokenControls();
@@ -218,9 +284,9 @@ async function loadAuthenticationConfig() {
     updateStableAuthTokenControls();
     setStableAuthTokenStatus("");
   } catch (e) {
-    copyAuthTokenStatus.textContent = "Error loading token: " + e.message;
+    copyAuthTokenStatus.textContent = t("errorLoadingToken", [e.message], `Error loading token: ${e.message}`);
     copyAuthTokenStatus.className = "save-status error";
-    setStableAuthTokenStatus("Error loading setting: " + e.message, true);
+    setStableAuthTokenStatus(t("errorLoadingSetting", [e.message], `Error loading setting: ${e.message}`), true);
   }
 }
 
@@ -230,9 +296,9 @@ copyAuthTokenBtn.addEventListener("click", async () => {
   copyAuthTokenBtn.disabled = true;
   try {
     await navigator.clipboard.writeText(currentAuthTokenInput.value);
-    copyAuthTokenStatus.textContent = "Copied.";
+    copyAuthTokenStatus.textContent = t("copied", null, "Copied.");
   } catch (e) {
-    copyAuthTokenStatus.textContent = "Error: " + e.message;
+    copyAuthTokenStatus.textContent = errorText(e);
     copyAuthTokenStatus.className = "save-status error";
   }
   copyAuthTokenBtn.disabled = !currentAuthTokenInput.value;
@@ -242,13 +308,13 @@ useStableAuthTokenCheckbox.addEventListener("change", async () => {
   updateStableAuthTokenControls();
   if (useStableAuthTokenCheckbox.checked) {
     if (!stableAuthTokenInput.value.trim()) {
-      await generateAndStoreStableAuthToken("Generated and saved.");
+      await generateAndStoreStableAuthToken(t("generatedAndSaved", null, "Generated and saved."));
     } else {
-      await updateStoredStableAuthToken(stableAuthTokenInput.value, "Saved.");
+      await updateStoredStableAuthToken(stableAuthTokenInput.value, t("saved", null, "Saved."));
     }
   } else {
     stableAuthTokenInput.value = "";
-    await updateStoredStableAuthToken("", "Stable token cleared.");
+    await updateStoredStableAuthToken("", t("stableTokenCleared", null, "Stable token cleared."));
   }
 });
 
@@ -257,18 +323,18 @@ stableAuthTokenInput.addEventListener("change", async () => {
     return;
   }
   if (!stableAuthTokenInput.value.trim()) {
-    await generateAndStoreStableAuthToken("Generated and saved.");
+    await generateAndStoreStableAuthToken(t("generatedAndSaved", null, "Generated and saved."));
   } else {
-    await updateStoredStableAuthToken(stableAuthTokenInput.value, "Saved.");
+    await updateStoredStableAuthToken(stableAuthTokenInput.value, t("saved", null, "Saved."));
   }
 });
 
 generateStableAuthTokenBtn.addEventListener("click", async () => {
-  await generateAndStoreStableAuthToken("Generated and saved.");
+  await generateAndStoreStableAuthToken(t("generatedAndSaved", null, "Generated and saved."));
 });
 
 regenerateStableAuthTokenBtn.addEventListener("click", async () => {
-  await generateAndStoreStableAuthToken("Regenerated and saved.");
+  await generateAndStoreStableAuthToken(t("regeneratedAndSaved", null, "Regenerated and saved."));
 });
 
 let accountRestrictionInvalid = false;
@@ -282,11 +348,13 @@ async function loadAccountAccess() {
     openAllConfirmed = false;
 
     if (currentAccounts.length === 0) {
-      accountList.innerHTML = "<li>No accounts found.</li>";
+      const empty = document.createElement("li");
+      empty.textContent = t("noAccounts", null, "No accounts found.");
+      accountList.replaceChildren(empty);
       return;
     }
 
-    accountList.innerHTML = "";
+    accountList.replaceChildren();
     for (const acct of currentAccounts) {
       const li = document.createElement("li");
       const checkbox = document.createElement("input");
@@ -302,7 +370,7 @@ async function loadAccountAccess() {
 
       const typeSpan = document.createElement("span");
       typeSpan.className = "account-type";
-      typeSpan.textContent = ACCOUNT_TYPE_LABELS[acct.type] || acct.type;
+      typeSpan.textContent = t(ACCOUNT_TYPE_MESSAGES[acct.type], null, ACCOUNT_TYPE_LABELS[acct.type] || acct.type);
       label.appendChild(typeSpan);
 
       li.appendChild(checkbox);
@@ -312,16 +380,15 @@ async function loadAccountAccess() {
 
     saveBtn.disabled = false;
     if (accountRestrictionInvalid) {
-      saveStatus.textContent = "The saved account restriction could not be read: every account is blocked until you save a new choice.";
+      saveStatus.textContent = t("accountRestrictionUnreadable", null, "The saved account restriction could not be read: every account is blocked until you save a new choice.");
       saveStatus.className = "save-status error";
     } else {
       saveStatus.textContent = "";
     }
   } catch (e) {
-    accountList.innerHTML = "";
     const li = document.createElement("li");
-    li.textContent = "Error loading accounts: " + e.message;
-    accountList.appendChild(li);
+    li.textContent = t("errorLoadingAccounts", [e.message], `Error loading accounts: ${e.message}`);
+    accountList.replaceChildren(li);
   }
 }
 
@@ -348,7 +415,7 @@ saveBtn.addEventListener("click", async () => {
 
   // An empty selection is not "allow all": refuse it rather than open everything.
   if (checked.length === 0) {
-    saveStatus.textContent = "Select at least one account.";
+    saveStatus.textContent = t("selectOneAccount", null, "Select at least one account.");
     saveStatus.className = "save-status error";
     saveBtn.disabled = false;
     return;
@@ -356,7 +423,7 @@ saveBtn.addEventListener("click", async () => {
   // After an unreadable restriction, opening every account takes a second click.
   if (allChecked && accountRestrictionInvalid && !openAllConfirmed) {
     openAllConfirmed = true;
-    saveStatus.textContent = "The saved restriction was unreadable and everything is blocked. Click Save again to allow every account.";
+    saveStatus.textContent = t("confirmOpenAll", null, "The saved restriction was unreadable and everything is blocked. Click Save again to allow every account.");
     saveStatus.className = "save-status error";
     saveBtn.disabled = false;
     return;
@@ -373,10 +440,10 @@ saveBtn.addEventListener("click", async () => {
     } else {
       // Reload to reflect updated state; the reload clears the status line, so confirm after it
       await loadAccountAccess();
-      if (!saveStatus.textContent) saveStatus.textContent = "Saved.";
+      if (!saveStatus.textContent) saveStatus.textContent = t("saved", null, "Saved.");
     }
   } catch (e) {
-    saveStatus.textContent = "Error: " + e.message;
+    saveStatus.textContent = errorText(e);
     saveStatus.className = "save-status error";
   }
   saveBtn.disabled = false;
@@ -389,18 +456,20 @@ async function loadToolAccess() {
     const groupLabels = data.groups || {};
     const newTools = Array.isArray(data.newTools) ? data.newTools : [];
     newToolsNote.textContent = newTools.length
-      ? `Added by an update and disabled because you restricted the tools: ${newTools.join(", ")}. Check and save to enable.`
+      ? t("newToolsNote", [newTools.join(", ")], `Added by an update and disabled because you restricted the tools: ${newTools.join(", ")}. Check and save to enable.`)
       : "";
     newToolsNote.hidden = newTools.length === 0;
     // Tools that wait for the user's choice are shown, not folded away.
     if (newTools.length) toolDetails.open = true;
 
     if (currentTools.length === 0) {
-      toolList.innerHTML = "<li>No tools found.</li>";
+      const empty = document.createElement("li");
+      empty.textContent = t("noTools", null, "No tools found.");
+      toolList.replaceChildren(empty);
       return;
     }
 
-    toolList.innerHTML = "";
+    toolList.replaceChildren();
     getMessagesLimitInput = null;
     getMessagesLimitStatus = null;
 
@@ -419,7 +488,7 @@ async function loadToolAccess() {
         currentCrud = null;
         const header = document.createElement("li");
         header.className = "tool-group-header";
-        header.textContent = groupLabels[group] || group.charAt(0).toUpperCase() + group.slice(1);
+        header.textContent = addonLabel("toolGroup_" + group, groupLabels[group] || group.charAt(0).toUpperCase() + group.slice(1));
         toolList.appendChild(header);
       }
 
@@ -428,7 +497,7 @@ async function loadToolAccess() {
         currentCrud = crud;
         const subHeader = document.createElement("li");
         subHeader.className = "tool-crud-header";
-        subHeader.textContent = CRUD_LABELS[crud] || crud.charAt(0).toUpperCase() + crud.slice(1);
+        subHeader.textContent = t(CRUD_MESSAGES[crud], null, CRUD_LABELS[crud] || crud.charAt(0).toUpperCase() + crud.slice(1));
         toolList.appendChild(subHeader);
       }
 
@@ -461,7 +530,7 @@ async function loadToolAccess() {
       const label = document.createElement("label");
       label.htmlFor = checkbox.id;
       // The tool's title in words, then its name as clients see it.
-      label.textContent = tool.title || tool.name;
+      label.textContent = tool.title ? addonLabel("toolTitle_" + tool.name, tool.title) : tool.name;
       if (tool.title) {
         const nameSpan = document.createElement("code");
         nameSpan.className = "tool-name";
@@ -471,13 +540,13 @@ async function loadToolAccess() {
       if (tool.undisableable) {
         const lockSpan = document.createElement("span");
         lockSpan.className = "account-type";
-        lockSpan.textContent = "required";
+        lockSpan.textContent = t("toolRequired", null, "required");
         label.appendChild(lockSpan);
       }
       if (tool.isNew) {
         const newSpan = document.createElement("span");
         newSpan.className = "account-type";
-        newSpan.textContent = "new";
+        newSpan.textContent = t("toolNew", null, "new");
         label.appendChild(newSpan);
       }
 
@@ -490,7 +559,7 @@ async function loadToolAccess() {
         const limitLabel = document.createElement("label");
         limitLabel.htmlFor = "getMessagesLimit";
         // headersOnly reads headers only, up to its own fixed limit
-        limitLabel.textContent = "Max full messages per call";
+        limitLabel.textContent = t("getMessagesLimitLabel", null, "Max full messages per call");
 
         getMessagesLimitInput = document.createElement("input");
         getMessagesLimitInput.type = "text";
@@ -525,10 +594,9 @@ async function loadToolAccess() {
     saveToolsStatus.textContent = "";
     updateToolSummary();
   } catch (e) {
-    toolList.innerHTML = "";
     const li = document.createElement("li");
-    li.textContent = "Error loading tools: " + e.message;
-    toolList.appendChild(li);
+    li.textContent = t("errorLoadingTools", [e.message], `Error loading tools: ${e.message}`);
+    toolList.replaceChildren(li);
   }
 }
 
@@ -549,7 +617,7 @@ saveToolsBtn.addEventListener("click", async () => {
   if (getMessagesLimitInput && !getMessagesLimitInput.disabled) {
     getMessagesLimit = validateGetMessagesLimitInput();
     if (getMessagesLimit === null) {
-      saveToolsStatus.textContent = "Fix the highlighted getMessages limit before saving.";
+      saveToolsStatus.textContent = t("fixLimit", null, "Fix the highlighted getMessages limit before saving.");
       saveToolsStatus.className = "save-status error";
       saveToolsBtn.disabled = false;
       return;
@@ -564,10 +632,10 @@ saveToolsBtn.addEventListener("click", async () => {
     } else {
       // The reload clears the status line, so confirm after it
       await loadToolAccess();
-      if (!saveToolsStatus.textContent) saveToolsStatus.textContent = "Saved.";
+      if (!saveToolsStatus.textContent) saveToolsStatus.textContent = t("saved", null, "Saved.");
     }
   } catch (e) {
-    saveToolsStatus.textContent = "Error: " + e.message;
+    saveToolsStatus.textContent = errorText(e);
     saveToolsStatus.className = "save-status error";
   }
   saveToolsBtn.disabled = false;
@@ -592,14 +660,14 @@ async function loadSkipReviewPref() {
     saveSkipReviewBtn.disabled = false;
     saveSkipReviewStatus.textContent = "";
   } catch (e) {
-    saveSkipReviewStatus.textContent = "Error loading setting: " + e.message;
+    saveSkipReviewStatus.textContent = t("errorLoadingSetting", [e.message], `Error loading setting: ${e.message}`);
     saveSkipReviewStatus.className = "save-status error";
   }
 }
 
 saveSkipReviewBtn.addEventListener("click", async () => {
   saveSkipReviewBtn.disabled = true;
-  saveSkipReviewStatus.textContent = "Saving...";
+  saveSkipReviewStatus.textContent = t("saving", null, "Saving...");
   saveSkipReviewStatus.className = "save-status";
   try {
     // The block for events and tasks first: while it is not set it follows
@@ -612,10 +680,10 @@ saveSkipReviewBtn.addEventListener("click", async () => {
       saveSkipReviewStatus.textContent = result.error;
       saveSkipReviewStatus.className = "save-status error";
     } else {
-      saveSkipReviewStatus.textContent = "Saved.";
+      saveSkipReviewStatus.textContent = t("saved", null, "Saved.");
     }
   } catch (e) {
-    saveSkipReviewStatus.textContent = "Error: " + e.message;
+    saveSkipReviewStatus.textContent = errorText(e);
     saveSkipReviewStatus.className = "save-status error";
   }
   saveSkipReviewBtn.disabled = false;
@@ -638,7 +706,7 @@ async function loadFilterSendRulePolicy() {
     saveFilterSendRulePolicyBtn.disabled = false;
     saveFilterSendRulePolicyStatus.textContent = "";
   } catch (e) {
-    saveFilterSendRulePolicyStatus.textContent = "Error loading setting: " + e.message;
+    saveFilterSendRulePolicyStatus.textContent = t("errorLoadingSetting", [e.message], `Error loading setting: ${e.message}`);
     saveFilterSendRulePolicyStatus.className = "save-status error";
   }
 }
@@ -646,12 +714,12 @@ async function loadFilterSendRulePolicy() {
 saveFilterSendRulePolicyBtn.addEventListener("click", async () => {
   const chosen = Array.from(filterSendRulePolicyRadios).find((radio) => radio.checked);
   if (!chosen) {
-    saveFilterSendRulePolicyStatus.textContent = "Choose one of the two options.";
+    saveFilterSendRulePolicyStatus.textContent = t("chooseOneOption", null, "Choose one of the two options.");
     saveFilterSendRulePolicyStatus.className = "save-status error";
     return;
   }
   saveFilterSendRulePolicyBtn.disabled = true;
-  saveFilterSendRulePolicyStatus.textContent = "Saving...";
+  saveFilterSendRulePolicyStatus.textContent = t("saving", null, "Saving...");
   saveFilterSendRulePolicyStatus.className = "save-status";
   try {
     const result = await browser.commonpostMcp.setBlockFilterForwardReply(chosen.value === "block");
@@ -659,10 +727,10 @@ saveFilterSendRulePolicyBtn.addEventListener("click", async () => {
       saveFilterSendRulePolicyStatus.textContent = result.error;
       saveFilterSendRulePolicyStatus.className = "save-status error";
     } else {
-      saveFilterSendRulePolicyStatus.textContent = "Saved.";
+      saveFilterSendRulePolicyStatus.textContent = t("saved", null, "Saved.");
     }
   } catch (e) {
-    saveFilterSendRulePolicyStatus.textContent = "Error: " + e.message;
+    saveFilterSendRulePolicyStatus.textContent = errorText(e);
     saveFilterSendRulePolicyStatus.className = "save-status error";
   }
   saveFilterSendRulePolicyBtn.disabled = false;
@@ -680,14 +748,14 @@ async function loadEncryptedContentPref() {
     saveEncryptedContentBtn.disabled = false;
     saveEncryptedContentStatus.textContent = "";
   } catch (e) {
-    saveEncryptedContentStatus.textContent = "Error loading setting: " + e.message;
+    saveEncryptedContentStatus.textContent = t("errorLoadingSetting", [e.message], `Error loading setting: ${e.message}`);
     saveEncryptedContentStatus.className = "save-status error";
   }
 }
 
 saveEncryptedContentBtn.addEventListener("click", async () => {
   saveEncryptedContentBtn.disabled = true;
-  saveEncryptedContentStatus.textContent = "Saving...";
+  saveEncryptedContentStatus.textContent = t("saving", null, "Saving...");
   saveEncryptedContentStatus.className = "save-status";
   try {
     const result = await browser.commonpostMcp.setAllowEncryptedContent(allowEncryptedContentCheckbox.checked);
@@ -695,10 +763,10 @@ saveEncryptedContentBtn.addEventListener("click", async () => {
       saveEncryptedContentStatus.textContent = result.error;
       saveEncryptedContentStatus.className = "save-status error";
     } else {
-      saveEncryptedContentStatus.textContent = "Saved.";
+      saveEncryptedContentStatus.textContent = t("saved", null, "Saved.");
     }
   } catch (e) {
-    saveEncryptedContentStatus.textContent = "Error: " + e.message;
+    saveEncryptedContentStatus.textContent = errorText(e);
     saveEncryptedContentStatus.className = "save-status error";
   }
   saveEncryptedContentBtn.disabled = false;
@@ -725,7 +793,7 @@ async function loadListenAllPref() {
     saveListenAllBtn.disabled = false;
     saveListenAllStatus.textContent = "";
   } catch (e) {
-    saveListenAllStatus.textContent = "Error loading setting: " + e.message;
+    saveListenAllStatus.textContent = t("errorLoadingSetting", [e.message], `Error loading setting: ${e.message}`);
     saveListenAllStatus.className = "save-status error";
   }
 }
@@ -736,7 +804,7 @@ listenAllCheckbox.addEventListener("change", () => {
 
 saveListenAllBtn.addEventListener("click", async () => {
   saveListenAllBtn.disabled = true;
-  saveListenAllStatus.textContent = "Saving...";
+  saveListenAllStatus.textContent = t("saving", null, "Saving...");
   saveListenAllStatus.className = "save-status";
   try {
     const result = await browser.commonpostMcp.setListenAll(listenAllCheckbox.checked);
@@ -744,11 +812,11 @@ saveListenAllBtn.addEventListener("click", async () => {
       saveListenAllStatus.textContent = result.error;
       saveListenAllStatus.className = "save-status error";
     } else {
-      saveListenAllStatus.textContent = "Saved.";
+      saveListenAllStatus.textContent = t("saved", null, "Saved.");
       await loadServerInfo();
     }
   } catch (e) {
-    saveListenAllStatus.textContent = "Error: " + e.message;
+    saveListenAllStatus.textContent = errorText(e);
     saveListenAllStatus.className = "save-status error";
   }
   saveListenAllBtn.disabled = false;
@@ -759,18 +827,21 @@ loadListenAllPref();
 // --- Retry a failed start (#179) ---
 retryStartBtn.addEventListener("click", async () => {
   retryStartBtn.disabled = true;
-  retryStartStatus.textContent = "Starting...";
+  retryStartStatus.textContent = t("starting", null, "Starting...");
   retryStartStatus.className = "save-status";
   try {
     const result = await browser.commonpostMcp.retryStart();
     if (result && result.success) {
-      retryStartStatus.textContent = result.alreadyRunning ? "Already running." : "Started.";
+      retryStartStatus.textContent = result.alreadyRunning
+        ? t("alreadyRunning", null, "Already running.")
+        : t("started", null, "Started.");
     } else {
-      retryStartStatus.textContent = "Failed: " + ((result && result.error) || "unknown error");
+      const reason = (result && result.error) || t("unknownError", null, "unknown error");
+      retryStartStatus.textContent = t("retryFailed", [reason], `Failed: ${reason}`);
       retryStartStatus.className = "save-status error";
     }
   } catch (e) {
-    retryStartStatus.textContent = "Error: " + e.message;
+    retryStartStatus.textContent = errorText(e);
     retryStartStatus.className = "save-status error";
   }
   retryStartBtn.disabled = false;
@@ -792,6 +863,10 @@ const BRIDGE_PACKAGING_LABELS = {
   mcpb: ".mcpb bundle (Claude Desktop)",
   file: "mcp-bridge.cjs file",
 };
+const BRIDGE_PACKAGING_MESSAGES = {
+  mcpb: "bridgePackagingMcpb",
+  file: "bridgePackagingFile",
+};
 const BRIDGE_STATE_LABELS = {
   "up-to-date": "Up to date.",
   "newer-available": "Newer version available: this bridge works, the update is optional.",
@@ -801,28 +876,42 @@ const BRIDGE_STATE_LABELS = {
   "refused": "Refused: older than the security floor of this add-on (no tool works with it).",
   "newer-than-add-on": "Newer than this add-on: in Add-ons and Themes, choose Check for Updates in the gear menu, then restart Thunderbird.",
 };
+const BRIDGE_STATE_MESSAGES = {
+  "up-to-date": "bridgeStateUpToDate",
+  "newer-available": "bridgeStateNewerAvailable",
+  "update-recommended": "bridgeStateUpdateRecommended",
+  "unversioned": "bridgeStateUnversioned",
+  "development": "bridgeStateDevelopment",
+  "refused": "bridgeStateRefused",
+  "newer-than-add-on": "bridgeStateNewerThanAddOn",
+};
 // How to update, step by step, with a direct link to the file: a user sent to the release page has to pick one file
-// out of seven and still find where it goes. A step is a list of parts: text, or { code } for a command or a name.
+// out of seven and still find where it goes. A step is a message key and its English as a list of parts: text,
+// or { code } for a command or a name (see tParts).
 const BRIDGE_UPDATE_STEPS = {
   mcpb: [
-    { text: ["Open the downloaded file with Claude Desktop: it replaces the installed bundle. If it does not open there (Windows), use Settings > Extensions > Advanced settings > Install Extension."] },
+    { key: "bridgeStepMcpbOpen", text: ["Open the downloaded file with Claude Desktop: it replaces the installed bundle. If it does not open there (Windows), use Settings > Extensions > Advanced settings > Install Extension."] },
   ],
   file: [
     {
+      key: "bridgeStepFileReplace",
       text: ["Put the downloaded file in place of the ", { code: "mcp-bridge.cjs" }, " that your MCP client starts: same name, same folder."],
       where: [
-        ["Claude Code: ", { code: "claude mcp list" }, " names the server, ", { code: "claude mcp get <name>" }, " shows the path."],
-        ["Other clients: the path is in the arguments of the server, in the MCP configuration of the client."],
+        { key: "bridgeWhereClaudeCode", text: ["Claude Code: ", { code: "claude mcp list" }, " names the server, ", { code: "claude mcp get <name>" }, " shows the path."] },
+        { key: "bridgeWhereOtherClients", text: ["Other clients: the path is in the arguments of the server, in the MCP configuration of the client."] },
       ],
     },
-    { text: ["Restart the MCP client, or reconnect the server (in Claude Code: ", { code: "/mcp" }, ")."] },
+    { key: "bridgeStepRestart", text: ["Restart the MCP client, or reconnect the server (in Claude Code: ", { code: "/mcp" }, ")."] },
   ],
 };
 const BRIDGE_PLUGIN_NOTE = ["Claude Code with the Commonpost plugin: nothing to download. Run ", { code: "/plugin marketplace update commonpost" }, ", then ", { code: "/reload-plugins" }, "."];
 
+// Parts: text, { code } or an element (a link).
 function bridgeRich(el, parts) {
   for (const part of parts) {
     if (typeof part === "string") {
+      el.append(part);
+    } else if (part.nodeType) {
       el.append(part);
     } else {
       const code = document.createElement("code");
@@ -859,9 +948,11 @@ function bridgeLink(url, text) {
 
 function bridgeVersionLabel(bridge) {
   if (bridge.version === null) {
-    return bridge.packaging === "none" ? "not reported (bridge 0.11 or older, or another HTTP client)" : "unreadable";
+    return bridge.packaging === "none"
+      ? t("bridgeVersionNotReported", null, "not reported (bridge 0.11 or older, or another HTTP client)")
+      : t("bridgeVersionUnreadable", null, "unreadable");
   }
-  return bridge.version === "0.0.0" ? "development build (0.0.0)" : bridge.version;
+  return bridge.version === "0.0.0" ? t("bridgeVersionDevelopment", null, "development build (0.0.0)") : bridge.version;
 }
 
 function bridgeLine(text) {
@@ -879,52 +970,58 @@ function validBridgeVersion(version) {
 function bridgeStatusLabel(bridge, currentBridgeVersion) {
   const current = validBridgeVersion(currentBridgeVersion);
   if (bridge.state === "newer-available" && current) {
-    return `Newer version available (${current}): this bridge works, the update is optional.`;
+    return t("bridgeStateNewerAvailableVersion", [current], `Newer version available (${current}): this bridge works, the update is optional.`);
   }
-  return BRIDGE_STATE_LABELS[bridge.state] || bridge.state;
+  return t(BRIDGE_STATE_MESSAGES[bridge.state], null, BRIDGE_STATE_LABELS[bridge.state] || bridge.state);
 }
 
 function renderBridge(bridge, currentBridgeVersion) {
   const li = document.createElement("li");
   li.className = "bridge-entry";
-  li.appendChild(bridgeLine("Version: " + bridgeVersionLabel(bridge)));
-  li.appendChild(bridgeLine("Installed as: " + (BRIDGE_PACKAGING_LABELS[bridge.packaging] || "unknown")));
+  const version = bridgeVersionLabel(bridge);
+  li.appendChild(bridgeLine(t("bridgeLineVersion", [version], `Version: ${version}`)));
+  const packaging = t(BRIDGE_PACKAGING_MESSAGES[bridge.packaging], null, BRIDGE_PACKAGING_LABELS[bridge.packaging])
+    || t("bridgePackagingUnknown", null, "unknown");
+  li.appendChild(bridgeLine(t("bridgeLineInstalledAs", [packaging], `Installed as: ${packaging}`)));
   if (bridge.profile) {
-    li.appendChild(bridgeLine("Profile: " + bridge.profile));
+    li.appendChild(bridgeLine(t("bridgeLineProfile", [bridge.profile], `Profile: ${bridge.profile}`)));
   } else if (bridge.profileInvalid) {
-    li.appendChild(bridgeLine("Profile: invalid (ignored)"));
+    li.appendChild(bridgeLine(t("bridgeLineProfileInvalid", null, "Profile: invalid (ignored)")));
   }
-  li.appendChild(bridgeLine("Last seen: " + new Date(bridge.lastSeen).toLocaleString()));
-  li.appendChild(bridgeLine("Status: " + bridgeStatusLabel(bridge, currentBridgeVersion)));
+  const lastSeen = new Date(bridge.lastSeen).toLocaleString();
+  li.appendChild(bridgeLine(t("bridgeLineLastSeen", [lastSeen], `Last seen: ${lastSeen}`)));
+  const status = bridgeStatusLabel(bridge, currentBridgeVersion);
+  li.appendChild(bridgeLine(t("bridgeLineStatus", [status], `Status: ${status}`)));
   const needsUpdate = ["newer-available", "update-recommended", "unversioned", "refused"].includes(bridge.state);
   const releaseOk = BRIDGE_RELEASE_URL_PATTERN.test(bridge.releaseUrl);
   if (needsUpdate) {
-    li.appendChild(bridgeLine("To update this bridge:"));
+    li.appendChild(bridgeLine(t("bridgeToUpdate", null, "To update this bridge:")));
     const steps = document.createElement("ol");
     steps.className = "bridge-steps";
     const download = releaseOk ? bridgeDownload(bridge, currentBridgeVersion) : null;
     const first = document.createElement("li");
     if (download) {
-      first.append("Download ", bridgeLink(download.url, download.name), ".");
+      bridgeRich(first, tParts("bridgeStepDownload", ["Download ", bridgeLink(download.url, download.name), "."]));
     } else {
-      first.textContent = (bridge.packaging === "mcpb" ? "Download the .mcpb bundle" : "Download mcp-bridge.cjs")
-        + " from the release of this add-on, on the Releases page of github.com/commonpost/thunderbird-mcp.";
+      first.textContent = bridge.packaging === "mcpb"
+        ? t("bridgeStepDownloadMcpbFromRelease", null, "Download the .mcpb bundle from the release of this add-on, on the Releases page of github.com/commonpost/thunderbird-mcp.")
+        : t("bridgeStepDownloadFileFromRelease", null, "Download mcp-bridge.cjs from the release of this add-on, on the Releases page of github.com/commonpost/thunderbird-mcp.");
     }
     steps.appendChild(first);
     for (const step of BRIDGE_UPDATE_STEPS[bridge.packaging === "mcpb" ? "mcpb" : "file"]) {
-      const item = bridgeRich(document.createElement("li"), step.text);
+      const item = bridgeRich(document.createElement("li"), tParts(step.key, step.text));
       if (step.where) {
         const where = document.createElement("ul");
-        for (const parts of step.where) where.appendChild(bridgeRich(document.createElement("li"), parts));
+        for (const place of step.where) where.appendChild(bridgeRich(document.createElement("li"), tParts(place.key, place.text)));
         item.appendChild(where);
       }
       steps.appendChild(item);
     }
     li.appendChild(steps);
-    if (bridge.packaging !== "mcpb") li.appendChild(bridgeRich(bridgeLine(""), BRIDGE_PLUGIN_NOTE));
+    if (bridge.packaging !== "mcpb") li.appendChild(bridgeRich(bridgeLine(""), tParts("bridgePluginNote", BRIDGE_PLUGIN_NOTE)));
   }
   if ((needsUpdate || bridge.state === "newer-than-add-on") && releaseOk) {
-    const line = bridgeLine(needsUpdate ? "Release notes: " : "Release page: ");
+    const line = bridgeLine((needsUpdate ? t("bridgeReleaseNotes", null, "Release notes:") : t("bridgeReleasePage", null, "Release page:")) + " ");
     line.appendChild(bridgeLink(bridge.releaseUrl, bridge.releaseUrl));
     li.appendChild(line);
   }
@@ -934,21 +1031,21 @@ function renderBridge(bridge, currentBridgeVersion) {
 async function loadBridgeStatus() {
   try {
     const status = await browser.commonpostMcp.getBridgeStatus();
-    let text = status.extensionVersion
-      ? `This add-on (version ${status.extensionVersion}) recommends bridge ${status.minBridgeVersion} or newer.`
-      : `This add-on recommends bridge ${status.minBridgeVersion} or newer.`;
+    const sentences = [status.extensionVersion
+      ? t("bridgeThresholdWithVersion", [status.extensionVersion, status.minBridgeVersion], `This add-on (version ${status.extensionVersion}) recommends bridge ${status.minBridgeVersion} or newer.`)
+      : t("bridgeThreshold", [status.minBridgeVersion], `This add-on recommends bridge ${status.minBridgeVersion} or newer.`)];
     if (status.securityFloor !== "0.0.0") {
-      text += ` It refuses bridges older than ${status.securityFloor}.`;
+      sentences.push(t("bridgeThresholdFloor", [status.securityFloor], `It refuses bridges older than ${status.securityFloor}.`));
     }
     const current = validBridgeVersion(status.currentBridgeVersion);
-    if (current) text += ` The bridge published with it is ${current}.`;
-    bridgeThresholds.textContent = text;
+    if (current) sentences.push(t("bridgeThresholdPublished", [current], `The bridge published with it is ${current}.`));
+    bridgeThresholds.textContent = sentences.join(" ");
     bridgeList.replaceChildren(...status.bridges.map((bridge) => renderBridge(bridge, status.currentBridgeVersion)));
     bridgeEmpty.hidden = status.bridges.length > 0;
     bridgeRefreshStatus.textContent = "";
     bridgeRefreshStatus.className = "save-status";
   } catch (e) {
-    bridgeRefreshStatus.textContent = "Error: " + e.message;
+    bridgeRefreshStatus.textContent = errorText(e);
     bridgeRefreshStatus.className = "save-status error";
   }
 }
