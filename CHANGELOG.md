@@ -4,7 +4,16 @@ All notable changes are listed here, newest first. This project is a continuatio
 [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
 project is kept in this repository.
 
-## [Unreleased]
+## [0.20.2] - 2026-11-07
+
+- Fixed: two tool descriptions named a parameter the way they name a tool. `getMessage` now says it writes only
+  with the `saveAttachments` parameter, and `updateMessage` points to the `addTags` parameter. An automated review
+  had taken both for tools that do not exist and reported attachments and tags as dead ends. What the tools do is
+  unchanged.
+- Fixed: the project's short description is 99 characters, within the 100 the MCP registry accepts; the entry for
+  0.20.1 had been refused for a line of 104. The README also states the latest release and its date in its first
+  lines.
+- **Bridge 0.20.0, unchanged.** Updating is optional: nothing changes in what the add-on or the bridge does.
 
 ### Added
 
