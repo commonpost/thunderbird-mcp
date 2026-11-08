@@ -16,6 +16,12 @@ project is kept in this repository.
   plugin) and how to restart the client. The release page stays linked as the release notes. Each bridge is shown as a
   block of lines instead of a row of narrow columns.
 
+### Fixed
+
+- The options page follows Thunderbird's dark theme. It had fixed light colors: a white page inside a dark Add-ons
+  Manager. Its colors are now variables with a dark set, chosen through `prefers-color-scheme`, and the page opts in
+  with `color-scheme` as Mozilla recommends. Checked in Thunderbird 156 with the dark and the light theme.
+
 ## [0.20.2] - 2026-11-07
 
 - Fixed: two tool descriptions named a parameter the way they name a tool. `getMessage` now says it writes only

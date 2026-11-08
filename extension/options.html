@@ -6,25 +6,68 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="color-scheme" content="light dark">
   <title>Commonpost MCP for Thunderbird Settings</title>
   <style>
+    /* Colors follow Thunderbird's theme: light by default, dark when the theme (or the system) is dark. */
+    :root {
+      color-scheme: light dark;
+      --page-bg: #f9f9fa;
+      --card-bg: #fff;
+      --text: #15141a;
+      --muted: #5b5b66;
+      --border: #cfcfd8;
+      --divider: #ededf0;
+      --code-bg: #f0f0f4;
+      --link: #0060df;
+      --accent: #0060df;
+      --accent-hover: #003eaa;
+      --accent-text: #fff;
+      --disabled-bg: #cfcfd8;
+      --disabled-text: #fff;
+      --danger: #d70022;
+      --warning: #9f1b00;
+      --success: #058b00;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page-bg: #1c1b22;
+        --card-bg: #2b2a33;
+        --text: #fbfbfe;
+        --muted: #bfbfc9;
+        --border: #52525e;
+        --divider: #3a3944;
+        --code-bg: #42414d;
+        --link: #80ebff;
+        --accent: #0a84ff;
+        --accent-hover: #0060df;
+        --accent-text: #fff;
+        --disabled-bg: #52525e;
+        --disabled-text: #bfbfc9;
+        --danger: #ff848b;
+        --warning: #ffbd4f;
+        --success: #54ffbd;
+      }
+    }
+    a { color: var(--link); }
+    input[type="text"], input[type="number"], select, textarea { background: var(--card-bg); color: var(--text); }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       margin: 0;
       padding: 16px;
-      background: #f9f9fa;
-      color: #15141a;
+      background: var(--page-bg);
+      color: var(--text);
       font-size: 14px;
     }
     h2 {
       font-size: 16px;
       margin: 0 0 12px;
       padding-bottom: 8px;
-      border-bottom: 1px solid #cfcfd8;
+      border-bottom: 1px solid var(--border);
     }
     .section {
-      background: #fff;
-      border: 1px solid #cfcfd8;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
       border-radius: 6px;
       padding: 16px;
       margin-bottom: 16px;
@@ -42,11 +85,11 @@
       display: inline-block;
     }
     .status-dot.running { background: #30e60b; }
-    .start-error { margin: 6px 0 10px; color: #d70022; }
-    .start-error .info-value { color: #d70022; white-space: pre-wrap; word-break: break-word; }
+    .start-error { margin: 6px 0 10px; color: var(--danger); }
+    .start-error .info-value { color: var(--danger); white-space: pre-wrap; word-break: break-word; }
     .status-dot.stopped { background: #ff0039; }
     .info-label {
-      color: #5b5b66;
+      color: var(--muted);
       min-width: 110px;
       display: inline-block;
     }
@@ -83,7 +126,7 @@
     .bridge-entry code {
       font-family: monospace;
       font-size: 12px;
-      background: #f0f0f4;
+      background: var(--code-bg);
       padding: 0 3px;
       border-radius: 3px;
     }
@@ -91,25 +134,25 @@
       border-top: none;
     }
     .account-list li + li {
-      border-top: 1px solid #ededf0;
+      border-top: 1px solid var(--divider);
     }
     .account-list label {
       cursor: pointer;
       flex: 1;
     }
     .account-type {
-      color: #5b5b66;
+      color: var(--muted);
       font-size: 12px;
       text-transform: uppercase;
       margin-left: 4px;
     }
     .mode-note {
-      color: #5b5b66;
+      color: var(--muted);
       font-size: 13px;
       margin: 8px 0 0;
     }
     .warning-note {
-      color: #9f1b00;
+      color: var(--warning);
     }
     .token-row {
       display: flex;
@@ -119,7 +162,7 @@
       flex-wrap: wrap;
     }
     .token-row label {
-      color: #5b5b66;
+      color: var(--muted);
       min-width: 130px;
     }
     .token-row input[type="text"] {
@@ -128,19 +171,19 @@
       font-family: monospace;
       font-size: 13px;
       padding: 6px 8px;
-      border: 1px solid #cfcfd8;
+      border: 1px solid var(--border);
       border-radius: 4px;
     }
     .token-row input[readonly] {
-      background: #f9f9fa;
+      background: var(--page-bg);
     }
     .tool-group-header {
       font-size: 13px;
       font-weight: 600;
-      color: #15141a;
+      color: var(--text);
       padding: 10px 0 4px;
       margin-top: 4px;
-      border-bottom: 1px solid #ededf0;
+      border-bottom: 1px solid var(--divider);
     }
     .tool-group-header:first-child {
       margin-top: 0;
@@ -149,7 +192,7 @@
     .tool-crud-header {
       font-size: 11px;
       font-weight: 500;
-      color: #5b5b66;
+      color: var(--muted);
       text-transform: uppercase;
       letter-spacing: 0.5px;
       padding: 6px 0 2px 8px;
@@ -163,7 +206,7 @@
       align-items: center;
       gap: 8px;
       margin-left: 24px;
-      color: #5b5b66;
+      color: var(--muted);
       font-size: 13px;
     }
     .tool-option label {
@@ -172,21 +215,21 @@
     .tool-option input {
       width: 56px;
       padding: 4px 6px;
-      border: 1px solid #cfcfd8;
+      border: 1px solid var(--border);
       border-radius: 4px;
     }
     .tool-option input[aria-invalid="true"] {
-      border-color: #d70022;
-      box-shadow: 0 0 0 1px #d70022;
+      border-color: var(--danger);
+      box-shadow: 0 0 0 1px var(--danger);
     }
     .tool-option .range-note {
-      color: #5b5b66;
+      color: var(--muted);
       font-size: 12px;
     }
     .tool-limit-error {
       flex: 1 0 100%;
       margin-left: 24px;
-      color: #d70022;
+      color: var(--danger);
       font-size: 12px;
     }
     .save-row {
@@ -196,22 +239,22 @@
       margin-top: 12px;
     }
     button {
-      background: #0060df;
-      color: #fff;
+      background: var(--accent);
+      color: var(--accent-text);
       border: none;
       border-radius: 4px;
       padding: 8px 16px;
       font-size: 14px;
       cursor: pointer;
     }
-    button:hover { background: #003eaa; }
-    button:disabled { background: #cfcfd8; cursor: default; }
+    button:hover { background: var(--accent-hover); }
+    button:disabled { background: var(--disabled-bg); color: var(--disabled-text); cursor: default; }
     .save-status {
-      color: #058b00;
+      color: var(--success);
       font-size: 13px;
     }
     .save-status.error {
-      color: #d70022;
+      color: var(--danger);
     }
   </style>
 </head>
@@ -259,7 +302,7 @@
     By default the server only answers to this computer. Listening on all interfaces
     opens it to your network.
   </p>
-  <p class="mode-note" id="listenAllWarning" style="display:none; color: #d70022;">
+  <p class="mode-note" id="listenAllWarning" style="display:none; color: var(--danger);">
     Warning: this exposes the MCP server to every device on your local network.
     The connection is plain HTTP, not encrypted: the access token travels in clear
     text and anyone on the network can read it, and the check of the Host header
