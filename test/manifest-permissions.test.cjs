@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 // The add-on works through its privileged Experiment (mcp_server/api.js), which reaches Thunderbird directly. It asks
 // for no WebExtension permission: each one would add a line to the install prompt and grant an API the add-on does not
