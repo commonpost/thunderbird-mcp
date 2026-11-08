@@ -81,6 +81,9 @@ extension and `mcp-bridge.cjs` of the tree run in a real Thunderbird inside an o
 lab checks what Thunderbird wrote (drafts, filter rules, `prefs.js`, messages delivered to a local SMTP sink). Only
 the summary table is published; to see the logs, run the lab locally against your checkout, as its README explains.
 A behaviour change that a lab scenario encodes needs a matching change in the lab repository.
+A pull request that only changes documentation -- Markdown files at the root other than `THIRD-PARTY.md`, and
+Markdown or GIF files directly in `docs/` -- skips the lab's shards: the required `E2E lab` check passes and says
+so. Any other file runs the whole lab, and so does every push to `main`.
 
 To try the extension in Thunderbird, install the XPI from a release (Tools > Add-ons > Install Add-on From File).
 
