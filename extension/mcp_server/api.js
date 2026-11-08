@@ -134,8 +134,8 @@ function listenPeerAllowed(address, entries) {
 // The list in force while listening on all interfaces. A profile that has the option on and no list yet gets the
 // legacy one written (see LISTEN_ALLOW_FROM_LEGACY). Returns { entries, errors, text }.
 function readListenAllowFrom({ migrate = false } = {}) {
-  let raw = "";
-  let set = false;
+  let raw;
+  let set;
   try {
     set = Services.prefs.prefHasUserValue(PREF_LISTEN_ALLOW_FROM);
     raw = Services.prefs.getStringPref(PREF_LISTEN_ALLOW_FROM, "");
