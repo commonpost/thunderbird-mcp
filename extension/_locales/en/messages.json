@@ -1,0 +1,1004 @@
+{
+  "extensionDescription": {
+    "message": "Lets AI assistants (MCP) search and write your Thunderbird mail, calendar, contacts and filters. Runs on this computer only.",
+    "description": "Description of the add-on in the Add-ons Manager (manifest.json). At most 132 characters."
+  },
+  "pageLanguage": {
+    "message": "en",
+    "description": "Language code of this translation (the lang attribute of the options page). Not shown as text."
+  },
+  "pageTitle": {
+    "message": "Commonpost MCP for Thunderbird Settings",
+    "description": "Title of the options tab. Keep the add-on name \"Commonpost MCP for Thunderbird\" as is."
+  },
+  "pageTagline": {
+    "message": "Lets AI assistants (MCP) work with your mail, calendar, contacts and filters. Everything stays on this computer.",
+    "description": "Line under the add-on name at the top of the options page."
+  },
+  "navAriaLabel": {
+    "message": "Sections",
+    "description": "Accessible name of the section menu on the left of the options page."
+  },
+  "navStatus": {
+    "message": "Status",
+    "description": "Section menu: link to Server Status."
+  },
+  "navBridge": {
+    "message": "Bridge",
+    "description": "Section menu: link to the Bridge section (the mcp-bridge.cjs program each AI app runs)."
+  },
+  "navAccounts": {
+    "message": "Accounts",
+    "description": "Section menu: link to Account Access."
+  },
+  "navTools": {
+    "message": "Tools",
+    "description": "Section menu: link to Tool Access."
+  },
+  "navSafety": {
+    "message": "Send Safety",
+    "description": "Section menu: link to Send Safety."
+  },
+  "navEncrypted": {
+    "message": "Encrypted messages",
+    "description": "Section menu: link to Encrypted messages."
+  },
+  "navAdvanced": {
+    "message": "Advanced",
+    "description": "Section menu: link to Advanced."
+  },
+  "statusHeading": {
+    "message": "Server Status",
+    "description": "Heading of the server status section."
+  },
+  "statusChecking": {
+    "message": "Checking...",
+    "description": "Server status while it is being read."
+  },
+  "statusRunning": {
+    "message": "Running",
+    "description": "Server status: the MCP server is running."
+  },
+  "statusStartFailed": {
+    "message": "Start failed",
+    "description": "Server status: the MCP server could not start."
+  },
+  "statusNotRunning": {
+    "message": "Not running",
+    "description": "Server status: the MCP server is not running."
+  },
+  "serverNotRunning": {
+    "message": "Server is not running.",
+    "description": "Shown next to \"Start error:\" when the server is stopped without an error."
+  },
+  "noticeLabel": {
+    "message": "Notice:",
+    "description": "Label before the notice about the original add-on."
+  },
+  "originalExtensionNotice": {
+    "message": "The original \"Thunderbird MCP\" add-on is also active. Both can run side by side, but they use different ports and connection files: make sure each MCP client is configured for the one you want.",
+    "description": "Notice shown when the original Thunderbird MCP add-on is also installed. Keep \"Thunderbird MCP\" as is."
+  },
+  "startErrorLabel": {
+    "message": "Start error:",
+    "description": "Label before the error that stopped the server from starting."
+  },
+  "retryStart": {
+    "message": "Retry start",
+    "description": "Button that starts the server again after a failed start."
+  },
+  "starting": {
+    "message": "Starting...",
+    "description": "Status while the server is being started again."
+  },
+  "alreadyRunning": {
+    "message": "Already running.",
+    "description": "Status after Retry start: the server was already running."
+  },
+  "started": {
+    "message": "Started.",
+    "description": "Status after Retry start: the server started."
+  },
+  "retryFailed": {
+    "message": "Failed: $ERROR$",
+    "description": "Status after Retry start failed; $ERROR$ is the reason (English, from the add-on).",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "port in use"
+      }
+    }
+  },
+  "unknownError": {
+    "message": "unknown error",
+    "description": "Reason of a failed start when none is known."
+  },
+  "connectionDetails": {
+    "message": "Connection details",
+    "description": "Folded section with the port, the connection file and the build."
+  },
+  "portLabel": {
+    "message": "Port:",
+    "description": "Label of the TCP port of the server."
+  },
+  "connectionFileLabel": {
+    "message": "Connection file:",
+    "description": "Label of the path of the connection file."
+  },
+  "buildLabel": {
+    "message": "Build:",
+    "description": "Label of the version the add-on was built from."
+  },
+  "bridgeHeading": {
+    "message": "Bridge",
+    "description": "Heading of the Bridge section. The bridge is mcp-bridge.cjs, the program each AI app runs to reach Thunderbird."
+  },
+  "bridgeIntro": {
+    "message": "Each AI app connects through its own copy of the bridge (mcp-bridge.cjs, or the .mcpb bundle in Claude Desktop). The bridge lives in that app and is not updated with this add-on: this section tells you when one needs replacing. Bridges that connected since Thunderbird started:",
+    "description": "Introduction of the Bridge section; the list of bridges follows."
+  },
+  "bridgeEmpty": {
+    "message": "No bridge has connected since Thunderbird started.",
+    "description": "Shown when the list of bridges is empty."
+  },
+  "refresh": {
+    "message": "Refresh",
+    "description": "Button that reads the list of bridges again."
+  },
+  "bridgeThresholdWithVersion": {
+    "message": "This add-on (version $VERSION$) recommends bridge $MIN$ or newer.",
+    "description": "First sentence above the list of bridges. $VERSION$: version of the add-on; $MIN$: lowest recommended bridge version.",
+    "placeholders": {
+      "version": {
+        "content": "$1",
+        "example": "0.20.2"
+      },
+      "min": {
+        "content": "$2",
+        "example": "0.20.0"
+      }
+    }
+  },
+  "bridgeThreshold": {
+    "message": "This add-on recommends bridge $MIN$ or newer.",
+    "description": "First sentence above the list of bridges when the add-on version is unknown. $MIN$: lowest recommended bridge version.",
+    "placeholders": {
+      "min": {
+        "content": "$1",
+        "example": "0.20.0"
+      }
+    }
+  },
+  "bridgeThresholdFloor": {
+    "message": "It refuses bridges older than $FLOOR$.",
+    "description": "Sentence after the first one. $FLOOR$: lowest bridge version that works at all.",
+    "placeholders": {
+      "floor": {
+        "content": "$1",
+        "example": "0.11.0"
+      }
+    }
+  },
+  "bridgeThresholdPublished": {
+    "message": "The bridge published with it is $VERSION$.",
+    "description": "Sentence after the first one. $VERSION$: version of the bridge released with this add-on.",
+    "placeholders": {
+      "version": {
+        "content": "$1",
+        "example": "0.20.0"
+      }
+    }
+  },
+  "bridgeLineVersion": {
+    "message": "Version: $VERSION$",
+    "description": "Line of a bridge entry. $VERSION$: its version, or a word such as \"unreadable\".",
+    "placeholders": {
+      "version": {
+        "content": "$1",
+        "example": "0.20.0"
+      }
+    }
+  },
+  "bridgeVersionNotReported": {
+    "message": "not reported (bridge 0.11 or older, or another HTTP client)",
+    "description": "Bridge version: the client sent none."
+  },
+  "bridgeVersionUnreadable": {
+    "message": "unreadable",
+    "description": "Bridge version: the one sent cannot be read."
+  },
+  "bridgeVersionDevelopment": {
+    "message": "development build (0.0.0)",
+    "description": "Bridge version: a development build."
+  },
+  "bridgeLineInstalledAs": {
+    "message": "Installed as: $PACKAGING$",
+    "description": "Line of a bridge entry. $PACKAGING$: how the bridge is installed.",
+    "placeholders": {
+      "packaging": {
+        "content": "$1",
+        "example": "mcp-bridge.cjs file"
+      }
+    }
+  },
+  "bridgePackagingMcpb": {
+    "message": ".mcpb bundle (Claude Desktop)",
+    "description": "How a bridge is installed: the bundle of Claude Desktop."
+  },
+  "bridgePackagingFile": {
+    "message": "mcp-bridge.cjs file",
+    "description": "How a bridge is installed: the file mcp-bridge.cjs."
+  },
+  "bridgePackagingUnknown": {
+    "message": "unknown",
+    "description": "How a bridge is installed: not known."
+  },
+  "bridgeLineProfile": {
+    "message": "Profile: $PROFILE$",
+    "description": "Line of a bridge entry. $PROFILE$: the Thunderbird profile the bridge asked for.",
+    "placeholders": {
+      "profile": {
+        "content": "$1",
+        "example": "default-release"
+      }
+    }
+  },
+  "bridgeLineProfileInvalid": {
+    "message": "Profile: invalid (ignored)",
+    "description": "Line of a bridge entry whose profile name is not valid."
+  },
+  "bridgeLineLastSeen": {
+    "message": "Last seen: $DATE$",
+    "description": "Line of a bridge entry. $DATE$: date and time of its last request.",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "2026-11-08 10:15:00"
+      }
+    }
+  },
+  "bridgeLineStatus": {
+    "message": "Status: $STATUS$",
+    "description": "Line of a bridge entry. $STATUS$: one of the bridge states.",
+    "placeholders": {
+      "status": {
+        "content": "$1",
+        "example": "Up to date."
+      }
+    }
+  },
+  "bridgeStateUpToDate": {
+    "message": "Up to date.",
+    "description": "Bridge state."
+  },
+  "bridgeStateNewerAvailable": {
+    "message": "Newer version available: this bridge works, the update is optional.",
+    "description": "Bridge state."
+  },
+  "bridgeStateNewerAvailableVersion": {
+    "message": "Newer version available ($VERSION$): this bridge works, the update is optional.",
+    "description": "Bridge state, with the newest version.",
+    "placeholders": {
+      "version": {
+        "content": "$1",
+        "example": "0.20.0"
+      }
+    }
+  },
+  "bridgeStateUpdateRecommended": {
+    "message": "Update recommended.",
+    "description": "Bridge state."
+  },
+  "bridgeStateUnversioned": {
+    "message": "Update recommended: this bridge does not report a readable version.",
+    "description": "Bridge state."
+  },
+  "bridgeStateDevelopment": {
+    "message": "Development build: not checked.",
+    "description": "Bridge state."
+  },
+  "bridgeStateRefused": {
+    "message": "Refused: older than the security floor of this add-on (no tool works with it).",
+    "description": "Bridge state."
+  },
+  "bridgeStateNewerThanAddOn": {
+    "message": "Newer than this add-on: in Add-ons and Themes, choose Check for Updates in the gear menu, then restart Thunderbird.",
+    "description": "Bridge state. Use Thunderbird's own names of the Add-ons Manager and of its Check for Updates menu item."
+  },
+  "bridgeToUpdate": {
+    "message": "To update this bridge:",
+    "description": "Line before the update steps of a bridge."
+  },
+  "bridgeStepDownload": {
+    "message": "Download $FILE$.",
+    "description": "First update step. $FILE$: a link named after the file.",
+    "placeholders": {
+      "file": {
+        "content": "$1",
+        "example": "mcp-bridge.cjs"
+      }
+    }
+  },
+  "bridgeStepDownloadMcpbFromRelease": {
+    "message": "Download the .mcpb bundle from the release of this add-on, on the Releases page of github.com/commonpost/thunderbird-mcp.",
+    "description": "First update step when no direct link can be given. Releases is the name of the GitHub page."
+  },
+  "bridgeStepDownloadFileFromRelease": {
+    "message": "Download mcp-bridge.cjs from the release of this add-on, on the Releases page of github.com/commonpost/thunderbird-mcp.",
+    "description": "First update step when no direct link can be given. Releases is the name of the GitHub page."
+  },
+  "bridgeStepMcpbOpen": {
+    "message": "Open the downloaded file with Claude Desktop: it replaces the installed bundle. If it does not open there (Windows), use Settings > Extensions > Advanced settings > Install Extension.",
+    "description": "Update step of a .mcpb bundle. The menu path is Claude Desktop's; keep it as Claude Desktop shows it."
+  },
+  "bridgeStepFileReplace": {
+    "message": "Put the downloaded file in place of the $FILE$ that your MCP client starts: same name, same folder.",
+    "description": "Update step of mcp-bridge.cjs. $FILE$: the file name, shown as code.",
+    "placeholders": {
+      "file": {
+        "content": "$1",
+        "example": "mcp-bridge.cjs"
+      }
+    }
+  },
+  "bridgeWhereClaudeCode": {
+    "message": "Claude Code: $LIST$ names the server, $GET$ shows the path.",
+    "description": "How to find the file in Claude Code. $LIST$ and $GET$: commands, shown as code.",
+    "placeholders": {
+      "list": {
+        "content": "$1",
+        "example": "claude mcp list"
+      },
+      "get": {
+        "content": "$2",
+        "example": "claude mcp get <name>"
+      }
+    }
+  },
+  "bridgeWhereOtherClients": {
+    "message": "Other clients: the path is in the arguments of the server, in the MCP configuration of the client.",
+    "description": "How to find the file in other MCP clients."
+  },
+  "bridgeStepRestart": {
+    "message": "Restart the MCP client, or reconnect the server (in Claude Code: $COMMAND$).",
+    "description": "Last update step. $COMMAND$: a command, shown as code.",
+    "placeholders": {
+      "command": {
+        "content": "$1",
+        "example": "/mcp"
+      }
+    }
+  },
+  "bridgePluginNote": {
+    "message": "Claude Code with the Commonpost plugin: nothing to download. Run $UPDATE$, then $RELOAD$.",
+    "description": "Note under the update steps of mcp-bridge.cjs. $UPDATE$ and $RELOAD$: commands, shown as code.",
+    "placeholders": {
+      "update": {
+        "content": "$1",
+        "example": "/plugin marketplace update commonpost"
+      },
+      "reload": {
+        "content": "$2",
+        "example": "/reload-plugins"
+      }
+    }
+  },
+  "bridgeReleaseNotes": {
+    "message": "Release notes:",
+    "description": "Label before the link to the release notes."
+  },
+  "bridgeReleasePage": {
+    "message": "Release page:",
+    "description": "Label before the link to the release page."
+  },
+  "accountHeading": {
+    "message": "Account Access",
+    "description": "Heading of the account section."
+  },
+  "accountIntro": {
+    "message": "Choose the accounts the assistant can see. With none checked, it sees all of them.",
+    "description": "Introduction of the account section."
+  },
+  "loading": {
+    "message": "Loading...",
+    "description": "Placeholder of a list while it loads."
+  },
+  "save": {
+    "message": "Save",
+    "description": "Button that saves a section."
+  },
+  "saving": {
+    "message": "Saving...",
+    "description": "Status while a setting is being saved."
+  },
+  "saved": {
+    "message": "Saved.",
+    "description": "Status after a setting was saved."
+  },
+  "errorWithMessage": {
+    "message": "Error: $MESSAGE$",
+    "description": "An error; $MESSAGE$ is its text (English, from Thunderbird or the add-on).",
+    "placeholders": {
+      "message": {
+        "content": "$1",
+        "example": "timeout"
+      }
+    }
+  },
+  "errorLoadingSetting": {
+    "message": "Error loading setting: $MESSAGE$",
+    "description": "Error while reading a setting.",
+    "placeholders": {
+      "message": {
+        "content": "$1",
+        "example": "timeout"
+      }
+    }
+  },
+  "noAccounts": {
+    "message": "No accounts found.",
+    "description": "The account list is empty."
+  },
+  "accountTypeLocal": {
+    "message": "local",
+    "description": "Account type of Local Folders, shown in small capitals."
+  },
+  "accountTypeNews": {
+    "message": "news",
+    "description": "Account type of a newsgroup account, shown in small capitals."
+  },
+  "accountTypeFeeds": {
+    "message": "feeds",
+    "description": "Account type of a feed account, shown in small capitals."
+  },
+  "accountRestrictionUnreadable": {
+    "message": "The saved account restriction could not be read: every account is blocked until you save a new choice.",
+    "description": "Error: the stored account choice is damaged."
+  },
+  "errorLoadingAccounts": {
+    "message": "Error loading accounts: $MESSAGE$",
+    "description": "Error while reading the accounts.",
+    "placeholders": {
+      "message": {
+        "content": "$1",
+        "example": "timeout"
+      }
+    }
+  },
+  "selectOneAccount": {
+    "message": "Select at least one account.",
+    "description": "Error: Save was pressed with no account checked."
+  },
+  "confirmOpenAll": {
+    "message": "The saved restriction was unreadable and everything is blocked. Click Save again to allow every account.",
+    "description": "Asks for a second click before every account is opened. \"Save\" is the button of the section."
+  },
+  "toolHeading": {
+    "message": "Tool Access",
+    "description": "Heading of the tool section."
+  },
+  "toolIntro": {
+    "message": "Every tool is on by default. Turn off the ones you do not want the assistant to use: they disappear from its list and cannot be called.",
+    "description": "Introduction of the tool section."
+  },
+  "toolChooseOneByOne": {
+    "message": "Choose tools one by one",
+    "description": "Folded list of the tools; a count follows."
+  },
+  "toolSummaryAll": {
+    "message": "(all $COUNT$ on)",
+    "description": "After \"Choose tools one by one\": every tool is on.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "41"
+      }
+    }
+  },
+  "toolSummarySome": {
+    "message": "($ON$ of $TOTAL$ on)",
+    "description": "After \"Choose tools one by one\": some tools are off.",
+    "placeholders": {
+      "on": {
+        "content": "$1",
+        "example": "38"
+      },
+      "total": {
+        "content": "$2",
+        "example": "41"
+      }
+    }
+  },
+  "toolLockedNote": {
+    "message": "The tools that find accounts and folders (listAccounts, listFolders, getAccountAccess) cannot be turned off. Once some tools are off, a tool added by a later update starts off too, until you turn it on and save.",
+    "description": "Note above the tool list. Keep the tool names as is."
+  },
+  "newToolsNote": {
+    "message": "Added by an update and disabled because you restricted the tools: $TOOLS$. Check and save to enable.",
+    "description": "Tools a recent update added, off until the user turns them on. $TOOLS$: their names.",
+    "placeholders": {
+      "tools": {
+        "content": "$1",
+        "example": "emptyJunk, moveFolder"
+      }
+    }
+  },
+  "noTools": {
+    "message": "No tools found.",
+    "description": "The tool list is empty."
+  },
+  "errorLoadingTools": {
+    "message": "Error loading tools: $MESSAGE$",
+    "description": "Error while reading the tools.",
+    "placeholders": {
+      "message": {
+        "content": "$1",
+        "example": "timeout"
+      }
+    }
+  },
+  "crudRead": {
+    "message": "Read",
+    "description": "Sub-heading of the tool list: tools that read."
+  },
+  "crudCreate": {
+    "message": "Create",
+    "description": "Sub-heading of the tool list: tools that create."
+  },
+  "crudUpdate": {
+    "message": "Change",
+    "description": "Sub-heading of the tool list: tools that change."
+  },
+  "crudDelete": {
+    "message": "Delete",
+    "description": "Sub-heading of the tool list: tools that delete."
+  },
+  "toolRequired": {
+    "message": "required",
+    "description": "Tag of a tool that cannot be turned off, shown in small capitals."
+  },
+  "toolNew": {
+    "message": "new",
+    "description": "Tag of a tool added by an update, shown in small capitals."
+  },
+  "getMessagesLimitLabel": {
+    "message": "Max full messages per call",
+    "description": "Option of the getMessages tool: how many whole messages one call may read."
+  },
+  "limitRange": {
+    "message": "Enter an integer from $MIN$ to $MAX$.",
+    "description": "Error of the getMessages limit field.",
+    "placeholders": {
+      "min": {
+        "content": "$1",
+        "example": "1"
+      },
+      "max": {
+        "content": "$2",
+        "example": "20"
+      }
+    }
+  },
+  "fixLimit": {
+    "message": "Fix the highlighted getMessages limit before saving.",
+    "description": "Error: Save was pressed with an invalid limit. Keep getMessages as is."
+  },
+  "safetyHeading": {
+    "message": "Send Safety",
+    "description": "Heading of the send safety section."
+  },
+  "safetyIntro": {
+    "message": "What the assistant may do on its own, and what waits for you.",
+    "description": "Introduction of the send safety section."
+  },
+  "reviewMailTitle": {
+    "message": "Review every message before it is sent",
+    "description": "Checkbox: mail is sent only from a compose window the user checks."
+  },
+  "reviewMailDefault": {
+    "message": "(recommended, on by default)",
+    "description": "After the checkbox title."
+  },
+  "reviewMailHelp": {
+    "message": "The assistant fills in a compose window; you read it and press Send. Turned off, it can send mail by itself.",
+    "description": "Help of the checkbox. Send is the button of Thunderbird's compose window."
+  },
+  "reviewCalendarTitle": {
+    "message": "Review every event and task it creates",
+    "description": "Checkbox: events and tasks are created only from Thunderbird's dialog."
+  },
+  "reviewCalendarHelp": {
+    "message": "Thunderbird's own dialog opens filled in, and the item exists once you save it. Turned off, the default for a new installation, events and tasks are added at once: nobody is invited, but people the calendar is shared with see them.",
+    "description": "Help of the checkbox."
+  },
+  "technicalDetails": {
+    "message": "Technical details",
+    "description": "Folded section with details for MCP client developers."
+  },
+  "safetyTechSend1": {
+    "message": "While the first setting is on, MCP clients asking for a direct send are rejected:",
+    "description": "Technical details, part 1; the code skipReview: true follows."
+  },
+  "safetyTechSend2": {
+    "message": "on sendMail, replyToMessage or forwardMessage, and",
+    "description": "Technical details, part 2, after the code skipReview: true; the code mode: \"send\" follows. Keep the tool names as is."
+  },
+  "safetyTechSend3": {
+    "message": "on replyToMessage or forwardMessage; the review window remains available.",
+    "description": "Technical details, part 3, after the code mode: \"send\"; the code mode: \"draft\" follows."
+  },
+  "safetyTechSend4": {
+    "message": "only saves a draft, sends nothing and is not blocked (it needs the saveDraft tool under Tool Access).",
+    "description": "Technical details, part 4, after the code mode: \"draft\". Tool Access is the section of this page."
+  },
+  "safetyTechCalendar1": {
+    "message": "While the second setting is on, createEvent and createTask open Thunderbird's dialog and",
+    "description": "Technical details of the second setting, part 1; the code skipReview: true follows."
+  },
+  "safetyTechCalendar2": {
+    "message": "is rejected; while it is off, a client can still ask for the dialog with",
+    "description": "Part 2, after the code skipReview: true; the code skipReview: false follows."
+  },
+  "safetyTechCalendar3": {
+    "message": ". An installation updated from a version without this setting takes the value of the first one.",
+    "description": "Part 3, right after the code skipReview: false (it starts with the period that ends the previous sentence)."
+  },
+  "filterSendRuleHeading": {
+    "message": "Filter rules that send mail (forward / reply)",
+    "description": "Heading of the setting about filter rules that forward or reply."
+  },
+  "filterSendRuleIntro": {
+    "message": "A filter rule that forwards or replies sends mail by itself, every time, without review. A message the assistant reads could trick it into asking for one.",
+    "description": "Introduction of the setting."
+  },
+  "filterBlockTitle": {
+    "message": "Always block",
+    "description": "Choice: the assistant can never create a rule that sends mail."
+  },
+  "filterBlockDefault": {
+    "message": "(recommended, the default)",
+    "description": "After the choice title."
+  },
+  "filterBlockHelp": {
+    "message": "The assistant can never create such rules, nor change or run a filter list that holds one; deleting one stays possible. Make these rules yourself in Thunderbird's filter editor.",
+    "description": "Help of the choice."
+  },
+  "filterConfirmTitle": {
+    "message": "Ask me each time",
+    "description": "Choice: Thunderbird asks the user before such a rule is written."
+  },
+  "filterConfirmHelp1": {
+    "message": "Thunderbird shows you the account, the rule and where it sends mail. Nothing is written unless you confirm;",
+    "description": "Help of the choice, part 1; the button name Refuse follows (in English, as the dialog shows it)."
+  },
+  "filterConfirmHelp2": {
+    "message": "is the default button (Enter and Escape refuse), and the question expires after 10 minutes.",
+    "description": "Help of the choice, part 2, after the button name Refuse."
+  },
+  "filterTech1": {
+    "message": "Whatever the setting: rules that send mail on outgoing mail are refused, and MCP clients can never accept a confirmation themselves. One request at a time, at most 5 per hour. Every request and answer is recorded in",
+    "description": "Technical details, part 1; the file name commonpost-mcp-confirmations.log follows."
+  },
+  "filterTech2": {
+    "message": "in your profile folder (no message content).",
+    "description": "Technical details, part 2, after the file name."
+  },
+  "encryptedHeading": {
+    "message": "Encrypted messages",
+    "description": "Heading of the encrypted messages section."
+  },
+  "encryptedIntro": {
+    "message": "OpenPGP and S/MIME messages stay private by default: the assistant only learns that a message is encrypted, and replyToMessage / forwardMessage do not send one without review.",
+    "description": "Introduction of the section. Keep the tool names as is."
+  },
+  "encryptedTitle": {
+    "message": "Let the assistant read encrypted messages",
+    "description": "Checkbox title."
+  },
+  "encryptedDefault": {
+    "message": "(off by default)",
+    "description": "After the checkbox title."
+  },
+  "encryptedHelp1": {
+    "message": "Thunderbird then decrypts them for the tools, and",
+    "description": "Help of the checkbox, part 1; a bold part follows."
+  },
+  "encryptedHelp2": {
+    "message": "their content goes to the assistant, and so to the service that runs it",
+    "description": "Help of the checkbox, part 2 (bold); a period follows."
+  },
+  "advancedHeading": {
+    "message": "Advanced",
+    "description": "Heading of the advanced section."
+  },
+  "advancedIntro": {
+    "message": "Leave these as they are unless you know you need them.",
+    "description": "Introduction of the advanced section."
+  },
+  "networkHeading": {
+    "message": "Network",
+    "description": "Sub-heading of the advanced section."
+  },
+  "listenAllTitle": {
+    "message": "Listen on all interfaces",
+    "description": "Checkbox: the server accepts connections from other devices."
+  },
+  "listenAllHelp": {
+    "message": "By default only this computer can connect to the server.",
+    "description": "Help of the checkbox."
+  },
+  "listenAllWarning": {
+    "message": "Every device on your network can then reach the server, over plain HTTP: the access token travels in clear text and anyone there can read it, and the check of the Host header is off in this mode. Turn it on only on a network you fully trust, and off again when you no longer need it.",
+    "description": "Warning shown while the checkbox is on. Keep Host (an HTTP header name) as is."
+  },
+  "authenticationHeading": {
+    "message": "Authentication",
+    "description": "Sub-heading of the advanced section."
+  },
+  "currentTokenLabel": {
+    "message": "Current session token:",
+    "description": "Label of the access token of the running server."
+  },
+  "notAvailable": {
+    "message": "Not available",
+    "description": "Placeholder of the token field when there is no token."
+  },
+  "copy": {
+    "message": "Copy",
+    "description": "Button that copies the token."
+  },
+  "copied": {
+    "message": "Copied.",
+    "description": "Status after the token was copied."
+  },
+  "errorLoadingToken": {
+    "message": "Error loading token: $MESSAGE$",
+    "description": "Error while reading the token.",
+    "placeholders": {
+      "message": {
+        "content": "$1",
+        "example": "timeout"
+      }
+    }
+  },
+  "stableTokenTitle": {
+    "message": "Use stable token",
+    "description": "Checkbox: keep the same access token across restarts."
+  },
+  "stableTokenHelp": {
+    "message": "Keeps the same token across restarts, for MCP clients you configure by hand. Changes apply the next time the server starts.",
+    "description": "Help of the checkbox."
+  },
+  "stableTokenBefore": {
+    "message": "Before you use a stable token",
+    "description": "Folded warning about the stable token."
+  },
+  "stableTokenWarning": {
+    "message": "The token is stored in your Thunderbird profile. If it becomes known to someone else it stays valid until you regenerate it or uncheck \"Use stable token\". Removing the add-on while it is enabled clears the stored token; if you disable the add-on first, uncheck \"Use stable token\" before removing it, since removing an already-disabled add-on leaves the token in the profile.",
+    "description": "Warning about the stable token. \"Use stable token\" is the checkbox title (stableTokenTitle)."
+  },
+  "stableTokenLabel": {
+    "message": "Stable token:",
+    "description": "Label of the stable token field."
+  },
+  "generate": {
+    "message": "Generate",
+    "description": "Button that makes a new random stable token."
+  },
+  "regenerate": {
+    "message": "Regenerate",
+    "description": "Button that replaces the stable token by a new one."
+  },
+  "generatedTokenEmpty": {
+    "message": "Generated token was empty",
+    "description": "Error: the add-on returned an empty token."
+  },
+  "generatedAndSaved": {
+    "message": "Generated and saved.",
+    "description": "Status after a stable token was made and saved."
+  },
+  "regeneratedAndSaved": {
+    "message": "Regenerated and saved.",
+    "description": "Status after the stable token was replaced and saved."
+  },
+  "stableTokenCleared": {
+    "message": "Stable token cleared.",
+    "description": "Status after the stable token was removed."
+  },
+  "chooseOneOption": {
+    "message": "Choose one of the two options.",
+    "description": "Error: Save was pressed with no choice selected."
+  },
+  "toolGroup_system": {
+    "message": "Accounts and access",
+    "description": "Group of the tool list (id system)."
+  },
+  "toolGroup_messages": {
+    "message": "Mail",
+    "description": "Group of the tool list (id messages)."
+  },
+  "toolGroup_folders": {
+    "message": "Folders",
+    "description": "Group of the tool list (id folders)."
+  },
+  "toolGroup_contacts": {
+    "message": "Contacts",
+    "description": "Group of the tool list (id contacts)."
+  },
+  "toolGroup_calendar": {
+    "message": "Calendar and tasks",
+    "description": "Group of the tool list (id calendar)."
+  },
+  "toolGroup_filters": {
+    "message": "Filters",
+    "description": "Group of the tool list (id filters)."
+  },
+  "toolTitle_listAccounts": {
+    "message": "List Accounts",
+    "description": "Title of the tool listAccounts in the tool list (its name follows, as code)."
+  },
+  "toolTitle_listFolders": {
+    "message": "List Folders",
+    "description": "Title of the tool listFolders in the tool list (its name follows, as code)."
+  },
+  "toolTitle_searchMessages": {
+    "message": "Search Mail",
+    "description": "Title of the tool searchMessages in the tool list (its name follows, as code)."
+  },
+  "toolTitle_getMessage": {
+    "message": "Get Message",
+    "description": "Title of the tool getMessage in the tool list (its name follows, as code)."
+  },
+  "toolTitle_getMessages": {
+    "message": "Get Messages",
+    "description": "Title of the tool getMessages in the tool list (its name follows, as code)."
+  },
+  "toolTitle_sendMail": {
+    "message": "Compose Mail",
+    "description": "Title of the tool sendMail in the tool list (its name follows, as code)."
+  },
+  "toolTitle_saveDraft": {
+    "message": "Save Draft",
+    "description": "Title of the tool saveDraft in the tool list (its name follows, as code)."
+  },
+  "toolTitle_listCalendars": {
+    "message": "List Calendars",
+    "description": "Title of the tool listCalendars in the tool list (its name follows, as code)."
+  },
+  "toolTitle_createEvent": {
+    "message": "Create Event",
+    "description": "Title of the tool createEvent in the tool list (its name follows, as code)."
+  },
+  "toolTitle_listEvents": {
+    "message": "List Events",
+    "description": "Title of the tool listEvents in the tool list (its name follows, as code)."
+  },
+  "toolTitle_updateEvent": {
+    "message": "Update Event",
+    "description": "Title of the tool updateEvent in the tool list (its name follows, as code)."
+  },
+  "toolTitle_deleteEvent": {
+    "message": "Delete Event",
+    "description": "Title of the tool deleteEvent in the tool list (its name follows, as code)."
+  },
+  "toolTitle_createTask": {
+    "message": "Create Task",
+    "description": "Title of the tool createTask in the tool list (its name follows, as code)."
+  },
+  "toolTitle_listCategories": {
+    "message": "List Categories",
+    "description": "Title of the tool listCategories in the tool list (its name follows, as code)."
+  },
+  "toolTitle_listTasks": {
+    "message": "List Tasks",
+    "description": "Title of the tool listTasks in the tool list (its name follows, as code)."
+  },
+  "toolTitle_updateTask": {
+    "message": "Update Task",
+    "description": "Title of the tool updateTask in the tool list (its name follows, as code)."
+  },
+  "toolTitle_deleteTask": {
+    "message": "Delete Task",
+    "description": "Title of the tool deleteTask in the tool list (its name follows, as code)."
+  },
+  "toolTitle_listAddressBooks": {
+    "message": "List Address Books",
+    "description": "Title of the tool listAddressBooks in the tool list (its name follows, as code)."
+  },
+  "toolTitle_searchContacts": {
+    "message": "Search Contacts",
+    "description": "Title of the tool searchContacts in the tool list (its name follows, as code)."
+  },
+  "toolTitle_getContact": {
+    "message": "Get Contact",
+    "description": "Title of the tool getContact in the tool list (its name follows, as code)."
+  },
+  "toolTitle_createContact": {
+    "message": "Create Contact",
+    "description": "Title of the tool createContact in the tool list (its name follows, as code)."
+  },
+  "toolTitle_updateContact": {
+    "message": "Update Contact",
+    "description": "Title of the tool updateContact in the tool list (its name follows, as code)."
+  },
+  "toolTitle_deleteContact": {
+    "message": "Delete Contact",
+    "description": "Title of the tool deleteContact in the tool list (its name follows, as code)."
+  },
+  "toolTitle_replyToMessage": {
+    "message": "Reply to Message",
+    "description": "Title of the tool replyToMessage in the tool list (its name follows, as code)."
+  },
+  "toolTitle_forwardMessage": {
+    "message": "Forward Message",
+    "description": "Title of the tool forwardMessage in the tool list (its name follows, as code)."
+  },
+  "toolTitle_getRecentMessages": {
+    "message": "Get Recent Messages",
+    "description": "Title of the tool getRecentMessages in the tool list (its name follows, as code)."
+  },
+  "toolTitle_displayMessage": {
+    "message": "Display Message",
+    "description": "Title of the tool displayMessage in the tool list (its name follows, as code)."
+  },
+  "toolTitle_deleteMessages": {
+    "message": "Delete Messages",
+    "description": "Title of the tool deleteMessages in the tool list (its name follows, as code)."
+  },
+  "toolTitle_updateMessage": {
+    "message": "Update Message",
+    "description": "Title of the tool updateMessage in the tool list (its name follows, as code)."
+  },
+  "toolTitle_createFolder": {
+    "message": "Create Folder",
+    "description": "Title of the tool createFolder in the tool list (its name follows, as code)."
+  },
+  "toolTitle_renameFolder": {
+    "message": "Rename Folder",
+    "description": "Title of the tool renameFolder in the tool list (its name follows, as code)."
+  },
+  "toolTitle_deleteFolder": {
+    "message": "Delete Folder",
+    "description": "Title of the tool deleteFolder in the tool list (its name follows, as code)."
+  },
+  "toolTitle_emptyTrash": {
+    "message": "Empty Trash",
+    "description": "Title of the tool emptyTrash in the tool list (its name follows, as code)."
+  },
+  "toolTitle_emptyJunk": {
+    "message": "Empty Junk",
+    "description": "Title of the tool emptyJunk in the tool list (its name follows, as code)."
+  },
+  "toolTitle_moveFolder": {
+    "message": "Move Folder",
+    "description": "Title of the tool moveFolder in the tool list (its name follows, as code)."
+  },
+  "toolTitle_listFilters": {
+    "message": "List Filters",
+    "description": "Title of the tool listFilters in the tool list (its name follows, as code)."
+  },
+  "toolTitle_createFilter": {
+    "message": "Create Filter",
+    "description": "Title of the tool createFilter in the tool list (its name follows, as code)."
+  },
+  "toolTitle_updateFilter": {
+    "message": "Update Filter",
+    "description": "Title of the tool updateFilter in the tool list (its name follows, as code)."
+  },
+  "toolTitle_deleteFilter": {
+    "message": "Delete Filter",
+    "description": "Title of the tool deleteFilter in the tool list (its name follows, as code)."
+  },
+  "toolTitle_reorderFilters": {
+    "message": "Reorder Filters",
+    "description": "Title of the tool reorderFilters in the tool list (its name follows, as code)."
+  },
+  "toolTitle_applyFilters": {
+    "message": "Apply Filters",
+    "description": "Title of the tool applyFilters in the tool list (its name follows, as code)."
+  },
+  "toolTitle_getAccountAccess": {
+    "message": "Get Account Access",
+    "description": "Title of the tool getAccountAccess in the tool list (its name follows, as code)."
+  }
+}

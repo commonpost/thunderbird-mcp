@@ -3,11 +3,11 @@
   SPDX-License-Identifier: MIT
   SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 -->
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="color-scheme" content="light dark">
-  <title>Commonpost MCP for Thunderbird Settings</title>
+  <title data-i18n="pageTitle">Commonpost MCP for Thunderbird Settings</title>
   <style>
     /* Colors follow Thunderbird's theme: light by default, dark when the theme (or the system) is dark. */
     :root {
@@ -360,230 +360,229 @@
   <img src="icons/icon-48.png" alt="" width="40" height="40">
   <div>
     <h1>Commonpost MCP for Thunderbird</h1>
-    <p class="page-tagline">Lets AI assistants (MCP) work with your mail, calendar, contacts and filters. Everything stays on this computer.</p>
+    <p class="page-tagline" data-i18n="pageTagline">Lets AI assistants (MCP) work with your mail, calendar, contacts and filters. Everything stays on this computer.</p>
   </div>
 </header>
 
 <div class="page-layout">
-<nav class="page-nav" aria-label="Sections">
-  <a href="#statusSection">Status</a>
-  <a href="#bridgeSection">Bridge</a>
-  <a href="#accountSection">Accounts</a>
-  <a href="#toolSection">Tools</a>
-  <a href="#safetySection">Send Safety</a>
-  <a href="#encryptedSection">Encrypted messages</a>
-  <a href="#advancedSection">Advanced</a>
+<nav class="page-nav" aria-label="Sections" data-i18n-aria-label="navAriaLabel">
+  <a href="#statusSection" data-i18n="navStatus">Status</a>
+  <a href="#bridgeSection" data-i18n="navBridge">Bridge</a>
+  <a href="#accountSection" data-i18n="navAccounts">Accounts</a>
+  <a href="#toolSection" data-i18n="navTools">Tools</a>
+  <a href="#safetySection" data-i18n="navSafety">Send Safety</a>
+  <a href="#encryptedSection" data-i18n="navEncrypted">Encrypted messages</a>
+  <a href="#advancedSection" data-i18n="navAdvanced">Advanced</a>
 </nav>
 
 <main class="page-main">
 <div class="section" id="statusSection">
-  <h2>Server Status</h2>
+  <h2 data-i18n="statusHeading">Server Status</h2>
   <div class="status-row">
     <span id="statusDot" class="status-dot stopped"></span>
-    <span id="statusText">Checking...</span>
+    <span id="statusText" data-i18n="statusChecking">Checking...</span>
   </div>
   <div id="originalExtensionRow" class="start-error" hidden>
-    <span class="info-label">Notice:</span>
-    <span class="info-value">The original "Thunderbird MCP" add-on is also active. Both can run side by side, but they use different ports and connection files: make sure each MCP client is configured for the one you want.</span>
+    <span class="info-label" data-i18n="noticeLabel">Notice:</span>
+    <span class="info-value" data-i18n="originalExtensionNotice">The original "Thunderbird MCP" add-on is also active. Both can run side by side, but they use different ports and connection files: make sure each MCP client is configured for the one you want.</span>
   </div>
   <div id="startErrorRow" class="start-error" hidden>
-    <span class="info-label">Start error:</span>
+    <span class="info-label" data-i18n="startErrorLabel">Start error:</span>
     <span id="startErrorText" class="info-value"></span>
     <div class="save-row">
-      <button id="retryStartBtn">Retry start</button>
+      <button id="retryStartBtn" data-i18n="retryStart">Retry start</button>
       <span id="retryStartStatus" class="save-status"></span>
     </div>
   </div>
   <details class="more">
-    <summary>Connection details</summary>
+    <summary data-i18n="connectionDetails">Connection details</summary>
     <div>
-      <span class="info-label">Port:</span>
+      <span class="info-label" data-i18n="portLabel">Port:</span>
       <span id="serverPort" class="info-value">--</span>
     </div>
     <div>
-      <span class="info-label">Connection file:</span>
+      <span class="info-label" data-i18n="connectionFileLabel">Connection file:</span>
       <span id="connFile" class="info-value">--</span>
     </div>
     <div>
-      <span class="info-label">Build:</span>
+      <span class="info-label" data-i18n="buildLabel">Build:</span>
       <span id="buildInfo" class="info-value">--</span>
     </div>
   </details>
 </div>
 
 <div class="section" id="bridgeSection">
-  <h2>Bridge</h2>
-  <p class="mode-note">Each AI app connects through its own copy of the bridge (mcp-bridge.cjs, or the .mcpb bundle in Claude Desktop). The bridge lives in that app and is not updated with this add-on: this section tells you when one needs replacing. Bridges that connected since Thunderbird started:</p>
+  <h2 data-i18n="bridgeHeading">Bridge</h2>
+  <p class="mode-note" data-i18n="bridgeIntro">Each AI app connects through its own copy of the bridge (mcp-bridge.cjs, or the .mcpb bundle in Claude Desktop). The bridge lives in that app and is not updated with this add-on: this section tells you when one needs replacing. Bridges that connected since Thunderbird started:</p>
   <p class="mode-note" id="bridgeThresholds"></p>
-  <p class="mode-note" id="bridgeEmpty" hidden>No bridge has connected since Thunderbird started.</p>
+  <p class="mode-note" data-i18n="bridgeEmpty" id="bridgeEmpty" hidden>No bridge has connected since Thunderbird started.</p>
   <ul class="account-list" id="bridgeList"></ul>
   <div class="save-row">
-    <button id="bridgeRefreshBtn" class="secondary">Refresh</button>
+    <button id="bridgeRefreshBtn" class="secondary" data-i18n="refresh">Refresh</button>
     <span id="bridgeRefreshStatus" class="save-status"></span>
   </div>
 </div>
 
 <div class="section" id="accountSection">
-  <h2>Account Access</h2>
-  <p class="mode-note">Choose the accounts the assistant can see. With none checked, it sees all of them.</p>
+  <h2 data-i18n="accountHeading">Account Access</h2>
+  <p class="mode-note" data-i18n="accountIntro">Choose the accounts the assistant can see. With none checked, it sees all of them.</p>
   <ul id="accountList" class="account-list">
-    <li>Loading...</li>
+    <li data-i18n="loading">Loading...</li>
   </ul>
   <div class="save-row">
-    <button id="saveBtn" disabled>Save</button>
+    <button id="saveBtn" disabled data-i18n="save">Save</button>
     <span id="saveStatus" class="save-status"></span>
   </div>
 </div>
 
 <div class="section" id="toolSection">
-  <h2>Tool Access</h2>
-  <p class="mode-note">Every tool is on by default. Turn off the ones you do not want the assistant to use: they disappear from its list and cannot be called.</p>
+  <h2 data-i18n="toolHeading">Tool Access</h2>
+  <p class="mode-note" data-i18n="toolIntro">Every tool is on by default. Turn off the ones you do not want the assistant to use: they disappear from its list and cannot be called.</p>
   <p class="mode-note" id="newToolsNote" hidden></p>
   <details class="more" id="toolDetails">
-    <summary>Choose tools one by one <span id="toolSummary" class="summary-note"></span></summary>
-    <p class="mode-note">The tools that find accounts and folders (listAccounts, listFolders, getAccountAccess) cannot be turned off. Once some tools are off, a tool added by a later update starts off too, until you turn it on and save.</p>
+    <summary><span data-i18n="toolChooseOneByOne">Choose tools one by one</span> <span id="toolSummary" class="summary-note"></span></summary>
+    <p class="mode-note" data-i18n="toolLockedNote">The tools that find accounts and folders (listAccounts, listFolders, getAccountAccess) cannot be turned off. Once some tools are off, a tool added by a later update starts off too, until you turn it on and save.</p>
     <ul id="toolList" class="account-list">
-      <li>Loading...</li>
+      <li data-i18n="loading">Loading...</li>
     </ul>
   </details>
   <div class="save-row">
-    <button id="saveToolsBtn" disabled>Save</button>
+    <button id="saveToolsBtn" disabled data-i18n="save">Save</button>
     <span id="saveToolsStatus" class="save-status"></span>
   </div>
 </div>
 
 <div class="section" id="safetySection">
-  <h2>Send Safety</h2>
-  <p class="mode-note">What the assistant may do on its own, and what waits for you.</p>
+  <h2 data-i18n="safetyHeading">Send Safety</h2>
+  <p class="mode-note" data-i18n="safetyIntro">What the assistant may do on its own, and what waits for you.</p>
   <ul class="account-list setting-list">
     <li>
       <label>
         <input type="checkbox" id="blockSkipReview">
-        <span><strong>Review every message before it is sent</strong> (recommended, on by default)
-          <span class="setting-help">The assistant fills in a compose window; you read it and press Send. Turned off, it can send mail by itself.</span></span>
+        <span><strong data-i18n="reviewMailTitle">Review every message before it is sent</strong> <span data-i18n="reviewMailDefault">(recommended, on by default)</span>
+          <span class="setting-help" data-i18n="reviewMailHelp">The assistant fills in a compose window; you read it and press Send. Turned off, it can send mail by itself.</span></span>
       </label>
     </li>
     <li>
       <label>
         <input type="checkbox" id="blockCalendarSkipReview">
-        <span><strong>Review every event and task it creates</strong>
-          <span class="setting-help">Thunderbird's own dialog opens filled in, and the item exists once you save it. Turned off, the default for a new installation, events and tasks are added at once: nobody is invited, but people the calendar is shared with see them.</span></span>
+        <span><strong data-i18n="reviewCalendarTitle">Review every event and task it creates</strong>
+          <span class="setting-help" data-i18n="reviewCalendarHelp">Thunderbird's own dialog opens filled in, and the item exists once you save it. Turned off, the default for a new installation, events and tasks are added at once: nobody is invited, but people the calendar is shared with see them.</span></span>
       </label>
     </li>
   </ul>
   <details class="more">
-    <summary>Technical details</summary>
+    <summary data-i18n="technicalDetails">Technical details</summary>
     <p class="mode-note">
-      While the first setting is on, MCP clients asking for a direct send are rejected:
-      <code>skipReview: true</code> on sendMail, replyToMessage or forwardMessage, and <code>mode: "send"</code> on
-      replyToMessage or forwardMessage; the review window remains available. <code>mode: "draft"</code> only saves a
-      draft, sends nothing and is not blocked (it needs the saveDraft tool under Tool Access).
+      <span data-i18n="safetyTechSend1">While the first setting is on, MCP clients asking for a direct send are rejected:</span>
+      <code>skipReview: true</code> <span data-i18n="safetyTechSend2">on sendMail, replyToMessage or forwardMessage, and</span> <code>mode: "send"</code>
+      <span data-i18n="safetyTechSend3">on replyToMessage or forwardMessage; the review window remains available.</span> <code>mode: "draft"</code>
+      <span data-i18n="safetyTechSend4">only saves a draft, sends nothing and is not blocked (it needs the saveDraft tool under Tool Access).</span>
     </p>
     <p class="mode-note">
-      While the second setting is on, createEvent and createTask open Thunderbird's dialog and
-      <code>skipReview: true</code> is rejected; while it is off, a client can still ask for the dialog with
-      <code>skipReview: false</code>. An installation updated from a version without this setting takes the value
-      of the first one.
+      <span data-i18n="safetyTechCalendar1">While the second setting is on, createEvent and createTask open Thunderbird's dialog and</span>
+      <code>skipReview: true</code> <span data-i18n="safetyTechCalendar2">is rejected; while it is off, a client can still ask for the dialog with</span>
+      <code>skipReview: false</code><span data-i18n="safetyTechCalendar3">. An installation updated from a version without this setting takes the value of the first one.</span>
     </p>
   </details>
   <div class="save-row">
-    <button id="saveSkipReviewBtn" disabled>Save</button>
+    <button id="saveSkipReviewBtn" disabled data-i18n="save">Save</button>
     <span id="saveSkipReviewStatus" class="save-status"></span>
   </div>
 
-  <h3 id="filterSendRuleHeading">Filter rules that send mail (forward / reply)</h3>
-  <p class="mode-note">A filter rule that forwards or replies sends mail by itself, every time, without review. A message the assistant reads could trick it into asking for one.</p>
+  <h3 id="filterSendRuleHeading" data-i18n="filterSendRuleHeading">Filter rules that send mail (forward / reply)</h3>
+  <p class="mode-note" data-i18n="filterSendRuleIntro">A filter rule that forwards or replies sends mail by itself, every time, without review. A message the assistant reads could trick it into asking for one.</p>
   <ul class="account-list setting-list" role="radiogroup" aria-labelledby="filterSendRuleHeading">
     <li>
       <label>
         <input type="radio" name="filterSendRulePolicy" id="filterSendRulePolicyBlock" value="block">
-        <span><strong>Always block</strong> (recommended, the default)
-          <span class="setting-help">The assistant can never create such rules, nor change or run a filter list that holds one; deleting one stays possible. Make these rules yourself in Thunderbird's filter editor.</span></span>
+        <span><strong data-i18n="filterBlockTitle">Always block</strong> <span data-i18n="filterBlockDefault">(recommended, the default)</span>
+          <span class="setting-help" data-i18n="filterBlockHelp">The assistant can never create such rules, nor change or run a filter list that holds one; deleting one stays possible. Make these rules yourself in Thunderbird's filter editor.</span></span>
       </label>
     </li>
     <li>
       <label>
         <input type="radio" name="filterSendRulePolicy" id="filterSendRulePolicyConfirm" value="confirm">
-        <span><strong>Ask me each time</strong>
-          <span class="setting-help">Thunderbird shows you the account, the rule and where it sends mail. Nothing is written unless you confirm; <em>Refuse</em> is the default button (Enter and Escape refuse), and the question expires after 10 minutes.</span></span>
+        <span><strong data-i18n="filterConfirmTitle">Ask me each time</strong>
+          <span class="setting-help"><span data-i18n="filterConfirmHelp1">Thunderbird shows you the account, the rule and where it sends mail. Nothing is written unless you confirm;</span> <em>Refuse</em> <span data-i18n="filterConfirmHelp2">is the default button (Enter and Escape refuse), and the question expires after 10 minutes.</span></span></span>
       </label>
     </li>
   </ul>
   <details class="more">
-    <summary>Technical details</summary>
+    <summary data-i18n="technicalDetails">Technical details</summary>
     <p class="mode-note">
-      Whatever the setting: rules that send mail on outgoing mail are refused, and MCP clients can never accept a
-      confirmation themselves. One request at a time, at most 5 per hour. Every request and answer is recorded in
-      <code>commonpost-mcp-confirmations.log</code> in your profile folder (no message content).
+      <span data-i18n="filterTech1">Whatever the setting: rules that send mail on outgoing mail are refused, and MCP clients can never accept a
+      confirmation themselves. One request at a time, at most 5 per hour. Every request and answer is recorded in</span>
+      <code>commonpost-mcp-confirmations.log</code> <span data-i18n="filterTech2">in your profile folder (no message content).</span>
     </p>
   </details>
   <div class="save-row">
-    <button id="saveFilterSendRulePolicyBtn" disabled>Save</button>
+    <button id="saveFilterSendRulePolicyBtn" disabled data-i18n="save">Save</button>
     <span id="saveFilterSendRulePolicyStatus" class="save-status"></span>
   </div>
 </div>
 
 <div class="section" id="encryptedSection">
-  <h2>Encrypted messages</h2>
-  <p class="mode-note">OpenPGP and S/MIME messages stay private by default: the assistant only learns that a message is encrypted, and replyToMessage / forwardMessage do not send one without review.</p>
+  <h2 data-i18n="encryptedHeading">Encrypted messages</h2>
+  <p class="mode-note" data-i18n="encryptedIntro">OpenPGP and S/MIME messages stay private by default: the assistant only learns that a message is encrypted, and replyToMessage / forwardMessage do not send one without review.</p>
   <ul class="account-list setting-list">
     <li>
       <label>
         <input type="checkbox" id="allowEncryptedContent">
-        <span><strong>Let the assistant read encrypted messages</strong> (off by default)
-          <span class="setting-help">Thunderbird then decrypts them for the tools, and <strong>their content goes to the assistant, and so to the service that runs it</strong>.</span></span>
+        <span><strong data-i18n="encryptedTitle">Let the assistant read encrypted messages</strong> <span data-i18n="encryptedDefault">(off by default)</span>
+          <span class="setting-help"><span data-i18n="encryptedHelp1">Thunderbird then decrypts them for the tools, and</span> <strong data-i18n="encryptedHelp2">their content goes to the assistant, and so to the service that runs it</strong>.</span></span>
       </label>
     </li>
   </ul>
   <div class="save-row">
-    <button id="saveEncryptedContentBtn" disabled>Save</button>
+    <button id="saveEncryptedContentBtn" disabled data-i18n="save">Save</button>
     <span id="saveEncryptedContentStatus" class="save-status"></span>
   </div>
 </div>
 
 <div class="section" id="advancedSection">
-  <h2>Advanced</h2>
-  <p class="mode-note">Leave these as they are unless you know you need them.</p>
+  <h2 data-i18n="advancedHeading">Advanced</h2>
+  <p class="mode-note" data-i18n="advancedIntro">Leave these as they are unless you know you need them.</p>
 
-  <h3>Network</h3>
+  <h3 data-i18n="networkHeading">Network</h3>
   <ul class="account-list setting-list">
     <li>
       <label>
         <input type="checkbox" id="listenAll">
-        <span><strong>Listen on all interfaces</strong>
-          <span class="setting-help">By default only this computer can connect to the server.</span></span>
+        <span><strong data-i18n="listenAllTitle">Listen on all interfaces</strong>
+          <span class="setting-help" data-i18n="listenAllHelp">By default only this computer can connect to the server.</span></span>
       </label>
     </li>
   </ul>
-  <p class="mode-note danger-note" id="listenAllWarning" style="display:none;">
+  <p class="mode-note danger-note" id="listenAllWarning" style="display:none;" data-i18n="listenAllWarning">
     Every device on your network can then reach the server, over plain HTTP: the access token travels in clear text
     and anyone there can read it, and the check of the Host header is off in this mode. Turn it on only on a network you fully trust, and off again
     when you no longer need it.
   </p>
   <div class="save-row">
-    <button id="saveListenAllBtn" disabled>Save</button>
+    <button id="saveListenAllBtn" disabled data-i18n="save">Save</button>
     <span id="saveListenAllStatus" class="save-status"></span>
   </div>
 
-  <h3>Authentication</h3>
+  <h3 data-i18n="authenticationHeading">Authentication</h3>
   <div class="token-row">
-    <label for="currentAuthToken">Current session token:</label>
-    <input type="text" id="currentAuthToken" readonly placeholder="Not available">
-    <button id="copyAuthTokenBtn" class="secondary" disabled>Copy</button>
+    <label for="currentAuthToken" data-i18n="currentTokenLabel">Current session token:</label>
+    <input type="text" id="currentAuthToken" readonly placeholder="Not available" data-i18n-placeholder="notAvailable">
+    <button id="copyAuthTokenBtn" class="secondary" disabled data-i18n="copy">Copy</button>
     <span id="copyAuthTokenStatus" class="save-status"></span>
   </div>
   <ul class="account-list setting-list">
     <li>
       <label>
         <input type="checkbox" id="useStableAuthToken">
-        <span><strong>Use stable token</strong>
-          <span class="setting-help">Keeps the same token across restarts, for MCP clients you configure by hand. Changes apply the next time the server starts.</span></span>
+        <span><strong data-i18n="stableTokenTitle">Use stable token</strong>
+          <span class="setting-help" data-i18n="stableTokenHelp">Keeps the same token across restarts, for MCP clients you configure by hand. Changes apply the next time the server starts.</span></span>
       </label>
     </li>
   </ul>
   <details class="more">
-    <summary>Before you use a stable token</summary>
-    <p class="mode-note warning-note">
+    <summary data-i18n="stableTokenBefore">Before you use a stable token</summary>
+    <p class="mode-note warning-note" data-i18n="stableTokenWarning">
       The token is stored in your Thunderbird profile. If it becomes known to someone else it stays valid until you
       regenerate it or uncheck "Use stable token". Removing the add-on while it is enabled clears the stored token;
       if you disable the add-on first, uncheck "Use stable token" before removing it, since removing an
@@ -592,12 +591,12 @@
   </details>
   <div id="stableAuthTokenControls" hidden>
     <div class="token-row">
-      <label for="stableAuthToken">Stable token:</label>
+      <label for="stableAuthToken" data-i18n="stableTokenLabel">Stable token:</label>
       <input type="text" id="stableAuthToken" autocomplete="off" spellcheck="false">
-      <button id="generateStableAuthTokenBtn" class="secondary">Generate</button>
+      <button id="generateStableAuthTokenBtn" class="secondary" data-i18n="generate">Generate</button>
     </div>
     <div class="save-row">
-      <button id="regenerateStableAuthTokenBtn" class="secondary">Regenerate</button>
+      <button id="regenerateStableAuthTokenBtn" class="secondary" data-i18n="regenerate">Regenerate</button>
     </div>
   </div>
   <div class="save-row">

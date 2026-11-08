@@ -28,9 +28,9 @@ describe("Bridge section of the options page", () => {
       assert.ok(html.includes(`id="${id}"`), `${id} missing`);
     }
     assert.match(html, /id="bridgeEmpty" hidden>/);
-    const status = html.indexOf("<h2>Server Status</h2>");
+    const status = html.indexOf('<h2 data-i18n="statusHeading">Server Status</h2>');
     const bridge = html.indexOf('id="bridgeSection"');
-    const access = html.indexOf("<h2>Account Access</h2>");
+    const access = html.indexOf('<h2 data-i18n="accountHeading">Account Access</h2>');
     assert.ok(status >= 0 && status < bridge && bridge < access);
   });
 
@@ -68,10 +68,10 @@ describe("Bridge section of the options page", () => {
 
     it("names the newest bridge only when its version is valid, and gives the advice and link for an optional update", () => {
       assert.ok(block.includes("const BRIDGE_VERSION_PATTERN = /^\\d{1,6}\\.\\d{1,6}\\.\\d{1,6}$/;"));
-      assert.ok(block.includes("`Newer version available (${current}): this bridge works, the update is optional.`"));
+      assert.ok(block.includes('t("bridgeStateNewerAvailableVersion", [current], `Newer version available (${current}): this bridge works, the update is optional.`)'));
       assert.ok(block.includes('["newer-available", "update-recommended", "unversioned", "refused"].includes(bridge.state)'));
       assert.ok(block.includes("renderBridge(bridge, status.currentBridgeVersion)"));
-      assert.ok(block.includes("` The bridge published with it is ${current}.`"));
+      assert.ok(block.includes('t("bridgeThresholdPublished", [current], `The bridge published with it is ${current}.`)'));
     });
 
     it("loads at the top level and on refresh", () => {

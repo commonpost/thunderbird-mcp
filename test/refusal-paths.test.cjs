@@ -38,13 +38,13 @@ describe("refusals that come from a default say where the user acts", () => {
   it("an encrypted message names the path and the section of the option", () => {
     assert.ok(ENCRYPTED_CONTENT_NOTICE.includes("content not sent"));
     assert.ok(ENCRYPTED_CONTENT_NOTICE.includes(`${ADDON_OPTIONS_PATH}, Encrypted messages`));
-    assert.ok(optionsHtml.includes("<h2>Encrypted messages</h2>"));
+    assert.match(optionsHtml, /<h2 data-i18n="encryptedHeading">Encrypted messages<\/h2>/);
   });
 
   it("a filter rule that sends mail names the setting and Thunderbird's own filter editor", () => {
     assert.ok(FILTER_SEND_GUARD_NOTE.includes('"Filter rules that send mail: Always block"'));
     assert.ok(optionsHtml.includes(">Filter rules that send mail (forward / reply)</h3>"));
-    assert.ok(optionsHtml.includes("<strong>Always block</strong>"));
+    assert.match(optionsHtml, /<strong data-i18n="filterBlockTitle">Always block<\/strong>/);
     assert.ok(FILTER_SEND_GUARD_NOTE.includes("(Tools > Message Filters)"));
   });
 });
