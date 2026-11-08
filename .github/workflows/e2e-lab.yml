@@ -15,6 +15,11 @@ name: E2E lab
 # The scenarios run in SHARDS parallel jobs (every SHARDS-th file in name order, each job with its own image), so that
 # the lab is not the slowest check of a pull request. The "E2E lab" job, which the protect-main ruleset requires,
 # passes only when every shard passed.
+#
+# A pull request that only changes documentation (the Markdown files at the root other than THIRD-PARTY.md, which the
+# .mcpb ships, and the Markdown and GIF files of docs/) skips the shards: none of those files reaches the extension,
+# the bridge or the lab. The "E2E lab" job then passes on its own and says so. Pushes to main and manual runs always
+# run every shard, and so does any pull request with one other file.
 
 on:
   pull_request:
@@ -36,8 +41,63 @@ env:
   SHARDS: 4
 
 jobs:
+  changes:
+    name: Code or documentation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.files.outputs.code }}
+    steps:
+      - name: Check out the tree under test (only read by git)
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tree
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Does the change reach the extension, the bridge or the lab?
+        id: files
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != pull_request ]; then
+            echo "$EVENT: every shard runs"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Documentation: a Markdown file at the root (not THIRD-PARTY.md), or a Markdown or GIF file directly in docs/.
+          doc() {
+            case "$1" in
+              THIRD-PARTY.md) return 1 ;;
+              */*) ;;
+              *.md) return 0 ;;
+              *) return 1 ;;
+            esac
+            case "$1" in
+              docs/*/*) return 1 ;;
+              docs/*.md | docs/*.gif) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+          git -C tree diff --name-only -z "$BASE_SHA...$HEAD_SHA" > changed
+          code=false
+          count=0
+          while IFS= read -r -d '' f; do
+            count=$((count + 1))
+            doc "$f" || code=true
+          done < changed
+          [ "$count" -gt 0 ] || code=true
+          echo "$count changed file(s); code: $code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
   shard:
     name: E2E lab shard ${{ matrix.shard }}/4
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -124,14 +184,22 @@ jobs:
 
   lab:
     name: E2E lab
-    needs: shard
+    needs: [changes, shard]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Every shard passed
+      - name: Every shard passed, or the change is documentation only
         env:
+          CHANGES: ${{ needs.changes.result }}
+          CODE: ${{ needs.changes.outputs.code }}
           RESULT: ${{ needs.shard.result }}
         run: |
-          echo "shards: $RESULT"
+          set -euo pipefail
+          echo "change detection: $CHANGES, code: $CODE, shards: $RESULT"
+          test "$CHANGES" = success
+          if [ "$CODE" = false ]; then
+            echo "documentation only: the lab has nothing to run"
+            exit 0
+          fi
           test "$RESULT" = success
