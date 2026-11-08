@@ -7817,7 +7817,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "getContact",
         group: "contacts", crud: "read",
         title: "Get Contact",
-        description: "Read one contact by id (from searchContacts): emails, name, phones, addresses, organization, title, note, birthday",
+        description: "Read one contact in full by id (searchContacts finds and lists them): emails, name, phones, addresses, organization, title, note, birthday. An unknown id returns an error.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7843,7 +7843,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "updateContact",
         group: "contacts", crud: "update",
         title: "Update Contact",
-        description: "Update a contact by id: only passed fields change; emails, phones and addresses replace the whole list",
+        description: "Change an existing contact by id (from searchContacts): only passed fields change; emails, phones and addresses replace the whole list. Someone new: createContact. An unknown id returns an error and changes nothing.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7870,7 +7870,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "replyToMessage",
         group: "messages", crud: "create",
         title: "Reply to Message",
-        description: "Reply with quoted original text. mode: window (compose window for review, default), draft (save to Drafts with the recipients Thunderbird computes: Reply-To, Mail-Followup-To, mailing lists, identity auto Cc/Bcc; returns messageId + folderPath; needs the saveDraft tool enabled), send (direct, needs to and from; blocked unless the user disables the skipReview safety block).",
+        description: "Reply with quoted original text (a new message: sendMail; passing it on: forwardMessage). mode: window (compose window for review, default), draft (save to Drafts with the recipients Thunderbird computes: Reply-To, Mail-Followup-To, mailing lists, identity auto Cc/Bcc; returns messageId + folderPath; needs the saveDraft tool enabled), send (direct, needs to and from; blocked unless the user disables the skipReview safety block).",
         inputSchema: {
           type: "object",
           properties: {
@@ -8061,7 +8061,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "renameFolder",
         group: "folders", crud: "update",
         title: "Rename Folder",
-        description: "Rename an existing mail folder. Note: on IMAP accounts, server-side completion is asynchronous; verify with listFolders.",
+        description: "Rename a mail folder in place; to put it under another parent, use moveFolder. Special folders (Inbox, Trash, Drafts...) and folders holding one are refused. On IMAP the server finishes later: check with listFolders.",
         inputSchema: {
           type: "object",
           properties: {
@@ -8075,7 +8075,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "deleteFolder",
         group: "folders", crud: "delete",
         title: "Delete Folder",
-        description: "Delete a mail folder and all its contents (a saved search is only a view: no mail deleted): moved to Trash, or deleted for good, possibly after asking the user, when already in Trash. On IMAP the server finishes later: check with listFolders.",
+        description: "Delete a mail folder and all its contents (a saved search is only a view: no mail deleted): moved to Trash, or deleted for good, possibly after asking the user, when already in Trash. To remove some messages only, use deleteMessages. On IMAP the server finishes later: check with listFolders.",
         inputSchema: {
           type: "object",
           properties: {
@@ -8113,7 +8113,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "moveFolder",
         group: "folders", crud: "update",
         title: "Move Folder",
-        description: "Move a mail folder to a new parent folder within the same account. Note: on IMAP accounts, server-side completion is asynchronous; verify with listFolders.",
+        description: "Move a mail folder under another parent in the same account; to change only its name, use renameFolder. Special folders and folders holding one are refused. On IMAP the server finishes later: check with listFolders.",
         inputSchema: {
           type: "object",
           properties: {
@@ -8240,7 +8240,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "reorderFilters",
         group: "filters", crud: "update",
         title: "Reorder Filters",
-        description: "Move a filter to another position in the execution order. In a list that holds a rule sending mail this is refused by default (\"Always block\"); with \"Ask me each time\" it returns status pending_user_confirmation and asks the user.",
+        description: "Move a filter to another position in the order its account runs them, top first; to change what a rule does, use updateFilter. In a list that holds a rule sending mail this is refused by default (\"Always block\"); with \"Ask me each time\" it returns status pending_user_confirmation and asks the user.",
         inputSchema: {
           type: "object",
           properties: {
