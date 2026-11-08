@@ -7536,7 +7536,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "sendMail",
         group: "messages", crud: "create",
         title: "Compose Mail",
-        description: "Write a new email (replies: replyToMessage; forwards: forwardMessage; unsent: saveDraft). By default it opens a filled-in compose window for the user to review and send: the result (Compose window opened) does not mean sent. skipReview sends at once, only if the user turned off the default-on skipReview block; dryRun only checks.",
+        description: "Write a new email; a reply or forward goes through replyToMessage / forwardMessage, an unsent message through saveDraft (no draft mode here). By default it opens a filled-in compose window for the user to review and send: the result (Compose window opened) does not mean sent. skipReview sends at once, only if the user turned off the default-on skipReview block; dryRun only checks.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7582,7 +7582,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "saveDraft",
         group: "messages", crud: "create",
         title: "Save Draft",
-        description: "Save a composed message to the identity's Drafts folder without sending or opening a compose window, as the compose window does; returns messageId + folderPath, for the user to review and send later. With draftId, rewrite that draft instead: passed fields replace, omitted ones (body, recipients, attachments, reply headers) are kept, and the old version is removed.",
+        description: "Save a new message to the identity's Drafts folder without sending or opening a compose window, as the compose window does; returns messageId + folderPath, for the user to review and send later (a reply or forward: their mode draft). With draftId, rewrite that draft instead: passed fields replace, omitted ones (body, recipients, attachments, reply headers) are kept, and the old version is removed.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7649,7 +7649,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             allDay: { type: "boolean", description: "Create an all-day event (default: false)" },
             status: { type: "string", enum: ["tentative", "confirmed", "cancelled"], description: "VEVENT STATUS (default confirmed)" },
             showAs: { type: "string", enum: ["busy", "free"], description: "'busy' (default) blocks the time, 'free' leaves it available (TRANSP); independent of status" },
-            categories: { type: "array", items: { type: "string" }, description: "Category labels, case-sensitive: take exact existing names from listCategories" },
+            categories: { type: "array", items: { type: "string" }, description: "Category labels, case-sensitive: names from listCategories, or new ones (not added to its list)" },
             onlineMeeting: { type: "boolean", description: "Add a Teams link via Exchange (Office 365 only; no-op elsewhere), shown as onlineMeetingURL" },
             reminders: { type: "array", items: { type: "integer", minimum: 0, maximum: 40320 }, maxItems: 5, description: "Display reminders in minutes before the start, e.g. [1440, 15]" },
             skipReview: { type: "boolean", description: "true: add at once (refused if the settings ask for the dialog); false: open the dialog (default: the settings)" },
@@ -7692,7 +7692,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             description: { type: "string", description: "New event description" },
             status: { type: "string", description: "New VEVENT STATUS: 'tentative', 'confirmed', or 'cancelled'" },
             showAs: { type: "string", enum: ["busy", "free"], description: "'busy' (TRANSP:OPAQUE) blocks the time, 'free' (TRANSP:TRANSPARENT) leaves it available; null clears TRANSP. Independent of status." },
-            categories: { type: "array", items: { type: "string" }, description: "Category labels, case-sensitive (exact names from listCategories); [] clears them" },
+            categories: { type: "array", items: { type: "string" }, description: "Category labels, case-sensitive (from listCategories, or new); [] clears them" },
             onlineMeeting: { type: "boolean", description: "If true, generates a Microsoft Teams meeting link via Exchange (OWL/Office 365 accounts only). Pass false to remove an existing Teams link." },
             reminders: { type: "array", items: { type: "integer", minimum: 0, maximum: 40320 }, maxItems: 5, description: "Replaces the display reminders (minutes before start); [] removes them, other alarms are kept" },
           },
@@ -7726,7 +7726,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             calendarId: { type: "string", description: "Target calendar ID (from listCalendars, must have supportsTasks=true)" },
             description: { type: "string", description: "Task description/body" },
             priority: { type: "integer", minimum: 0, maximum: 9, description: "Priority: 1=high, 5=normal, 9=low" },
-            categories: { type: "array", items: { type: "string" }, description: "Category labels. Use listCategories to get exact existing names before setting." },
+            categories: { type: "array", items: { type: "string" }, description: "Category labels, case-sensitive: names from listCategories, or new ones (not added to its list)" },
             skipReview: { type: "boolean", description: "true: add at once (refused if the settings ask for the dialog); false: open the dialog (default: the settings)" },
           },
           required: ["title"],
@@ -7736,7 +7736,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "listCategories",
         group: "calendar", crud: "read",
         title: "List Categories",
-        description: "Return all calendar category names defined in Thunderbird preferences. Use this before creating tasks or events to get exact category names (case-sensitive).",
+        description: "Calendar category names in Thunderbird's list. Use them exactly (case-sensitive) in events and tasks; other labels are accepted but not added to the list (no tool edits it).",
         inputSchema: { type: "object", properties: {} },
       },
       {
@@ -7792,6 +7792,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         },
       },
       {
+        name: "listAddressBooks",
+        group: "contacts", crud: "read",
+        title: "List Address Books",
+        description: "Address books MCP clients may use: addressBookId (for createContact), name, readOnly, default (used when createContact gets no addressBookId). Lists empty books, which searchContacts cannot show.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
         name: "searchContacts",
         group: "contacts", crud: "read",
         title: "Search Contacts",
@@ -7823,12 +7830,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "createContact",
         group: "contacts", crud: "create",
         title: "Create Contact",
-        description: "Add a contact to an address book (addressBookId from searchContacts, else the first writable one); set at least one field. No duplicate check: search first with searchContacts, and change an existing contact with updateContact.",
+        description: "Add a contact to an address book (addressBookId from listAddressBooks or searchContacts, else the first writable one); set at least one field. No duplicate check: search first with searchContacts, and change an existing contact with updateContact.",
         inputSchema: {
           type: "object",
           properties: {
             ...contactFieldProperties,
-            addressBookId: { type: "string", description: "Address book ID (addressBookId of searchContacts rows)" },
+            addressBookId: { type: "string", description: "Address book ID (from listAddressBooks or searchContacts rows)" },
           },
         },
       },
@@ -8009,7 +8016,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "updateMessage",
         group: "messages", crud: "update",
         title: "Update Message",
-        description: "Set read, flagged and tags on one message (messageId) or several (messageIds), and optionally move them (moveTo) or to Trash (trash). Tags are Thunderbird keywords (see the addTags parameter). On IMAP, tags set in the same call as a move may not reach the moved copy: use two calls.",
+        description: "Set read, flagged and tags on one message (messageId) or several (messageIds), and optionally move them (moveTo) or to Trash (trash); deleting for good is deleteMessages. Tags are Thunderbird keywords (see the addTags parameter). On IMAP, tags set in the same call as a move may not reach the moved copy: use two calls.",
         inputSchema: {
           type: "object",
           properties: {
@@ -12907,6 +12914,22 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // END SEARCH MESSAGES
 
             // BEGIN SEARCH CONTACTS
+            // The address books MCP clients may use, empty ones included; default marks the one createContact
+            // takes without addressBookId (the first writable one, as there).
+            function listAddressBooks() {
+              try {
+                let defaultTaken = false;
+                return getAccessibleAddressBooks().map((book) => {
+                  const readOnly = !!book.readOnly;
+                  const isDefault = !readOnly && !defaultTaken;
+                  if (isDefault) defaultTaken = true;
+                  return { addressBookId: book.URI, name: book.dirName, readOnly, default: isDefault };
+                });
+              } catch (e) {
+                return { error: e.toString() };
+              }
+            }
+
             function searchContacts(query, maxResults, format) {
               const results = [];
               const lowerQuery = (query || "").toLowerCase();
@@ -19493,6 +19516,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "getMessages":
                   if (args.headersOnly === true) return await getMessageHeaders(args.messages);
                   return await getMessages(args.messages, args.saveAttachments, args.bodyFormat, args.rawSource, args.maxBodyChars, args.rawEncoding);
+                case "listAddressBooks":
+                  return listAddressBooks();
                 case "searchContacts":
                   return searchContacts(args.query || "", args.maxResults, args.format);
                 case "getContact":

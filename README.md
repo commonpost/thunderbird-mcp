@@ -100,7 +100,7 @@ Snap, Flatpak and macOS need no extra step in most cases; see [Sandbox-aware con
 
 ## Why?
 
-Thunderbird has no official API for AI tools. Your AI assistant can't read your email, can't help you draft replies, can't organize your inbox. This extension fixes that -- it exposes 41 tools over MCP so any compatible AI (Claude, GPT, local models) can work with your mail the way you'd expect. The list is kept to about 40 tools so that assistants choose among them reliably; older Cursor versions also sent an agent only the first 40 tools of all servers combined (since January 2026 Cursor loads tool descriptions only when needed), and VS Code allows 128 tools per request.
+Thunderbird has no official API for AI tools. Your AI assistant can't read your email, can't help you draft replies, can't organize your inbox. This extension fixes that -- it exposes 42 tools over MCP so any compatible AI (Claude, GPT, local models) can work with your mail the way you'd expect. The list is kept to about 40 tools so that assistants choose among them reliably; older Cursor versions also sent an agent only the first 40 tools of all servers combined (since January 2026 Cursor loads tool descriptions only when needed), and VS Code allows 128 tools per request.
 
 Mail sends require review by default because **Block `skipReview`** for mail starts enabled: `skipReview: true` is honored only after you explicitly disable it. **By default, nothing is sent without your review.** Events and tasks are added at once on a new install, as `updateEvent` and `deleteEvent` change them: they send no invitation, and asking for six appointments means nothing to save by hand. Enable **Block `skipReview`** for events and tasks to review each one in Thunderbird's dialog.
 
@@ -178,6 +178,7 @@ OpenPGP and S/MIME messages are not decrypted for the assistant by default: `get
 
 | Tool | Description |
 |------|-------------|
+| `listAddressBooks` | List the address books the assistant may use, empty ones included, with the `addressBookId` that `createContact` takes and which one it uses by default |
 | `searchContacts` | Search contacts across all address books by any of their email addresses, name, or organization (e.g. `acme` or `@acme.com`); empty fields are omitted. Supports `maxResults` and `format: "table"`. |
 | `getContact` | Read full contact details by UID, including every email address (`emails`: address, work/home type, primary; `invalid: true` on a stored value that is not one plain address) |
 | `createContact` | Create a contact with optional email or several `emails` (work/home, one primary), name, phones, postal addresses, organization, title, note, and birthday. Phone-only contacts are supported. |

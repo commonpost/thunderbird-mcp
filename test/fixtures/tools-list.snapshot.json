@@ -365,7 +365,7 @@
     {
       "name": "sendMail",
       "title": "Compose Mail",
-      "description": "Write a new email (replies: replyToMessage; forwards: forwardMessage; unsent: saveDraft). By default it opens a filled-in compose window for the user to review and send: the result (Compose window opened) does not mean sent. skipReview sends at once, only if the user turned off the default-on skipReview block; dryRun only checks.",
+      "description": "Write a new email; a reply or forward goes through replyToMessage / forwardMessage, an unsent message through saveDraft (no draft mode here). By default it opens a filled-in compose window for the user to review and send: the result (Compose window opened) does not mean sent. skipReview sends at once, only if the user turned off the default-on skipReview block; dryRun only checks.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -479,7 +479,7 @@
     {
       "name": "saveDraft",
       "title": "Save Draft",
-      "description": "Save a composed message to the identity's Drafts folder without sending or opening a compose window, as the compose window does; returns messageId + folderPath, for the user to review and send later. With draftId, rewrite that draft instead: passed fields replace, omitted ones (body, recipients, attachments, reply headers) are kept, and the old version is removed.",
+      "description": "Save a new message to the identity's Drafts folder without sending or opening a compose window, as the compose window does; returns messageId + folderPath, for the user to review and send later (a reply or forward: their mode draft). With draftId, rewrite that draft instead: passed fields replace, omitted ones (body, recipients, attachments, reply headers) are kept, and the old version is removed.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -667,7 +667,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Category labels, case-sensitive: take exact existing names from listCategories"
+            "description": "Category labels, case-sensitive: names from listCategories, or new ones (not added to its list)"
           },
           "onlineMeeting": {
             "type": "boolean",
@@ -800,7 +800,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Category labels, case-sensitive (exact names from listCategories); [] clears them"
+            "description": "Category labels, case-sensitive (from listCategories, or new); [] clears them"
           },
           "onlineMeeting": {
             "type": "boolean",
@@ -891,7 +891,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Category labels. Use listCategories to get exact existing names before setting."
+            "description": "Category labels, case-sensitive: names from listCategories, or new ones (not added to its list)"
           },
           "skipReview": {
             "type": "boolean",
@@ -912,7 +912,7 @@
     {
       "name": "listCategories",
       "title": "List Categories",
-      "description": "Return all calendar category names defined in Thunderbird preferences. Use this before creating tasks or events to get exact category names (case-sensitive).",
+      "description": "Calendar category names in Thunderbird's list. Use them exactly (case-sensitive) in events and tasks; other labels are accepted but not added to the list (no tool edits it).",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -1057,6 +1057,21 @@
       }
     },
     {
+      "name": "listAddressBooks",
+      "title": "List Address Books",
+      "description": "Address books MCP clients may use: addressBookId (for createContact), name, readOnly, default (used when createContact gets no addressBookId). Lists empty books, which searchContacts cannot show.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
       "name": "searchContacts",
       "title": "Search Contacts",
       "description": "Find contacts in the address books MCP clients may use, by words matching email, name or organization; rows carry id (the contactId of the contact tools) and addressBookId. Search before createContact to avoid duplicates. A cut list sets hasMore: refine the query.",
@@ -1120,7 +1135,7 @@
     {
       "name": "createContact",
       "title": "Create Contact",
-      "description": "Add a contact to an address book (addressBookId from searchContacts, else the first writable one); set at least one field. No duplicate check: search first with searchContacts, and change an existing contact with updateContact.",
+      "description": "Add a contact to an address book (addressBookId from listAddressBooks or searchContacts, else the first writable one); set at least one field. No duplicate check: search first with searchContacts, and change an existing contact with updateContact.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1259,7 +1274,7 @@
           },
           "addressBookId": {
             "type": "string",
-            "description": "Address book ID (addressBookId of searchContacts rows)"
+            "description": "Address book ID (from listAddressBooks or searchContacts rows)"
           }
         }
       },
@@ -1858,7 +1873,7 @@
     {
       "name": "updateMessage",
       "title": "Update Message",
-      "description": "Set read, flagged and tags on one message (messageId) or several (messageIds), and optionally move them (moveTo) or to Trash (trash). Tags are Thunderbird keywords (see the addTags parameter). On IMAP, tags set in the same call as a move may not reach the moved copy: use two calls.",
+      "description": "Set read, flagged and tags on one message (messageId) or several (messageIds), and optionally move them (moveTo) or to Trash (trash); deleting for good is deleteMessages. Tags are Thunderbird keywords (see the addTags parameter). On IMAP, tags set in the same call as a move may not reach the moved copy: use two calls.",
       "inputSchema": {
         "type": "object",
         "properties": {

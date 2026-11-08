@@ -25,7 +25,7 @@ Everything runs on the user's computer. The add-on talks to the bridge only; the
 +-----------+   stdio    +------------------+   HTTP POST /     |  background.js -> commonpostMcp.start()  |
 | assistant | <--------> | JSON-RPC relay   | <---------------> |  Experiment API "commonpostMcp":         |
 +-----------+  JSON-RPC  | attachment paths |  127.0.0.1:8780-  |   httpd.sys.mjs (HTTP server)            |
-                         | version header   |  8789, Bearer     |   api.js: auth, dispatch, 41 tools       |
+                         | version header   |  8789, Bearer     |   api.js: auth, dispatch, 42 tools       |
                          +------------------+  token            |  options.html / options.js (settings)    |
                                  ^                              +------------------------------------------+
                                  |  reads port + token                       |  writes (0600, folder 0700)
@@ -136,9 +136,9 @@ it (see "Versions" below).
 
 ## How tools are declared, dispatched and limited
 
-- **Declaration.** `buildTools()` in `api.js` returns the 41 tools, each with a name, title, description, group,
+- **Declaration.** `buildTools()` in `api.js` returns the 42 tools, each with a name, title, description, group,
   `crud` kind and JSON input schema. `tools/list` returns the enabled ones through `toolListEntry`, which derives the
-  MCP annotations (`readOnlyHint`, `destructiveHint`, ...). `test/tool-budget.test.cjs` keeps the list at 41 tools or
+  MCP annotations (`readOnlyHint`, `destructiveHint`, ...). `test/tool-budget.test.cjs` keeps the list at 42 tools or
   fewer and within size limits; `test/fixtures/tools-list.snapshot.json` records it.
 - **Dispatch.** `callTool(name, args)` is a `switch` on the tool name that calls one handler per tool.
 - **Limits set by the user** (options page, read on every call):

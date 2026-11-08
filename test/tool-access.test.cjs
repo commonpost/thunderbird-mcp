@@ -107,6 +107,7 @@ const ALL_TOOLS = [
   { name: "deleteFolder", group: "folders", crud: "delete" },
   { name: "emptyTrash", group: "folders", crud: "delete" },
   { name: "emptyJunk", group: "folders", crud: "delete" },
+  { name: "listAddressBooks", group: "contacts", crud: "read" },
   { name: "searchContacts", group: "contacts", crud: "read" },
   { name: "getContact", group: "contacts", crud: "read" },
   { name: "createContact", group: "contacts", crud: "create" },
@@ -220,11 +221,12 @@ describe("Tool access: tools/list filtering", () => {
     assert.equal(result.length, ALL_TOOLS.length - 2);
   });
 
-  it("restricted before deleteTask existed: deleteTask is hidden too", () => {
+  it("restricted before deleteTask and listAddressBooks existed: both are hidden too", () => {
     const names = filterTools(ALL_TOOLS, JSON.stringify(["sendMail"])).map(t => t.name);
     assert.ok(!names.includes("deleteTask"));
+    assert.ok(!names.includes("listAddressBooks"));
     assert.ok(!names.includes("sendMail"));
-    assert.equal(names.length, ALL_TOOLS.length - 2);
+    assert.equal(names.length, ALL_TOOLS.length - 3);
   });
 
   it("undisableable tools always appear in list", () => {
