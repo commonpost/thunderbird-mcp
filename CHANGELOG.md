@@ -6,6 +6,14 @@ project is kept in this repository.
 
 ## [Unreleased]
 
+### Added
+
+- `listAddressBooks`: the address books the assistant may use, empty ones included, with the `addressBookId` that
+  `createContact` takes, whether each is read-only, and which one `createContact` uses by default. Until now an id
+  was only seen in `searchContacts` rows, so an empty address book could not be chosen. It follows the account
+  restriction like the other contact tools. For anyone who has turned some tools off in the options, it starts off,
+  like any tool added since then, until they turn it on. 42 tools.
+
 ### Changed
 
 - Options, section Bridge: a bridge that should be updated now gets numbered steps instead of one sentence and a
@@ -15,6 +23,13 @@ project is kept in this repository.
   (`claude mcp get <name>` in Claude Code, the server's arguments elsewhere, nothing to download with the Claude Code
   plugin) and how to restart the client. The release page stays linked as the release notes. Each bridge is shown as a
   block of lines instead of a row of narrow columns.
+- Tool descriptions say which tool to pick where a directory review found the boundary thin:
+  - `sendMail` is for a new message: a reply or forward goes through `replyToMessage` / `forwardMessage`, an
+    unsent message through `saveDraft`.
+  - `saveDraft` points a reply or forward kept as a draft to their `mode: "draft"`.
+  - `updateMessage` names `deleteMessages` for deleting for good.
+  - The `categories` of events and tasks accept a label that is not in `listCategories`, and `listCategories` says
+    so: that label is kept on the item but not added to Thunderbird's list, and no tool edits the list.
 
 ### Fixed
 

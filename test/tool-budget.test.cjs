@@ -40,9 +40,13 @@ const byName = Object.fromEntries(tools.map(t => [t.name, t]));
 // 53,500 characters, four characters a token). Raise them only for a measured reason, as for
 // deleteTask and fields (November 2026); fields itself makes results smaller at run time. A new
 // tool needs a reason too: each one makes the choice of a tool harder for an assistant.
-const MAX_TOOLS = 41;
+// listAddressBooks (42nd tool, 420 characters, November 2026): an empty address book could not be
+// targeted by createContact, since its id appeared only in searchContacts rows. The same change spent
+// about 200 characters telling sendMail, saveDraft, the reply and forward modes, updateMessage and
+// deleteMessages apart, and saying what a category label not in listCategories does.
+const MAX_TOOLS = 42;
 const MAX_TOOL_CHARS = 4100;
-const MAX_TOTAL_CHARS = 53500;
+const MAX_TOTAL_CHARS = 54100;
 const MIN_DESCRIPTION_CHARS = 30;
 const BOUNDED_RESULT_TOOLS = {
   searchMessages: 'maxResults', getRecentMessages: 'maxResults', searchContacts: 'maxResults',
