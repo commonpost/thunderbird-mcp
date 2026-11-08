@@ -2,11 +2,11 @@
   "manifest_version": 2,
   "name": "Commonpost MCP for Thunderbird",
   "version": "0.20.2",
-  "description": "MCP server for AI assistants to access email, contacts, and calendars. Continuation of thunderbird-mcp by Tomasz Kasperczyk.",
+  "description": "Lets AI assistants (MCP) search and write your Thunderbird mail, calendar, contacts and filters. Runs on this computer only.",
   "homepage_url": "https://github.com/commonpost/thunderbird-mcp",
   "developer": {
     "name": "Commonpost contributors",
-    "url": "https://github.com/commonpost"
+    "url": "https://github.com/commonpost/thunderbird-mcp"
   },
   "browser_specific_settings": {
     "gecko": {

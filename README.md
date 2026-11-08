@@ -18,10 +18,6 @@ Latest release: **v0.20.2** (2026-11-07) -- see the [changelog](CHANGELOG.md) or
   <img src="docs/demo.gif" alt="Demo of the MCP server for Thunderbird" width="600">
 </p>
 
-> **A continuation of [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk** (MIT), started from its 0.7.5 release with its full history kept. It is an independent project by the Commonpost community, not the original and not endorsed by it; it can be installed beside the original (see [Migrating](#migrating-from-thunderbird-mcp)). If the original author wants any of this work back, we hand it over: our changes are MIT-licensed and offered upstream too. Thunderbird is a trademark of the Mozilla Foundation; this project is not affiliated with Mozilla or MZLA.
->
-> The original was inspired by [bb1/thunderbird-mcp](https://github.com/bb1/thunderbird-mcp). What is in this release is listed in the [changelog](CHANGELOG.md).
-
 ---
 
 ## Contents
@@ -564,5 +560,7 @@ commonpost-mcp/
 ---
 
 ## License and credits
+
+**Origin.** This project started from [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk, at its 0.7.5 release, and keeps its full history; that project was inspired by [bb1/thunderbird-mcp](https://github.com/bb1/thunderbird-mcp). It is maintained independently by the Commonpost community, is not endorsed by the original author, and can be installed beside the original (see [Migrating](#migrating-from-thunderbird-mcp)). Thunderbird is a trademark of the Mozilla Foundation; this project is not affiliated with Mozilla or MZLA.
 
 MIT (see [LICENSE](LICENSE)): copyright Tomasz Kasperczyk (original project) and the Commonpost contributors. `extension/httpd.sys.mjs` is Mozilla's embedded HTTP server under the MPL-2.0 (see [THIRD-PARTY.md](THIRD-PARTY.md)). Fixes and ideas taken from upstream pull requests keep their authors: Tony (TKasperczyk/thunderbird-mcp#209), safrano9999 (TKasperczyk/thunderbird-mcp#214), Daniel Glaser (the78mole; TKasperczyk/thunderbird-mcp#195, since superseded by TKasperczyk/thunderbird-mcp#222), Neel Radhakrishnan (TKasperczyk/thunderbird-mcp#175), JordanRO2 (TKasperczyk/thunderbird-mcp#126, and the idea and preference name of the filter send guard, TKasperczyk/thunderbird-mcp#127), KinJLy and coulof (forks).

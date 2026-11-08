@@ -1,8 +1,8 @@
 # Changelog
 
-All notable changes are listed here, newest first. This project is a continuation of
-[thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) by Tomasz Kasperczyk (MIT); the history of that
-project is kept in this repository.
+All notable changes since 0.8.0, the first release of this project, are listed here, newest first. What came
+before is the git history of [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) (MIT), kept in
+this repository.
 
 ## [Unreleased]
 
@@ -30,6 +30,15 @@ project is kept in this repository.
   - `updateMessage` names `deleteMessages` for deleting for good.
   - The `categories` of events and tasks accept a label that is not in `listCategories`, and `listCategories` says
     so: that label is kept on the item but not added to Thunderbird's list, and no tool edits the list.
+
+- Each metadata field says what it is for, and only that:
+  - The add-on's description, in Add-ons and Themes and on addons.thunderbird.net, now says what the add-on does: it
+    lets AI assistants search and write mail, calendar, contacts and filters, on this computer only.
+  - Its home page link opens this repository rather than the organization.
+  - The `package.json` author is "Commonpost contributors".
+- The credit to the original thunderbird-mcp by Tomasz Kasperczyk moves from the head of the README to an Origin
+  paragraph in its License and credits section, with the same links and the note on Mozilla's trademark. The
+  copyright line and the credits to upstream contributors are unchanged.
 
 ### Fixed
 
