@@ -170,7 +170,7 @@ describe("wiring", () => {
     const names = schema[0].functions.map((f) => f.name);
     assert.ok(names.includes("getAllowEncryptedContent") && names.includes("setAllowEncryptedContent"));
     const html = fs.readFileSync(path.join(root, "extension/options.html"), "utf8");
-    assert.match(html, /<input type="checkbox" id="allowEncryptedContent">/);
+    assert.match(html, /<input type="checkbox" id="allowEncryptedContent" disabled>/);
     const js = fs.readFileSync(path.join(root, "extension/options.js"), "utf8");
     assert.match(js, /setAllowEncryptedContent\(allowEncryptedContentCheckbox\.checked\)/);
     assert.match(js, /allowEncryptedContentCheckbox\.checked = allowEncryptedContent === true;/);

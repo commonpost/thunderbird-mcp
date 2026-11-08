@@ -114,9 +114,14 @@ describe("wiring", () => {
 
   it("the options page does not turn an empty selection or an unreadable value into 'allow all'", () => {
     assert.match(optionsJs, /accountRestrictionInvalid = data\.mode === "invalid";/);
-    assert.match(optionsJs, /if \(checked\.length === 0\) \{[\s\S]*Select at least one account[\s\S]*return;/);
-    assert.match(optionsJs, /if \(allChecked && accountRestrictionInvalid && !openAllConfirmed\)/);
-    assert.ok(optionsJs.indexOf("checked.length === 0") < optionsJs.indexOf("const allowedIds = allChecked ? [] : checked;"));
+    // "All accounts" is its own choice; an empty list of checked accounts is never written: the last box cannot be
+    // cleared, and choosing "Only the accounts checked below" with none checked writes nothing.
+    assert.match(optionsJs, /accountModeAll\.addEventListener\("change", \(\) => \{[\s\S]*?saveAccounts\(\[\], accountModeAll\);/);
+    const only = optionsJs.slice(optionsJs.indexOf('accountModeOnly.addEventListener("change"'));
+    assert.match(only, /if \(checked\.length === 0\) \{[\s\S]*?return;\s*\}\s*saveAccounts\(checked, accountModeOnly\);/);
+    const change = optionsJs.slice(optionsJs.indexOf("function onAccountChange(checkbox) {"));
+    assert.match(change, /if \(checked\.length === 0\) \{\s*checkbox\.checked = true;[\s\S]*?return;\s*\}\s*saveAccounts\(checked, checkbox\);/);
+    assert.equal((optionsJs.match(/saveAccounts\(\[\]/g) || []).length, 1, "only the All accounts choice writes []");
   });
 
   it("Collected Addresses (dirType 101) is not defaulted to local-allowed under a restriction", () => {

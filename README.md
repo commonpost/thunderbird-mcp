@@ -10,7 +10,7 @@
 
 MCP server for AI assistants: Thunderbird mail, calendar, contacts, filters. Windows, macOS, Linux.
 
-Give your AI assistant full access to Thunderbird -- search mail, compose messages, manage filters, and organize your inbox. All through the [Model Context Protocol](https://modelcontextprotocol.io/).
+Let your AI assistant work with Thunderbird -- search mail, compose messages, manage filters, and organize your inbox. All through the [Model Context Protocol](https://modelcontextprotocol.io/).
 
 Latest release: **v0.21.0** (2026-11-08) -- see the [changelog](CHANGELOG.md) or [all releases](https://github.com/commonpost/thunderbird-mcp/releases).
 
@@ -28,6 +28,7 @@ Latest release: **v0.21.0** (2026-11-08) -- see the [changelog](CHANGELOG.md) or
 - [What you can do](#what-you-can-do)
 - [Setup](#setup)
 - [Security](#security)
+  - [Why Thunderbird says "full, unrestricted access"](#why-thunderbird-says-full-unrestricted-access)
 - [If Thunderbird disables Experiment add-ons on the Release channel](#if-thunderbird-disables-experiment-add-ons-on-the-release-channel)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
@@ -42,7 +43,7 @@ Requirements: Windows, macOS or Linux, with Thunderbird 140 or later and Node.js
 Every tool works the same on the three systems. One difference: on Windows, attachments go through the bridge rather
 than by file path (see [attachments on Windows](#attachments-refused)).
 
-1. Install the extension. Download `commonpost-mcp-v<version>.xpi` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest). In Thunderbird: Tools > Add-ons and Themes > gear menu > Install Add-on From File. Restart Thunderbird.
+1. Install the extension. Download `commonpost-mcp-v<version>.xpi` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest). In Thunderbird: Tools > Add-ons and Themes > gear menu > Install Add-on From File. Restart Thunderbird. Thunderbird warns that the add-on gets "full, unrestricted access": it says so for every add-on of this kind ([why, and what this one does](#why-thunderbird-says-full-unrestricted-access)).
 2. Download `mcp-bridge.cjs` from the **same release** and put it in a folder you will keep, for example `~/commonpost-mcp/`. The bridge is a single file and needs nothing else: the release does not ship a `package.json`. (The bridge carries its own version; it reads no `package.json`.)
 3. Check Node.js: `node --version` must show 22 or later. The Claude Desktop bundle needs neither this step nor the
    previous one (see step 4).
@@ -202,7 +203,7 @@ OpenPGP and S/MIME messages are not decrypted for the assistant by default: `get
 |------|-------------|
 | `getAccountAccess` | View which accounts the MCP server can access |
 
-Account and tool access are configured via the extension settings page (Tools > Add-ons and Themes > Commonpost MCP for Thunderbird > wrench button (Options)). Access control is not MCP-exposed -- only the user can change it. Once you have disabled any tool, a tool added by a later update starts disabled too: the settings page marks it "new", and it stays off until you check it and save. If you have disabled nothing, new tools are enabled like the others.
+Account and tool access are configured via the extension settings page (Tools > Add-ons and Themes > Commonpost MCP for Thunderbird > wrench button (Options)). Access control is not MCP-exposed -- only the user can change it. Once you have disabled any tool, a tool added by a later update starts disabled too: the settings page marks it "new", and it stays off until you check it. If you have disabled nothing, new tools are enabled like the others.
 
 The same settings page has a "Send Safety" section with two settings. **Block `skipReview`** for mail, enabled by default, rejects `skipReview: true` for `sendMail`, `replyToMessage` and `forwardMessage` (and `mode: "send"` for `replyToMessage` and `forwardMessage`); their review window still opens normally, and a direct send is honored only after you explicitly disable it. **Block `skipReview`** for events and tasks starts disabled on a new install: `createEvent` and `createTask` add the event or task at once, unless the client passes `skipReview: false` to open the dialog. Enabled, they always open the dialog and reject `skipReview: true`. An event or task added without the dialog sends no invitation (these tools take no attendees), but anyone the calendar is shared with sees it. An installation updated from a version without this setting keeps what it had: the setting for events and tasks takes the value of the one for mail.
 
@@ -411,9 +412,35 @@ Both add-ons can be installed at the same time: they use different ids, preferen
 
 ## Security
 
+### Why Thunderbird says "full, unrestricted access"
+
+When you install the add-on, and in its Permissions tab, Thunderbird says it will "have full, unrestricted access to
+Thunderbird and your computer". Thunderbird shows this line for every add-on that uses an Experiment API, whatever the
+add-on does: an Experiment runs with Thunderbird's own privileges, so the add-on cannot ask for less, and it cannot
+change or narrow the line ([Thunderbird's documentation](https://developer.thunderbird.net/add-ons/mailextensions/experiments)).
+This add-on needs an Experiment because Thunderbird's regular add-on APIs do not cover what it does: its local server,
+message filters, and writing to the calendar ([inventory](docs/experiment-inventory.md)). It declares no other
+permission.
+
+What it does with that access:
+
+- It listens on this computer only (`127.0.0.1`), unless you turn on "Listen on all interfaces", and every request
+  needs the token written in a file only your user can read.
+- It writes files only in its own folder of the system's temporary directory: the connection file, and attachments
+  when a tool is asked to save them.
+- Its code makes no Internet request. It reads mail through your Thunderbird accounts, and it renders messages in a
+  frame that loads nothing from the network. Thunderbird itself checks `commonpost.github.io` for updates of the
+  add-on, as it does for any add-on with an update address.
+- What the assistant reads leaves this computer only through the AI app you connect, and goes wherever that app sends
+  it (for most apps, their provider's servers). You choose the accounts and tools it may use in the options.
+- The code is open, and each release is built byte for byte from this repository, with a provenance attestation for
+  each file ([assurance case](docs/assurance-case.md)). See also [PRIVACY.md](docs/PRIVACY.md).
+
+### Protections
+
 - **Auth tokens**: The HTTP server requires a session-scoped bearer token. Generated on startup, written to `<TmpD>/commonpost-mcp/connection.json` with 0600 permissions. The bridge re-discovers that file automatically across native installs, Snap, Flatpak, Betterbird Flatpak, and macOS temp directories. The options page also offers a stable token that stays the same across restarts, stored in a Thunderbird preference instead of the connection file; removing the add-on while it is still enabled clears that preference, but removing an add-on that was disabled first does not, so clear it yourself (uncheck "Use stable token" in the options page) before removing a disabled add-on.
 - **Dynamic port**: Tries ports 8780-8789, records the actual port in the connection file. No hardcoded port dependency.
-- **Account access control**: Restrict which email accounts are visible to MCP clients via the settings page. Changes take effect immediately.
+- **Account access control**: Restrict which email accounts are visible to MCP clients via the settings page (All accounts, or only the ones you check). Each change takes effect as soon as you make it.
 - **Tool access control**: Disable specific tools via the settings page. Disabled tools are hidden from `tools/list` and blocked at dispatch. Once you have disabled any tool, a tool added by an update stays disabled until you enable it.
 - **Read-only mode for one client**: `COMMONPOST_MCP_READ_ONLY=1` in a client's MCP configuration makes the bridge list and run only the tools that change nothing (plus `getMessage` and `getMessages` without `saveAttachments`), for that client only; see [Other MCP clients](#other-mcp-clients). A defence in depth on the bridge's side: the add-on's settings above remain the authority.
 - **Hidden text in HTML mail**: text a sender hides from you (a style rule, tiny or transparent text, white on white, text moved off the page or clipped away) is left out of the `markdown` and `text` bodies of `getMessage` and `getMessages`, so it does not reach your assistant; `bodyNote` counts what was removed. Thunderbird renders the message as its message pane shows it, at the pane's size, in a hidden frame of the add-on's background page that runs no script and loads nothing from the network, and the text Thunderbird would not show is left out (limits: [assurance case](docs/assurance-case.md#6-known-limits-and-residual-risks)). When that cannot be done (an encrypted or signed message, an IMAP message without a local copy, a body over 2 MiB...), the inline styles of the HTML are read instead. The `html` format returns the sender's HTML unchanged. Removing hidden text reduces prompt injection; it does not prevent it.

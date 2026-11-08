@@ -254,10 +254,14 @@
     .save-status.error {
       color: var(--danger);
     }
-    .save-status.pending {
-      color: var(--warning);
-      font-weight: 600;
+    p.save-row:has(.save-status:empty) { display: none; }
+    .saved-mark {
+      margin-left: 8px;
+      font-size: 13px;
+      color: var(--success);
+      white-space: nowrap;
     }
+    .saved-mark.error { color: var(--danger); white-space: normal; }
 
     /* Page layout: a header, a section menu on wide windows, one readable column. */
     .page-header {
@@ -364,7 +368,8 @@
   <img src="icons/icon-48.png" alt="" width="40" height="40">
   <div>
     <h1>Commonpost MCP for Thunderbird</h1>
-    <p class="page-tagline" data-i18n="pageTagline">Lets AI assistants (MCP) work with your mail, calendar, contacts and filters. Everything stays on this computer.</p>
+    <p class="page-tagline" data-i18n="pageTagline">Lets AI assistants (MCP) work with your mail, calendar, contacts and filters. The add-on runs on this computer; what the assistant reads goes to the AI app you connect.</p>
+    <p class="page-tagline" data-i18n="autoSaveNote">Each change is saved as soon as you make it.</p>
   </div>
 </header>
 
@@ -413,6 +418,12 @@
       <span id="buildInfo" class="info-value">--</span>
     </div>
   </details>
+  <details class="more" id="fullAccessDetails">
+    <summary data-i18n="fullAccessSummary">Why Thunderbird says &quot;full, unrestricted access&quot;</summary>
+    <p class="mode-note" data-i18n="fullAccessWhy">Thunderbird shows that line for every add-on built on an Experiment, whatever the add-on does: an add-on cannot change or narrow it. This one needs an Experiment for its local server, message filters and the calendar.</p>
+    <p class="mode-note" data-i18n="fullAccessWhat">What it does with it: by default it listens on this computer only, behind a token; it writes files only in its own temporary folder; its code makes no Internet request. What the assistant reads goes to the AI app you connect, and nowhere else.</p>
+    <p class="mode-note"><a id="fullAccessLink" href="https://github.com/commonpost/thunderbird-mcp#why-thunderbird-says-full-unrestricted-access" data-i18n="fullAccessLink">Details in the README</a></p>
+  </details>
 </div>
 
 <div class="section" id="bridgeSection">
@@ -428,15 +439,28 @@
 </div>
 
 <div class="section" id="accountSection">
-  <h2 data-i18n="accountHeading">Account Access</h2>
-  <p class="mode-note" data-i18n="accountIntro">Choose the accounts the assistant can see. With none checked, it sees all of them.</p>
-  <ul id="accountList" class="account-list">
+  <h2 id="accountHeading" data-i18n="accountHeading">Account Access</h2>
+  <p class="mode-note" data-i18n="accountIntro">Choose the accounts the assistant can see.</p>
+  <ul class="account-list setting-list" role="radiogroup" aria-labelledby="accountHeading">
+    <li>
+      <label>
+        <input type="radio" name="accountMode" id="accountModeAll" value="all">
+        <span><strong data-i18n="accountModeAllTitle">All accounts</strong> <span data-i18n="accountModeAllDefault">(the default)</span>
+          <span class="setting-help" data-i18n="accountModeAllHelp">Accounts you add to Thunderbird later are included.</span></span>
+      </label>
+    </li>
+    <li>
+      <label>
+        <input type="radio" name="accountMode" id="accountModeOnly" value="restricted">
+        <span><strong data-i18n="accountModeOnlyTitle">Only the accounts checked below</strong>
+          <span class="setting-help" data-i18n="accountModeOnlyHelp">An account you add to Thunderbird later stays hidden until you check it here.</span></span>
+      </label>
+    </li>
+  </ul>
+  <ul id="accountList" class="account-list account-choices">
     <li data-i18n="loading">Loading...</li>
   </ul>
-  <div class="save-row">
-    <button id="saveBtn" disabled data-i18n="save">Save</button>
-    <span id="saveStatus" class="save-status"></span>
-  </div>
+  <p class="save-row"><span id="saveStatus" class="save-status" role="status" aria-live="polite"></span></p>
 </div>
 
 <div class="section" id="toolSection">
@@ -445,15 +469,12 @@
   <p class="mode-note" id="newToolsNote" hidden></p>
   <details class="more" id="toolDetails">
     <summary><span data-i18n="toolChooseOneByOne">Choose tools one by one</span> <span id="toolSummary" class="summary-note"></span></summary>
-    <p class="mode-note" data-i18n="toolLockedNote">The tools that find accounts and folders (listAccounts, listFolders, getAccountAccess) cannot be turned off. Once some tools are off, a tool added by a later update starts off too, until you turn it on and save.</p>
+    <p class="mode-note" data-i18n="toolLockedNote">The tools that find accounts and folders (listAccounts, listFolders, getAccountAccess) cannot be turned off. Once some tools are off, a tool added by a later update starts off too, until you turn it on.</p>
     <ul id="toolList" class="account-list">
       <li data-i18n="loading">Loading...</li>
     </ul>
   </details>
-  <div class="save-row">
-    <button id="saveToolsBtn" disabled data-i18n="save">Save</button>
-    <span id="saveToolsStatus" class="save-status"></span>
-  </div>
+  <p class="save-row"><span id="saveToolsStatus" class="save-status" role="status" aria-live="polite"></span></p>
 </div>
 
 <div class="section" id="safetySection">
@@ -462,7 +483,7 @@
   <ul class="account-list setting-list">
     <li>
       <label>
-        <input type="checkbox" id="blockSkipReview">
+        <input type="checkbox" id="blockSkipReview" disabled>
         <span><strong data-i18n="reviewMailTitle">Mail: review every message before it is sent</strong> <span data-i18n="reviewMailDefault">(recommended, on by default)</span>
           <span class="setting-help" data-i18n="reviewMailHelpOn">Checked: the assistant fills in a compose window; you read it and press Send.</span>
           <span class="setting-help" data-i18n="reviewMailHelpOff">Unchecked: it can send mail by itself.</span></span>
@@ -470,7 +491,7 @@
     </li>
     <li>
       <label>
-        <input type="checkbox" id="blockCalendarSkipReview">
+        <input type="checkbox" id="blockCalendarSkipReview" disabled>
         <span><strong data-i18n="reviewCalendarTitle">Calendar: review every event and task it creates</strong>
           <span class="setting-help" data-i18n="reviewCalendarHelpOn">Checked: Thunderbird's own dialog opens filled in, and the item exists once you save it in that dialog.</span>
           <span class="setting-help" data-i18n="reviewCalendarHelpOff">Unchecked (the default for a new installation): events and tasks are added to the calendar at once. Nobody is invited, but people the calendar is shared with see them.</span>
@@ -492,24 +513,21 @@
       <code>skipReview: false</code><span data-i18n="safetyTechCalendar3">. An installation updated from a version without this setting takes the value of the first one.</span>
     </p>
   </details>
-  <div class="save-row">
-    <button id="saveSkipReviewBtn" disabled data-i18n="save">Save</button>
-    <span id="saveSkipReviewStatus" class="save-status"></span>
-  </div>
+  <p class="save-row"><span id="saveSkipReviewStatus" class="save-status" role="status" aria-live="polite"></span></p>
 
   <h3 id="filterSendRuleHeading" data-i18n="filterSendRuleHeading">Filter rules that send mail (forward / reply)</h3>
   <p class="mode-note" data-i18n="filterSendRuleIntro">A filter rule that forwards or replies sends mail by itself, every time, without review. A message the assistant reads could trick it into asking for one.</p>
   <ul class="account-list setting-list" role="radiogroup" aria-labelledby="filterSendRuleHeading">
     <li>
       <label>
-        <input type="radio" name="filterSendRulePolicy" id="filterSendRulePolicyBlock" value="block">
+        <input type="radio" name="filterSendRulePolicy" id="filterSendRulePolicyBlock" value="block" disabled>
         <span><strong data-i18n="filterBlockTitle">Always block</strong> <span data-i18n="filterBlockDefault">(recommended, the default)</span>
           <span class="setting-help" data-i18n="filterBlockHelp">The assistant can never create such rules, nor change or run a filter list that holds one; deleting one stays possible. Make these rules yourself in Thunderbird's filter editor.</span></span>
       </label>
     </li>
     <li>
       <label>
-        <input type="radio" name="filterSendRulePolicy" id="filterSendRulePolicyConfirm" value="confirm">
+        <input type="radio" name="filterSendRulePolicy" id="filterSendRulePolicyConfirm" value="confirm" disabled>
         <span><strong data-i18n="filterConfirmTitle">Ask me each time</strong>
           <span class="setting-help"><span data-i18n="filterConfirmHelp1">Thunderbird shows you the account, the rule and where it sends mail. Nothing is written unless you confirm;</span> <em>Refuse</em> <span data-i18n="filterConfirmHelp2">is the default button (Enter and Escape refuse), and the question expires after 10 minutes.</span></span></span>
       </label>
@@ -523,10 +541,7 @@
       <code>commonpost-mcp-confirmations.log</code> <span data-i18n="filterTech2">in your profile folder (no message content).</span>
     </p>
   </details>
-  <div class="save-row">
-    <button id="saveFilterSendRulePolicyBtn" disabled data-i18n="save">Save</button>
-    <span id="saveFilterSendRulePolicyStatus" class="save-status"></span>
-  </div>
+  <p class="save-row"><span id="saveFilterSendRulePolicyStatus" class="save-status" role="status" aria-live="polite"></span></p>
 </div>
 
 <div class="section" id="encryptedSection">
@@ -535,16 +550,13 @@
   <ul class="account-list setting-list">
     <li>
       <label>
-        <input type="checkbox" id="allowEncryptedContent">
+        <input type="checkbox" id="allowEncryptedContent" disabled>
         <span><strong data-i18n="encryptedTitle">Let the assistant read encrypted messages</strong> <span data-i18n="encryptedDefault">(off by default)</span>
           <span class="setting-help"><span data-i18n="encryptedHelp1">Thunderbird then decrypts them for the tools, and</span> <strong data-i18n="encryptedHelp2">their content goes to the assistant, and so to the service that runs it</strong>.</span></span>
       </label>
     </li>
   </ul>
-  <div class="save-row">
-    <button id="saveEncryptedContentBtn" disabled data-i18n="save">Save</button>
-    <span id="saveEncryptedContentStatus" class="save-status"></span>
-  </div>
+  <p class="save-row"><span id="saveEncryptedContentStatus" class="save-status" role="status" aria-live="polite"></span></p>
 </div>
 
 <div class="section" id="advancedSection">
@@ -555,7 +567,7 @@
   <ul class="account-list setting-list">
     <li>
       <label>
-        <input type="checkbox" id="listenAll">
+        <input type="checkbox" id="listenAll" disabled>
         <span><strong data-i18n="listenAllTitle">Listen on all interfaces</strong>
           <span class="setting-help" data-i18n="listenAllHelp">By default only this computer can connect to the server.</span></span>
       </label>
@@ -566,10 +578,7 @@
     and anyone there can read it, and the check of the Host header is off in this mode. Turn it on only on a network you fully trust, and off again
     when you no longer need it.
   </p>
-  <div class="save-row">
-    <button id="saveListenAllBtn" disabled data-i18n="save">Save</button>
-    <span id="saveListenAllStatus" class="save-status"></span>
-  </div>
+  <p class="save-row"><span id="saveListenAllStatus" class="save-status" role="status" aria-live="polite"></span></p>
 
   <h3 data-i18n="authenticationHeading">Authentication</h3>
   <div class="token-row">

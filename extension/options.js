@@ -16,13 +16,13 @@ const startErrorText = document.getElementById("startErrorText");
 const retryStartBtn = document.getElementById("retryStartBtn");
 const retryStartStatus = document.getElementById("retryStartStatus");
 const accountList = document.getElementById("accountList");
-const saveBtn = document.getElementById("saveBtn");
 const saveStatus = document.getElementById("saveStatus");
+const accountModeAll = document.getElementById("accountModeAll");
+const accountModeOnly = document.getElementById("accountModeOnly");
 
 const toolList = document.getElementById("toolList");
 const toolDetails = document.getElementById("toolDetails");
 const toolSummary = document.getElementById("toolSummary");
-const saveToolsBtn = document.getElementById("saveToolsBtn");
 const saveToolsStatus = document.getElementById("saveToolsStatus");
 const newToolsNote = document.getElementById("newToolsNote");
 
@@ -78,6 +78,42 @@ function errorText(e) {
   return t("errorWithMessage", [e.message], `Error: ${e.message}`);
 }
 
+// --- Saving as you go ---
+// Every setting is written as soon as it changes; there is no Save button. A short mark beside the control says it
+// was saved, or why it was not. Writes of one setting group run one after the other, each reading the controls when
+// it runs, so the last state wins even after quick clicks.
+const SAVED_MARK_MS = 2500;
+
+function markControl(control, text, isError = false) {
+  let host = control.parentElement;
+  while (host && host.tagName !== "LI") host = host.parentElement;
+  host = host || control.parentElement;
+  if (!host) return;
+  let mark = Array.from(host.children).find((child) => String(child.className || "").split(/\s+/).includes("saved-mark"));
+  if (!mark) {
+    mark = document.createElement("span");
+    mark.className = "saved-mark";
+    mark.setAttribute("role", "status");
+    host.appendChild(mark);
+  }
+  mark.textContent = text;
+  mark.className = isError ? "saved-mark error" : "saved-mark";
+  clearTimeout(mark._timer);
+  if (!isError) mark._timer = setTimeout(() => { mark.textContent = ""; }, SAVED_MARK_MS);
+}
+
+function markSaved(control) {
+  markControl(control, "\u2713 " + t("saved", null, "Saved."));
+}
+
+function serialQueue() {
+  let chain = Promise.resolve();
+  return (task) => {
+    chain = chain.then(task, task);
+    return chain;
+  };
+}
+
 // Elements of options.html with data-i18n (text), data-i18n-placeholder or data-i18n-aria-label get their message.
 function localizePage() {
   if (!i18n) return;
@@ -98,6 +134,8 @@ function localizePage() {
 localizePage();
 
 let currentAccounts = [];
+// The "new" marks of the tool list on screen; saving makes every tool known, so they go.
+const newToolBadges = [];
 let currentTools = [];
 let getMessagesLimitInput = null;
 let getMessagesLimitStatus = null;
@@ -338,14 +376,29 @@ regenerateStableAuthTokenBtn.addEventListener("click", async () => {
 });
 
 let accountRestrictionInvalid = false;
-let openAllConfirmed = false;
+const queueAccountSave = serialQueue();
+
+function accountCheckboxes() {
+  return Array.from(accountList.querySelectorAll('input[type="checkbox"]'));
+}
+
+// "All accounts" shows every box checked and greyed: the choice is the radio button. "Only the accounts checked
+// below" opens the boxes. An unreadable restriction blocks every account until the user picks again: neither
+// button is selected and the boxes are open, all unchecked.
+function showAccountMode(mode) {
+  accountModeAll.checked = mode === "all";
+  accountModeOnly.checked = mode === "restricted";
+  for (const cb of accountCheckboxes()) {
+    cb.disabled = mode === "all";
+    if (mode === "all") cb.checked = true;
+  }
+}
 
 async function loadAccountAccess() {
   try {
     const data = await browser.commonpostMcp.getAccountAccessConfig();
     currentAccounts = data.accounts || [];
     accountRestrictionInvalid = data.mode === "invalid";
-    openAllConfirmed = false;
 
     if (currentAccounts.length === 0) {
       const empty = document.createElement("li");
@@ -362,7 +415,7 @@ async function loadAccountAccess() {
       checkbox.id = "acct-" + acct.id;
       checkbox.value = acct.id;
       checkbox.checked = acct.allowed;
-      checkbox.addEventListener("change", onAccountChange);
+      checkbox.addEventListener("change", () => onAccountChange(checkbox));
 
       const label = document.createElement("label");
       label.htmlFor = checkbox.id;
@@ -378,12 +431,13 @@ async function loadAccountAccess() {
       accountList.appendChild(li);
     }
 
-    saveBtn.disabled = false;
+    showAccountMode(data.mode);
     if (accountRestrictionInvalid) {
-      saveStatus.textContent = t("accountRestrictionUnreadable", null, "The saved account restriction could not be read: every account is blocked until you save a new choice.");
+      saveStatus.textContent = t("accountRestrictionUnreadable", null, "The saved account restriction could not be read: every account is blocked until you choose All accounts or check the accounts to allow.");
       saveStatus.className = "save-status error";
     } else {
       saveStatus.textContent = "";
+      saveStatus.className = "save-status";
     }
   } catch (e) {
     const li = document.createElement("li");
@@ -392,62 +446,59 @@ async function loadAccountAccess() {
   }
 }
 
-function onAccountChange() {
-  openAllConfirmed = false;
-  if (!accountRestrictionInvalid) saveStatus.textContent = "";
+// Writes `allowedIds` ([] = all accounts, now and later). On failure the page reloads what is stored, so it never
+// shows a choice that is not in force.
+function saveAccounts(allowedIds, control) {
+  return queueAccountSave(async () => {
+    try {
+      const result = await browser.commonpostMcp.setAccountAccess(allowedIds);
+      if (result.error) throw new Error(result.error);
+      accountRestrictionInvalid = false;
+      saveStatus.textContent = "";
+      saveStatus.className = "save-status";
+      markSaved(control);
+    } catch (e) {
+      // The reload rebuilds the list: the mark goes on the box now on screen.
+      await loadAccountAccess();
+      markControl((control.id && document.getElementById(control.id)) || control, errorText(e), true);
+    }
+  });
 }
 
-saveBtn.addEventListener("click", async () => {
-  saveBtn.disabled = true;
-  saveStatus.textContent = "";
-  saveStatus.className = "save-status";
-
-  const checkboxes = accountList.querySelectorAll('input[type="checkbox"]');
-  const checked = [];
-  let allChecked = true;
-  for (const cb of checkboxes) {
-    if (cb.checked) {
-      checked.push(cb.value);
-    } else {
-      allChecked = false;
-    }
-  }
-
-  // An empty selection is not "allow all": refuse it rather than open everything.
-  if (checked.length === 0) {
-    saveStatus.textContent = t("selectOneAccount", null, "Select at least one account.");
-    saveStatus.className = "save-status error";
-    saveBtn.disabled = false;
-    return;
-  }
-  // After an unreadable restriction, opening every account takes a second click.
-  if (allChecked && accountRestrictionInvalid && !openAllConfirmed) {
-    openAllConfirmed = true;
-    saveStatus.textContent = t("confirmOpenAll", null, "The saved restriction was unreadable and everything is blocked. Click Save again to allow every account.");
-    saveStatus.className = "save-status error";
-    saveBtn.disabled = false;
-    return;
-  }
-
-  // If all are checked, send empty array (= allow all)
-  const allowedIds = allChecked ? [] : checked;
-
-  try {
-    const result = await browser.commonpostMcp.setAccountAccess(allowedIds);
-    if (result.error) {
-      saveStatus.textContent = result.error;
-      saveStatus.className = "save-status error";
-    } else {
-      // Reload to reflect updated state; the reload clears the status line, so confirm after it
-      await loadAccountAccess();
-      if (!saveStatus.textContent) saveStatus.textContent = t("saved", null, "Saved.");
-    }
-  } catch (e) {
-    saveStatus.textContent = errorText(e);
-    saveStatus.className = "save-status error";
-  }
-  saveBtn.disabled = false;
+accountModeAll.addEventListener("change", () => {
+  if (!accountModeAll.checked) return;
+  showAccountMode("all");
+  saveAccounts([], accountModeAll);
 });
+
+// From "All accounts", every box is checked: the list written is every account there is now, so one added later
+// stays hidden. Coming from an unreadable restriction no box is checked yet, and nothing is written until one is.
+accountModeOnly.addEventListener("change", () => {
+  if (!accountModeOnly.checked) return;
+  showAccountMode("restricted");
+  const checked = accountCheckboxes().filter((cb) => cb.checked).map((cb) => cb.value);
+  if (checked.length === 0) {
+    saveStatus.textContent = t("checkAccountsToAllow", null, "Check the accounts the assistant may use.");
+    saveStatus.className = "save-status";
+    return;
+  }
+  saveAccounts(checked, accountModeOnly);
+});
+
+// The last checked box cannot be cleared: an empty list would mean every account. The box is checked again and
+// the mark says what to do instead. After an unreadable restriction neither choice is selected: checking a box
+// selects "Only the accounts checked below", so what the page shows is what is written.
+function onAccountChange(checkbox) {
+  if (accountModeAll.checked) return;
+  accountModeOnly.checked = true;
+  const checked = accountCheckboxes().filter((cb) => cb.checked).map((cb) => cb.value);
+  if (checked.length === 0) {
+    checkbox.checked = true;
+    markControl(checkbox, t("keepOneAccount", null, "Keep at least one account checked, or choose All accounts."), true);
+    return;
+  }
+  saveAccounts(checked, checkbox);
+}
 
 async function loadToolAccess() {
   try {
@@ -456,7 +507,7 @@ async function loadToolAccess() {
     const groupLabels = data.groups || {};
     const newTools = Array.isArray(data.newTools) ? data.newTools : [];
     newToolsNote.textContent = newTools.length
-      ? t("newToolsNote", [newTools.join(", ")], `Added by an update and disabled because you restricted the tools: ${newTools.join(", ")}. Check and save to enable.`)
+      ? t("newToolsNote", [newTools.join(", ")], `Added by an update and off because you restricted the tools: ${newTools.join(", ")}. Check one to turn it on.`)
       : "";
     newToolsNote.hidden = newTools.length === 0;
     // Tools that wait for the user's choice are shown, not folded away.
@@ -470,6 +521,7 @@ async function loadToolAccess() {
     }
 
     toolList.replaceChildren();
+    newToolBadges.length = 0;
     getMessagesLimitInput = null;
     getMessagesLimitStatus = null;
 
@@ -516,6 +568,7 @@ async function loadToolAccess() {
       checkbox.addEventListener("change", () => {
         saveToolsStatus.textContent = "";
         updateToolSummary();
+        saveTools(checkbox);
         if (tool.name === "getMessages" && getMessagesLimitInput) {
           getMessagesLimitInput.disabled = !checkbox.checked;
           if (checkbox.checked) {
@@ -546,6 +599,7 @@ async function loadToolAccess() {
       if (tool.isNew) {
         const newSpan = document.createElement("span");
         newSpan.className = "account-type";
+        newToolBadges.push(newSpan);
         newSpan.textContent = t("toolNew", null, "new");
         label.appendChild(newSpan);
       }
@@ -573,6 +627,7 @@ async function loadToolAccess() {
           saveToolsStatus.textContent = "";
           validateGetMessagesLimitInput();
         });
+        getMessagesLimitInput.addEventListener("change", () => saveTools(getMessagesLimitInput));
 
         const rangeNote = document.createElement("span");
         rangeNote.className = "range-note";
@@ -590,7 +645,6 @@ async function loadToolAccess() {
       toolList.appendChild(li);
     }
 
-    saveToolsBtn.disabled = false;
     saveToolsStatus.textContent = "";
     updateToolSummary();
   } catch (e) {
@@ -600,55 +654,45 @@ async function loadToolAccess() {
   }
 }
 
-saveToolsBtn.addEventListener("click", async () => {
-  saveToolsBtn.disabled = true;
-  saveToolsStatus.textContent = "";
-  saveToolsStatus.className = "save-status";
+const queueToolSave = serialQueue();
 
-  const checkboxes = toolList.querySelectorAll('input[type="checkbox"]');
-  const disabled = [];
-  for (const cb of checkboxes) {
-    if (!cb.checked && !cb.disabled) {
-      disabled.push(cb.value);
+// Writes the whole tool choice. A getMessages limit that is not valid is not sent: the stored one stays, and the
+// field says what is wrong. Saving makes every tool known, so the tools marked "new" stop waiting for a choice.
+function saveTools(control) {
+  return queueToolSave(async () => {
+    const disabled = Array.from(toolList.querySelectorAll('input[type="checkbox"]'))
+      .filter((cb) => !cb.checked && !cb.disabled)
+      .map((cb) => cb.value);
+    let getMessagesLimit;
+    if (getMessagesLimitInput && !getMessagesLimitInput.disabled) {
+      getMessagesLimit = validateGetMessagesLimitInput();
+      if (getMessagesLimit === null) {
+        getMessagesLimit = undefined;
+        if (control === getMessagesLimitInput) return;
+      }
     }
-  }
-  let getMessagesLimit;
-  // A disabled limit field (getMessages unchecked) is not sent: the stored limit stays as it is
-  if (getMessagesLimitInput && !getMessagesLimitInput.disabled) {
-    getMessagesLimit = validateGetMessagesLimitInput();
-    if (getMessagesLimit === null) {
-      saveToolsStatus.textContent = t("fixLimit", null, "Fix the highlighted getMessages limit before saving.");
-      saveToolsStatus.className = "save-status error";
-      saveToolsBtn.disabled = false;
-      return;
-    }
-  }
-
-  try {
-    const result = await browser.commonpostMcp.setToolAccess(disabled, getMessagesLimit);
-    if (result.error) {
-      saveToolsStatus.textContent = result.error;
-      saveToolsStatus.className = "save-status error";
-    } else {
-      // The reload clears the status line, so confirm after it
+    try {
+      const result = await browser.commonpostMcp.setToolAccess(disabled, getMessagesLimit);
+      if (result.error) throw new Error(result.error);
+      saveToolsStatus.textContent = "";
+      saveToolsStatus.className = "save-status";
+      newToolsNote.hidden = true;
+      for (const badge of newToolBadges.splice(0)) badge.remove();
+      markSaved(control);
+    } catch (e) {
       await loadToolAccess();
-      if (!saveToolsStatus.textContent) saveToolsStatus.textContent = t("saved", null, "Saved.");
+      saveToolsStatus.textContent = errorText(e);
+      saveToolsStatus.className = "save-status error";
     }
-  } catch (e) {
-    saveToolsStatus.textContent = errorText(e);
-    saveToolsStatus.className = "save-status error";
-  }
-  saveToolsBtn.disabled = false;
-});
+  });
+}
 
 const blockSkipReviewCheckbox = document.getElementById("blockSkipReview");
 const blockCalendarSkipReviewCheckbox = document.getElementById("blockCalendarSkipReview");
-const saveSkipReviewBtn = document.getElementById("saveSkipReviewBtn");
 const saveSkipReviewStatus = document.getElementById("saveSkipReviewStatus");
 
-// Two blocks, saved together. Until it is set, the block for events and tasks
-// follows the one for mail and shows its value; saving writes both, so each
-// box then keeps what it shows.
+// Two blocks, written together when either box changes. Until it is set, the block for events and tasks
+// follows the one for mail and shows its value; writing both lets each box keep what it shows.
 async function loadSkipReviewPref() {
   try {
     const [{ blockSkipReview }, { blockCalendarSkipReview }] = await Promise.all([
@@ -657,7 +701,8 @@ async function loadSkipReviewPref() {
     ]);
     blockSkipReviewCheckbox.checked = !!blockSkipReview;
     blockCalendarSkipReviewCheckbox.checked = !!blockCalendarSkipReview;
-    saveSkipReviewBtn.disabled = false;
+    blockSkipReviewCheckbox.disabled = false;
+    blockCalendarSkipReviewCheckbox.disabled = false;
     saveSkipReviewStatus.textContent = "";
   } catch (e) {
     saveSkipReviewStatus.textContent = t("errorLoadingSetting", [e.message], `Error loading setting: ${e.message}`);
@@ -665,35 +710,32 @@ async function loadSkipReviewPref() {
   }
 }
 
-saveSkipReviewBtn.addEventListener("click", async () => {
-  saveSkipReviewBtn.disabled = true;
-  saveSkipReviewStatus.textContent = t("saving", null, "Saving...");
-  saveSkipReviewStatus.className = "save-status";
-  try {
-    // The block for events and tasks first: while it is not set it follows
-    // the one for mail, so writing the mail block alone could lift it.
-    let result = await browser.commonpostMcp.setBlockCalendarSkipReview(blockCalendarSkipReviewCheckbox.checked);
-    if (!result.error) {
-      result = await browser.commonpostMcp.setBlockSkipReview(blockSkipReviewCheckbox.checked);
+const queueSkipReviewSave = serialQueue();
+
+function saveSkipReview(control) {
+  return queueSkipReviewSave(async () => {
+    try {
+      // The block for events and tasks first: while it is not set it follows
+      // the one for mail, so writing the mail block alone could lift it.
+      let result = await browser.commonpostMcp.setBlockCalendarSkipReview(blockCalendarSkipReviewCheckbox.checked);
+      if (!result.error) {
+        result = await browser.commonpostMcp.setBlockSkipReview(blockSkipReviewCheckbox.checked);
+      }
+      if (result.error) throw new Error(result.error);
+      markSaved(control);
+    } catch (e) {
+      await loadSkipReviewPref();
+      markControl(control, errorText(e), true);
     }
-    if (result.error) {
-      saveSkipReviewStatus.textContent = result.error;
-      saveSkipReviewStatus.className = "save-status error";
-    } else {
-      saveSkipReviewStatus.textContent = t("saved", null, "Saved.");
-    }
-  } catch (e) {
-    saveSkipReviewStatus.textContent = errorText(e);
-    saveSkipReviewStatus.className = "save-status error";
-  }
-  saveSkipReviewBtn.disabled = false;
-});
+  });
+}
+blockSkipReviewCheckbox.addEventListener("change", () => saveSkipReview(blockSkipReviewCheckbox));
+blockCalendarSkipReviewCheckbox.addEventListener("change", () => saveSkipReview(blockCalendarSkipReviewCheckbox));
 
 // --- Filter rules that send mail ---
 // One boolean preference (blockFilterForwardReply): true = "block" (default),
 // false = "confirm" (the user is asked in a Thunderbird dialog each time).
 const filterSendRulePolicyRadios = document.querySelectorAll('input[name="filterSendRulePolicy"]');
-const saveFilterSendRulePolicyBtn = document.getElementById("saveFilterSendRulePolicyBtn");
 const saveFilterSendRulePolicyStatus = document.getElementById("saveFilterSendRulePolicyStatus");
 
 async function loadFilterSendRulePolicy() {
@@ -702,8 +744,8 @@ async function loadFilterSendRulePolicy() {
     const policy = blockFilterForwardReply === false ? "confirm" : "block";
     for (const radio of filterSendRulePolicyRadios) {
       radio.checked = radio.value === policy;
+      radio.disabled = false;
     }
-    saveFilterSendRulePolicyBtn.disabled = false;
     saveFilterSendRulePolicyStatus.textContent = "";
   } catch (e) {
     saveFilterSendRulePolicyStatus.textContent = t("errorLoadingSetting", [e.message], `Error loading setting: ${e.message}`);
@@ -711,41 +753,33 @@ async function loadFilterSendRulePolicy() {
   }
 }
 
-saveFilterSendRulePolicyBtn.addEventListener("click", async () => {
-  const chosen = Array.from(filterSendRulePolicyRadios).find((radio) => radio.checked);
-  if (!chosen) {
-    saveFilterSendRulePolicyStatus.textContent = t("chooseOneOption", null, "Choose one of the two options.");
-    saveFilterSendRulePolicyStatus.className = "save-status error";
-    return;
-  }
-  saveFilterSendRulePolicyBtn.disabled = true;
-  saveFilterSendRulePolicyStatus.textContent = t("saving", null, "Saving...");
-  saveFilterSendRulePolicyStatus.className = "save-status";
-  try {
-    const result = await browser.commonpostMcp.setBlockFilterForwardReply(chosen.value === "block");
-    if (result.error) {
-      saveFilterSendRulePolicyStatus.textContent = result.error;
-      saveFilterSendRulePolicyStatus.className = "save-status error";
-    } else {
-      saveFilterSendRulePolicyStatus.textContent = t("saved", null, "Saved.");
-    }
-  } catch (e) {
-    saveFilterSendRulePolicyStatus.textContent = errorText(e);
-    saveFilterSendRulePolicyStatus.className = "save-status error";
-  }
-  saveFilterSendRulePolicyBtn.disabled = false;
-});
+const queueFilterPolicySave = serialQueue();
+
+for (const radio of filterSendRulePolicyRadios) {
+  radio.addEventListener("change", () => {
+    if (!radio.checked) return;
+    queueFilterPolicySave(async () => {
+      try {
+        const result = await browser.commonpostMcp.setBlockFilterForwardReply(radio.value === "block");
+        if (result.error) throw new Error(result.error);
+        markSaved(radio);
+      } catch (e) {
+        await loadFilterSendRulePolicy();
+        markControl(radio, errorText(e), true);
+      }
+    });
+  });
+}
 
 // --- Encrypted messages ---
 const allowEncryptedContentCheckbox = document.getElementById("allowEncryptedContent");
-const saveEncryptedContentBtn = document.getElementById("saveEncryptedContentBtn");
 const saveEncryptedContentStatus = document.getElementById("saveEncryptedContentStatus");
 
 async function loadEncryptedContentPref() {
   try {
     const { allowEncryptedContent } = await browser.commonpostMcp.getAllowEncryptedContent();
     allowEncryptedContentCheckbox.checked = allowEncryptedContent === true;
-    saveEncryptedContentBtn.disabled = false;
+    allowEncryptedContentCheckbox.disabled = false;
     saveEncryptedContentStatus.textContent = "";
   } catch (e) {
     saveEncryptedContentStatus.textContent = t("errorLoadingSetting", [e.message], `Error loading setting: ${e.message}`);
@@ -753,24 +787,18 @@ async function loadEncryptedContentPref() {
   }
 }
 
-saveEncryptedContentBtn.addEventListener("click", async () => {
-  saveEncryptedContentBtn.disabled = true;
-  saveEncryptedContentStatus.textContent = t("saving", null, "Saving...");
-  saveEncryptedContentStatus.className = "save-status";
+const queueEncryptedSave = serialQueue();
+
+allowEncryptedContentCheckbox.addEventListener("change", () => queueEncryptedSave(async () => {
   try {
     const result = await browser.commonpostMcp.setAllowEncryptedContent(allowEncryptedContentCheckbox.checked);
-    if (result.error) {
-      saveEncryptedContentStatus.textContent = result.error;
-      saveEncryptedContentStatus.className = "save-status error";
-    } else {
-      saveEncryptedContentStatus.textContent = t("saved", null, "Saved.");
-    }
+    if (result.error) throw new Error(result.error);
+    markSaved(allowEncryptedContentCheckbox);
   } catch (e) {
-    saveEncryptedContentStatus.textContent = errorText(e);
-    saveEncryptedContentStatus.className = "save-status error";
+    await loadEncryptedContentPref();
+    markControl(allowEncryptedContentCheckbox, errorText(e), true);
   }
-  saveEncryptedContentBtn.disabled = false;
-});
+}));
 
 loadServerInfo().catch(e => console.error("commonpost-mcp options:", "loadServerInfo failed:", e));
 loadFilterSendRulePolicy().catch(e => console.error("commonpost-mcp options:", "loadFilterSendRulePolicy failed:", e));
@@ -782,7 +810,6 @@ loadSkipReviewPref().catch(e => console.error("commonpost-mcp options:", "loadSk
 
 const listenAllCheckbox = document.getElementById("listenAll");
 const listenAllWarning = document.getElementById("listenAllWarning");
-const saveListenAllBtn = document.getElementById("saveListenAllBtn");
 const saveListenAllStatus = document.getElementById("saveListenAllStatus");
 
 async function loadListenAllPref() {
@@ -790,7 +817,7 @@ async function loadListenAllPref() {
     const { listenAll } = await browser.commonpostMcp.getListenAll();
     listenAllCheckbox.checked = !!listenAll;
     listenAllWarning.style.display = listenAllCheckbox.checked ? "block" : "none";
-    saveListenAllBtn.disabled = false;
+    listenAllCheckbox.disabled = false;
     saveListenAllStatus.textContent = "";
   } catch (e) {
     saveListenAllStatus.textContent = t("errorLoadingSetting", [e.message], `Error loading setting: ${e.message}`);
@@ -798,28 +825,21 @@ async function loadListenAllPref() {
   }
 }
 
+const queueListenAllSave = serialQueue();
+
 listenAllCheckbox.addEventListener("change", () => {
   listenAllWarning.style.display = listenAllCheckbox.checked ? "block" : "none";
-});
-
-saveListenAllBtn.addEventListener("click", async () => {
-  saveListenAllBtn.disabled = true;
-  saveListenAllStatus.textContent = t("saving", null, "Saving...");
-  saveListenAllStatus.className = "save-status";
-  try {
-    const result = await browser.commonpostMcp.setListenAll(listenAllCheckbox.checked);
-    if (result.error) {
-      saveListenAllStatus.textContent = result.error;
-      saveListenAllStatus.className = "save-status error";
-    } else {
-      saveListenAllStatus.textContent = t("saved", null, "Saved.");
+  queueListenAllSave(async () => {
+    try {
+      const result = await browser.commonpostMcp.setListenAll(listenAllCheckbox.checked);
+      if (result.error) throw new Error(result.error);
+      markSaved(listenAllCheckbox);
       await loadServerInfo();
+    } catch (e) {
+      await loadListenAllPref();
+      markControl(listenAllCheckbox, errorText(e), true);
     }
-  } catch (e) {
-    saveListenAllStatus.textContent = errorText(e);
-    saveListenAllStatus.className = "save-status error";
-  }
-  saveListenAllBtn.disabled = false;
+  });
 });
 
 loadListenAllPref();
@@ -1055,31 +1075,11 @@ bridgeRefreshBtn.addEventListener("click", () => {
 });
 loadBridgeStatus().catch(e => console.error("commonpost-mcp options:", "loadBridgeStatus failed:", e));
 
-// --- Unsaved changes ---
-// A setting changes nothing until its Save button is pressed. Once a box or a choice that a Save button covers
-// changes, the status beside that button says so, until the button's own handler writes "Saving..." then "Saved.".
-// The lists built at load (accounts, tools) are watched through their container: change events bubble to it.
-const UNSAVED_WATCH = [
-  ["saveStatus", ["accountList"]],
-  ["saveToolsStatus", ["toolList"]],
-  ["saveSkipReviewStatus", ["blockSkipReview", "blockCalendarSkipReview"]],
-  ["saveFilterSendRulePolicyStatus", ["filterSendRulePolicyBlock", "filterSendRulePolicyConfirm"]],
-  ["saveEncryptedContentStatus", ["allowEncryptedContent"]],
-  ["saveListenAllStatus", ["listenAll"]],
-];
-
-function wireUnsavedNotice() {
-  for (const [statusId, watchedIds] of UNSAVED_WATCH) {
-    const status = document.getElementById(statusId);
-    if (!status) continue;
-    for (const id of watchedIds) {
-      const element = document.getElementById(id);
-      if (!element) continue;
-      element.addEventListener("change", () => {
-        status.textContent = t("unsaved", null, "Not saved yet: press Save.");
-        status.className = "save-status pending";
-      });
-    }
-  }
+// The README link of the note on Thunderbird's "full, unrestricted access" line opens in the default browser.
+const fullAccessLink = document.getElementById("fullAccessLink");
+if (fullAccessLink) {
+  fullAccessLink.addEventListener("click", (event) => {
+    event.preventDefault();
+    browser.windows.openDefaultBrowser(fullAccessLink.href).catch((e) => console.error("commonpost-mcp options:", "openDefaultBrowser failed:", e));
+  });
 }
-wireUnsavedNotice();

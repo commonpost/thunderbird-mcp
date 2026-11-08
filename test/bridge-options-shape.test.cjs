@@ -30,7 +30,7 @@ describe("Bridge section of the options page", () => {
     assert.match(html, /id="bridgeEmpty" hidden>/);
     const status = html.indexOf('<h2 data-i18n="statusHeading">Server Status</h2>');
     const bridge = html.indexOf('id="bridgeSection"');
-    const access = html.indexOf('<h2 data-i18n="accountHeading">Account Access</h2>');
+    const access = html.indexOf('<h2 id="accountHeading" data-i18n="accountHeading">Account Access</h2>');
     assert.ok(status >= 0 && status < bridge && bridge < access);
   });
 
