@@ -4,7 +4,17 @@ All notable changes since 0.8.0, the first release of this project, are listed h
 before is the git history of [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) (MIT), kept in
 this repository.
 
-## [Unreleased]
+## [0.21.0] - 2026-11-08
+
+- New: the options page opens in its own tab (the wrench button of the add-on). It speaks in plain words, folds the
+  technical details away, follows Thunderbird's dark theme, and shows in French when Thunderbird is in French.
+- New: `listAddressBooks` lists the address books the assistant may use, empty ones included, so `createContact`
+  can target any of them. 42 tools.
+- Changed: the Bridge section of the options gives numbered steps and a direct link to the file to download.
+- Changed: tool descriptions say which tool to use where two could be confused (compose tools, folders, contacts,
+  filter order, categories).
+- **Bridge 0.20.0, unchanged.** Updating is optional. If you restricted the tools in the options, `listAddressBooks`
+  starts off until you turn it on.
 
 ### Added
 
