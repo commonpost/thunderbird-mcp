@@ -4,6 +4,14 @@ All notable changes since 0.8.0, the first release of this project, are listed h
 before is the git history of [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) (MIT), kept in
 this repository.
 
+## [Unreleased]
+
+### Fixed
+
+- `listEvents`, `listTasks` and the results of the calendar tools give a time of day as the calendar shows it, with its
+  offset (`2026-11-12T09:30:00-05:00`). They gave UTC only (`14:30:00.000Z`), and an assistant could take that for
+  2:30 pm and report a clash that does not exist. All-day values are unchanged.
+
 ## [0.22.1] - 2026-11-08
 
 - New: the bridge can be installed as a Gemini CLI extension. The add-on is still installed in Thunderbird separately.
