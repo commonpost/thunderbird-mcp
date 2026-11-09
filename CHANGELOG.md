@@ -4,7 +4,11 @@ All notable changes since 0.8.0, the first release of this project, are listed h
 before is the git history of [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) (MIT), kept in
 this repository.
 
-## [Unreleased]
+## [0.22.2] - 2026-11-08
+
+- Fixed: calendar tools give a time of day as your calendar shows it, with its offset. They gave UTC only, and an
+  assistant could report a clash that does not exist.
+- **Bridge 0.20.0, unchanged.** Updating is optional.
 
 ### Fixed
 
