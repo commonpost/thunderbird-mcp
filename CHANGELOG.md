@@ -4,6 +4,13 @@ All notable changes since 0.8.0, the first release of this project, are listed h
 before is the git history of [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) (MIT), kept in
 this repository.
 
+## [Unreleased]
+
+### Added
+
+- `gemini-extension.json`: the release archive can be installed as a Gemini CLI extension, which runs the bridge it
+  contains. The add-on is still installed in Thunderbird separately.
+
 ## [0.22.0] - 2026-11-08
 
 - Changed: the options page saves each change as soon as you make it; the Save buttons are gone. Account Access

@@ -7,8 +7,9 @@
  *   node scripts/check-versions.cjs                       # pull requests and main
  *   node scripts/check-versions.cjs --release-tag vX.Y.Z  # release workflow
  *
- * - package.json, package-lock.json (twice), extension/manifest.json and plugins/claude-code/.claude-plugin/plugin.json
- *   (the Claude Code plugin, whose mcp-bridge.cjs is a copy of the repository's) carry the product version (= the tag).
+ * - package.json, package-lock.json (twice), extension/manifest.json, gemini-extension.json and
+ *   plugins/claude-code/.claude-plugin/plugin.json (the Claude Code plugin, whose mcp-bridge.cjs is a copy of the
+ *   repository's) carry the product version (= the tag).
  * - BRIDGE_VERSION in mcp-bridge.cjs is the release in which the bridge bundle last changed; mcpb/manifest.json
  *   carries it; it is never newer than the product version.
  * - The bridge bundle is mcp-bridge.cjs and the other files of the .mcpb, plus the scripts that build it
@@ -113,6 +114,13 @@ function main(argv) {
     if (!read('plugins/claude-code/mcp-bridge.cjs').equals(read('mcp-bridge.cjs'))) {
       fail('plugins/claude-code/mcp-bridge.cjs must be a byte-for-byte copy of mcp-bridge.cjs (cp mcp-bridge.cjs plugins/claude-code/)');
     }
+  }
+
+  // The Gemini CLI installs the archive of the latest release and compares its tag; its gallery shows this manifest.
+  const geminiManifest = 'gemini-extension.json';
+  if (fs.existsSync(path.join(root, geminiManifest))) {
+    const gemini = JSON.parse(readText(geminiManifest)).version;
+    if (gemini !== version) fail(`${geminiManifest} version ${gemini} must equal package.json ${version}`);
   }
 
   // README: the release line in the head of the file, where a reader, a search engine and a directory's model all

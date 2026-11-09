@@ -239,6 +239,16 @@ describe("check-versions.cjs", () => {
     assert.equal(previousReleaseTag(tags, "v0.11.0"), "v0.10.1");
   });
 
+  it("gemini: gemini-extension.json must carry the product version when it exists", () => {
+    const dir = makeRepo(PREV, ["v0.11.0"], PREV);
+    fs.writeFileSync(path.join(dir, "gemini-extension.json"), JSON.stringify({ name: "x", version: "0.10.0" }));
+    const r = run(dir);
+    assert.equal(r.status, 1);
+    assert.match(r.out, /gemini-extension\.json version 0\.10\.0 must equal package\.json 0\.11\.0/);
+    fs.writeFileSync(path.join(dir, "gemini-extension.json"), JSON.stringify({ name: "x", version: "0.11.0" }));
+    assert.equal(run(dir).status, 0);
+  });
+
   it("plugin: plugins/claude-code must carry the product version and a copy of the bridge when it exists", () => {
     const dir = makeRepo(PREV, ["v0.11.0"], PREV);
     fs.mkdirSync(path.join(dir, "plugins/claude-code/.claude-plugin"), { recursive: true });
