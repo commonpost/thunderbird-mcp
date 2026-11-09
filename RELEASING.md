@@ -9,7 +9,7 @@ environment can publish.
   tests (Node 22 and 24), Lint, Version sync, zizmor and CodeQL.
 - Open a release pull request that:
   - sets the new version in `package.json`, `package-lock.json` (two places), `extension/manifest.json`,
-    `plugins/claude-code/.claude-plugin/plugin.json` and the release line in the head of `README.md`
+    `gemini-extension.json`, `plugins/claude-code/.claude-plugin/plugin.json` and the release line in the head of `README.md`
     (`Latest release: **vX.Y.Z** (YYYY-MM-DD)`, the same date as the `CHANGELOG.md` section: directories and
     search engines read that line, and Version sync refuses a stale one);
   - runs `node scripts/check-versions.cjs`: it says whether the bridge bundle (`mcp-bridge.cjs`, the other files of the

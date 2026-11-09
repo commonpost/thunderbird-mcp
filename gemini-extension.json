@@ -1,0 +1,11 @@
+{
+  "name": "commonpost-mcp",
+  "version": "0.22.0",
+  "description": "Thunderbird mail, contacts, calendars and filters as MCP tools. Needs the Commonpost MCP add-on in Thunderbird.",
+  "mcpServers": {
+    "commonpost-mail": {
+      "command": "node",
+      "args": ["${extensionPath}${/}mcp-bridge.cjs"]
+    }
+  }
+}
