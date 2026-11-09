@@ -12898,12 +12898,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	             * is false) or every accessible account; Trash / Junk only when asked for. visit(folder, db) returns
 	             * false to stop. Returns { error } for a bad folderPath, else null.
 	             */
-	            function walkSearchFolders(args, visit) {
+	            // firstFolder (threadOf): that folder, then the Sent and Inbox of its account, are read before the others, and
+	            // its account comes first: on a large profile the read limit is reached before the last folders.
+	            function walkSearchFolders(args, visit, firstFolder = null) {
 	              let rootFolder = null;
 	              let stopped = false;
-	              const walk = folder => {
-	                // Flag check only: descendants of an explicitly requested Trash stay searchable
-	                if (!args.includeTrash && folder !== rootFolder && isTrashOrJunkFolder(folder, false)) return;
+	              const visited = new Set();
+	              const read = folder => {
+	                if (visited.has(folder.URI)) return;
+	                visited.add(folder.URI);
 	                try {
 	                  refreshImapFolderSync(folder);
 	                  const db = folder.msgDatabase;
@@ -12911,6 +12914,11 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                } catch {
 	                  // Skip inaccessible folders
 	                }
+	              };
+	              const walk = folder => {
+	                // Flag check only: descendants of an explicitly requested Trash stay searchable
+	                if (!args.includeTrash && folder !== rootFolder && isTrashOrJunkFolder(folder, false)) return;
+	                read(folder);
 	                if (args.includeSubfolders !== false && folder.hasSubFolders) {
 	                  for (const subfolder of folder.subFolders) {
 	                    if (stopped) return;
@@ -12918,26 +12926,52 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                  }
 	                }
 	              };
+	              const readFirst = () => {
+	                if (!firstFolder) return;
+	                const accountRoot = firstFolder.rootFolder;
+	                const special = [Ci.nsMsgFolderFlags.SentMail, Ci.nsMsgFolderFlags.Inbox].map(flag => {
+	                  try { return accountRoot?.getFolderWithFlags(flag); } catch { return null; }
+	                });
+	                for (const folder of [firstFolder, ...special]) {
+	                  if (!stopped && folder && folderInSearchScope(folder, rootFolder, args)) read(folder);
+	                }
+	              };
 	              if (args.folderPath) {
 	                const result = getAccessibleFolder(args.folderPath);
 	                if (result.error) return result;
 	                rootFolder = result.folder;
-	                walk(rootFolder);
+	                readFirst();
+	                if (!stopped) walk(rootFolder);
 	                return null;
 	              }
-	              for (const account of getAccessibleAccounts()) {
+	              const accounts = [...getAccessibleAccounts()];
+	              const firstRootURI = firstFolder?.rootFolder?.URI;
+	              if (firstRootURI) accounts.sort((x, y) => (y.incomingServer.rootFolder.URI === firstRootURI) - (x.incomingServer.rootFolder.URI === firstRootURI));
+	              for (const account of accounts) {
 	                if (stopped) break;
 	                rootFolder = account.incomingServer.rootFolder;
-	                walk(rootFolder);
+	                if (rootFolder.URI === firstRootURI) readFirst();
+	                if (!stopped) walk(rootFolder);
 	              }
 	              return null;
+	            }
+
+	            // Whether walkSearchFolders would reach this folder from root.
+	            function folderInSearchScope(folder, root, args) {
+	              for (let f = folder; f; f = f.parent) {
+	                if (f.URI === root.URI) return true;
+	                if (args.includeSubfolders === false) return false;
+	                if (!args.includeTrash && isTrashOrJunkFolder(f, false)) return false;
+	              }
+	              return false;
 	            }
 
 	            /**
 	             * threadOf (T1): every header in scope is read first (id, References, subject key, Re: flag), then the
 	             * conversation is joined (conversationMembers), so the folder order does not matter. Filters and query
 	             * terms select rows of the conversation; they do not cut its links. At most SEARCH_COLLECTION_CAP
-	             * headers are read (this runs on the main thread); past that the result is marked incomplete.
+	             * headers are read (this runs on the main thread), the seed's folder first; past that the result is marked
+	             * incomplete.
 	             */
 	            function threadOfSearch(args, prepared, terms) {
 	              const found = findMessage(args.threadOf.messageId, args.threadOf.folderPath);
@@ -12958,19 +12992,24 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	                });
 	                sources.push(source);
 	              };
+	              let seedRead = false;
 	              const walked = walkSearchFolders(args, (folder, db) => {
-	                for (const msgHdr of db.enumerateMessages()) {
+	                if (folder.URI === seedFolderURI) seedRead = true;
+	                // Newest first: when the limit stops this, what is left out is the oldest mail
+	                const headers = typeof db.reverseEnumerateMessages === "function" ? db.reverseEnumerateMessages() : db.enumerateMessages();
+	                for (const msgHdr of headers) {
 	                  if (items.length >= SEARCH_COLLECTION_CAP) { scanCapped = true; return false; }
 	                  if (seedIndex < 0 && msgHdr.messageKey === seedHdr.messageKey && folder.URI === seedFolderURI) seedIndex = items.length;
 	                  add(msgHdr, { folder, key: msgHdr.messageKey });
 	                }
 	                return true;
-	              });
+	              }, seedHdr.folder);
 	              if (walked) return walked;
-	              // A seed outside the scope still anchors the conversation
 	              if (seedIndex < 0) {
 	                seedIndex = items.length;
-	                add(seedHdr, { hdr: seedHdr });
+	                // Its folder was being read when the limit stopped: the seed is in scope and is listed. Otherwise a seed
+	                // outside the scope still anchors the conversation, without being a row.
+	                add(seedHdr, scanCapped && seedRead ? { folder: seedHdr.folder, key: seedHdr.messageKey } : { hdr: seedHdr });
 	              }
 
 	              const hdrAt = i => sources[i].hdr || sources[i].folder.msgDatabase.getMsgHdrForKey(sources[i].key);

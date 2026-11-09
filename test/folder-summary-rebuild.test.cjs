@@ -447,7 +447,7 @@ describe("dispatch: which tools rebuild a folder summary first", () => {
   });
 
   it("prepareSearchFolders covers walkSearchFolders' scope (same Trash / Junk and subfolder rules)", () => {
-    const walk = between("function walkSearchFolders(args, visit) {", "function threadOfSearch(");
+    const walk = between("function walkSearchFolders(args, visit, firstFolder = null) {", "function threadOfSearch(");
     const prep = between("async function prepareSearchFolders(args) {", "// END FOLDER SUMMARY REBUILD");
     for (const rule of [
       "if (!args.includeTrash && folder !== rootFolder && isTrashOrJunkFolder(folder, false)) return;",
@@ -457,7 +457,8 @@ describe("dispatch: which tools rebuild a folder summary first", () => {
       "rootFolder = account.incomingServer.rootFolder;",
     ]) {
       const inPrep = rule.replace("const result = ", "const found = ");
-      assert.ok(walk.includes(rule), `walkSearchFolders no longer has: ${rule}`);
+      const inWalk = rule.replace("for (const account of getAccessibleAccounts()) {", "const accounts = [...getAccessibleAccounts()];");
+      assert.ok(walk.includes(inWalk), `walkSearchFolders no longer has: ${inWalk}`);
       assert.ok(prep.includes(inPrep), `prepareSearchFolders does not have: ${inPrep}`);
     }
   });

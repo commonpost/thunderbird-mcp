@@ -21,7 +21,7 @@ function region(name) {
   return apiSource.slice(start, end);
 }
 
-const FLAGS = { Trash: 0x100, Junk: 0x40000000, Drafts: 0x400, Templates: 0x400000, Queue: 0x800, Inbox: 0x1000 };
+const FLAGS = { Trash: 0x100, SentMail: 0x200, Junk: 0x40000000, Drafts: 0x400, Templates: 0x400000, Queue: 0x800, Inbox: 0x1000 };
 const HAS_RE = 0x10;
 const ATTACHMENT = 0x10000000;
 const DAY = 86400000;
@@ -117,7 +117,7 @@ ${region("SEARCH MESSAGES")}
 ${region("RECENT MESSAGES")}
 this.searchMessages = searchMessages;
 this.getRecentMessages = getRecentMessages;`, sandbox);
-  return { sandbox, inbox, sent, trash, otherInbox, otherRoot };
+  return { sandbox, root, inbox, sent, trash, otherInbox, otherRoot, accounts };
 }
 
 const plain = v => JSON.parse(JSON.stringify(v));
@@ -307,5 +307,76 @@ describe("attachment search (attachmentName / attachmentType)", () => {
     assert.match(sandbox.searchMessages({ query: "", attachmentName: "x", threadOf: { messageId: "a", folderPath: "b" } }).error, /threadOf/);
     assert.match(sandbox.searchMessages({ query: "x", attachmentName: "x", searchBody: true }).error, /searchBody/);
     assert.match(sandbox.searchMessages({ query: "", attachmentName: "x", format: "legacy" }).error, /legacy/);
+  });
+});
+
+describe("threadOf on a profile larger than the read limit", () => {
+  const CAP = 10000;
+  // Parents, roots and special folders as Thunderbird gives them.
+  function big() {
+    const w = world({ restricted: false });
+    for (const f of [w.inbox, w.sent, w.trash]) { f.parent = w.root; f.rootFolder = w.root; }
+    w.root.rootFolder = w.root;
+    w.root.getFolderWithFlags = flag => (flag === FLAGS.SentMail ? w.sent : flag === FLAGS.Inbox ? w.inbox : null);
+    w.otherInbox.parent = w.otherRoot;
+    w.otherInbox.rootFolder = w.otherRoot;
+    w.otherRoot.rootFolder = w.otherRoot;
+    w.otherRoot.getFolderWithFlags = flag => (flag === FLAGS.Inbox ? w.otherInbox : null);
+    return w;
+  }
+  function noise(target, n = CAP + 1) {
+    for (let i = 0; i < n; i++) hdr(target, { id: `n${i}@lab.test`, subject: `Noise ${i}`, author: "x@lab.test" });
+  }
+  const thread = (w, messageId, folderPath, extra = {}) => plain(w.sandbox.searchMessages({ query: "", threadOf: { messageId, folderPath }, ...extra }));
+
+  it("reads the seed's account first, so a seed in the last account is found", () => {
+    const w = big();
+    noise(w.inbox);
+    hdr(w.otherInbox, { id: "a@lab.test", subject: "Plan", author: "Ann <ann@acme.test>", daysAgo: 3 });
+    hdr(w.otherInbox, { id: "b@lab.test", subject: "Re: Plan", author: "Bob <bob@acme.test>", refs: ["a@lab.test"], re: true, daysAgo: 2 });
+    const res = thread(w, "a@lab.test", w.otherInbox.URI);
+    assert.deepEqual(res.messages.map(m => m.id), ["a@lab.test", "b@lab.test"]);
+    assert.equal(res.incomplete, true);
+  });
+
+  it("reads the Sent folder of the seed's account before the other folders", () => {
+    const w = big();
+    const huge = folder("mailbox://me@lab.test/Archive");
+    huge.parent = w.root; huge.rootFolder = w.root;
+    w.root.subFolders = [huge, w.inbox, w.sent, w.trash];
+    w.accounts[0].folders.push(huge);
+    noise(huge);
+    hdr(w.inbox, { id: "a@lab.test", subject: "Plan", author: "Ann <ann@acme.test>", daysAgo: 3 });
+    hdr(w.sent, { id: "r@lab.test", subject: "Re: Plan", author: "me@lab.test", to: "ann@acme.test", refs: ["a@lab.test"], re: true, daysAgo: 2 });
+    assert.deepEqual(thread(w, "a@lab.test", w.inbox.URI).messages.map(m => m.id), ["a@lab.test", "r@lab.test"]);
+  });
+
+  it("still lists the seed when its own folder is larger than the limit", () => {
+    const w = big();
+    noise(w.inbox);
+    hdr(w.inbox, { id: "a@lab.test", subject: "Plan", author: "Ann <ann@acme.test>", daysAgo: 3 });
+    const res = thread(w, "a@lab.test", w.inbox.URI);
+    assert.deepEqual(res.messages.map(m => m.id), ["a@lab.test"]);
+    assert.equal(res.incomplete, true);
+  });
+
+  it("reads newest first when the folder allows it", () => {
+    const w = big();
+    noise(w.inbox);
+    const seed = hdr(w.inbox, { id: "a@lab.test", subject: "Plan", author: "Ann <ann@acme.test>", daysAgo: 3 });
+    hdr(w.inbox, { id: "b@lab.test", subject: "Re: Plan", author: "Bob <bob@acme.test>", refs: ["a@lab.test"], re: true, daysAgo: 2 });
+    w.inbox.msgDatabase.reverseEnumerateMessages = () => [...w.inbox.hdrs].reverse().values();
+    assert.ok(seed);
+    assert.deepEqual(thread(w, "a@lab.test", w.inbox.URI).messages.map(m => m.id), ["a@lab.test", "b@lab.test"]);
+  });
+
+  it("does not list a seed outside the scope, and leaves a Trash seed out unless asked", () => {
+    const w = big();
+    hdr(w.inbox, { id: "a@lab.test", subject: "Plan", author: "Ann <ann@acme.test>", daysAgo: 3 });
+    hdr(w.sent, { id: "r@lab.test", subject: "Re: Plan", author: "me@lab.test", refs: ["a@lab.test"], re: true, daysAgo: 2 });
+    assert.deepEqual(thread(w, "a@lab.test", w.inbox.URI, { folderPath: w.sent.URI }).messages.map(m => m.id), ["r@lab.test"]);
+    hdr(w.trash, { id: "t@lab.test", subject: "Gone", author: "Ann <ann@acme.test>", daysAgo: 1 });
+    assert.deepEqual(thread(w, "t@lab.test", w.trash.URI).messages, []);
+    assert.deepEqual(thread(w, "t@lab.test", w.trash.URI, { includeTrash: true }).messages.map(m => m.id), ["t@lab.test"]);
   });
 });
