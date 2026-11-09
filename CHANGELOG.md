@@ -4,6 +4,14 @@ All notable changes since 0.8.0, the first release of this project, are listed h
 before is the git history of [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) (MIT), kept in
 this repository.
 
+## [Unreleased]
+
+### Fixed
+
+- `searchMessages` with `threadOf` on a profile of more than 10,000 messages: the conversation could come back empty,
+  even the message it started from. The message's folder, then the Sent and Inbox of its account, are now read first,
+  newest mail first, and the message is always listed.
+
 ## [0.22.2] - 2026-11-08
 
 - Fixed: calendar tools give a time of day as your calendar shows it, with its offset. They gave UTC only, and an
