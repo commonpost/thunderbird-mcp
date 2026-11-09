@@ -2361,6 +2361,17 @@ function getCalendarReviewStore() {
 }
 
 // BEGIN EVENT RANGE HELPERS
+// BEGIN CAL LOCAL ISO
+// ISO 8601 from the fields of a calIDateTime already in the wanted timezone: month is 0-based, timezoneOffset in seconds.
+function formatDateTimeWithOffset(dt) {
+  const pad = (n, width = 2) => String(n).padStart(width, "0");
+  const offset = Math.abs(dt.timezoneOffset);
+  const sign = dt.timezoneOffset < 0 ? "-" : "+";
+  return `${pad(dt.year, 4)}-${pad(dt.month + 1)}-${pad(dt.day)}T${pad(dt.hour)}:${pad(dt.minute)}:${pad(dt.second)}` +
+    `${sign}${pad(Math.floor(offset / 3600))}:${pad(Math.floor(offset / 60) % 60)}`;
+}
+// END CAL LOCAL ISO
+
 // The range listEvents queries. A date-only value ("2026-10-15") is a calendar
 // day in local time, not an instant: as startDate it is the start of that day,
 // as endDate the end of it, so startDate = endDate lists that one day. Read as
@@ -13508,6 +13519,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               catch { return dt.icalString || null; }
             }
 
+            // A time of day as the user's calendar shows it, with its UTC offset: the same instant as calDateToISO, but
+            // an assistant reads "09:30:00-05:00" as 9:30, and took "14:30:00.000Z" for 2:30 pm. All-day values stay as
+            // they are: they are days, not instants.
+            function calDateToLocalISO(dt) {
+              if (!dt || dt.isDate) return calDateToISO(dt);
+              try { return formatDateTimeWithOffset(dt.getInTimezone(cal.dtz.defaultTimezone)); }
+              catch { return calDateToISO(dt); }
+            }
+
             // VEVENT STATUS values per iCal RFC 5545 § 3.8.1.11.
             const VEVENT_STATUS_MAP = {
               tentative: "TENTATIVE",
@@ -13534,7 +13554,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const allDay = item.startDate ? item.startDate.isDate : false;
               // For all-day events, iCal DTEND is exclusive. Convert to inclusive
               // (last day of event) so the API is intuitive and round-trips correctly.
-              let endDateISO = calDateToISO(item.endDate);
+              let endDateISO = calDateToLocalISO(item.endDate);
               if (allDay && item.endDate) {
                 try {
                   const raw = new Date(item.endDate.nativeTime / 1000);
@@ -13547,7 +13567,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 calendarId: calendar.id,
                 calendarName: calendar.name,
                 title: item.title || "",
-                startDate: calDateToISO(item.startDate),
+                startDate: calDateToLocalISO(item.startDate),
                 endDate: endDateISO,
                 location: item.getProperty("LOCATION") || "",
                 description: item.getProperty("DESCRIPTION") || "",
@@ -13577,9 +13597,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 calendarId: calendar.id,
                 calendarName: calendar.name,
                 title: item.title || "",
-                dueDate: calDateToISO(item.dueDate),
-                startDate: calDateToISO(item.entryDate),
-                completedDate: calDateToISO(item.completedDate),
+                dueDate: calDateToLocalISO(item.dueDate),
+                startDate: calDateToLocalISO(item.entryDate),
+                completedDate: calDateToLocalISO(item.completedDate),
                 completed,
                 percentComplete: item.percentComplete || 0,
                 priority,
