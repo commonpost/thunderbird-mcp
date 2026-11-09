@@ -12,7 +12,7 @@ MCP server for AI assistants: Thunderbird mail, calendar, contacts, filters. Win
 
 Let your AI assistant work with Thunderbird -- search mail, compose messages, manage filters, and organize your inbox. All through the [Model Context Protocol](https://modelcontextprotocol.io/).
 
-Latest release: **v0.22.0** (2026-11-08) -- see the [changelog](CHANGELOG.md) or [all releases](https://github.com/commonpost/thunderbird-mcp/releases).
+Latest release: **v0.22.1** (2026-11-08) -- see the [changelog](CHANGELOG.md) or [all releases](https://github.com/commonpost/thunderbird-mcp/releases).
 
 <p align="center">
   <img src="docs/demo.gif" alt="Demo of the MCP server for Thunderbird" width="600">
@@ -330,7 +330,7 @@ startup_timeout_sec = 30
 
 `startup_timeout_sec` leaves room for the bridge's first-start wait: with Thunderbird closed and no tool list cached yet, the first `tools/list` waits up to 20 s for Thunderbird.
 
-**Gemini CLI.** Edit `~/.gemini/settings.json` (or `.gemini/settings.json` in a project). The top-level key is `mcpServers`. Its `env` block expands `$VAR`, `${VAR}` and, on Windows, `%VAR%` references, so a value containing `$` or `%` would be altered.
+**Gemini CLI.** Edit `~/.gemini/settings.json` (or `.gemini/settings.json` in a project). The top-level key is `mcpServers`. Its `env` block expands `$VAR`, `${VAR}` and, on Windows, `%VAR%` references, so a value containing `$` or `%` would be altered. Or install the bridge as an extension: `gemini extensions install https://github.com/commonpost/thunderbird-mcp`; the add-on still goes in Thunderbird, as in step 1 of the install.
 
 ```json
 {

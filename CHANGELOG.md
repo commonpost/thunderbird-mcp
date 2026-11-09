@@ -4,7 +4,11 @@ All notable changes since 0.8.0, the first release of this project, are listed h
 before is the git history of [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) (MIT), kept in
 this repository.
 
-## [Unreleased]
+## [0.22.1] - 2026-11-08
+
+- New: the bridge can be installed as a Gemini CLI extension. The add-on is still installed in Thunderbird separately.
+- The add-on behaves as in 0.22.0.
+- **Bridge 0.20.0, unchanged.** Updating is optional.
 
 ### Added
 
