@@ -27,8 +27,8 @@ describe("formatDateTimeWithOffset", () => {
     assert.equal(sandbox.format(dt(2026, 0, 31, 23, 59, 59, 19800)), "2026-01-31T23:59:59+05:30");
     assert.equal(sandbox.format(dt(2026, 0, 2, 0, 0, 0, -12600)), "2026-01-02T00:00:00-03:30");
   });
-  it("writes UTC as +00:00", () => {
-    assert.equal(sandbox.format(dt(2026, 2, 3, 4, 5, 6, 0)), "2026-03-03T04:05:06+00:00");
+  it("writes UTC as it always did", () => {
+    assert.equal(sandbox.format(dt(2026, 2, 3, 4, 5, 6, 0)), "2026-03-03T04:05:06.000Z");
   });
   it("denotes the same instant as the UTC value", () => {
     assert.equal(new Date(sandbox.format(dt(2026, 10, 12, 9, 30, 0, -18000))).toISOString(), "2026-11-12T14:30:00.000Z");

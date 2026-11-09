@@ -2365,10 +2365,11 @@ function getCalendarReviewStore() {
 // ISO 8601 from the fields of a calIDateTime already in the wanted timezone: month is 0-based, timezoneOffset in seconds.
 function formatDateTimeWithOffset(dt) {
   const pad = (n, width = 2) => String(n).padStart(width, "0");
+  const clock = `${pad(dt.year, 4)}-${pad(dt.month + 1)}-${pad(dt.day)}T${pad(dt.hour)}:${pad(dt.minute)}:${pad(dt.second)}`;
+  if (dt.timezoneOffset === 0) return `${clock}.000Z`;      // UTC reads as it always did
   const offset = Math.abs(dt.timezoneOffset);
   const sign = dt.timezoneOffset < 0 ? "-" : "+";
-  return `${pad(dt.year, 4)}-${pad(dt.month + 1)}-${pad(dt.day)}T${pad(dt.hour)}:${pad(dt.minute)}:${pad(dt.second)}` +
-    `${sign}${pad(Math.floor(offset / 3600))}:${pad(Math.floor(offset / 60) % 60)}`;
+  return `${clock}${sign}${pad(Math.floor(offset / 3600))}:${pad(Math.floor(offset / 60) % 60)}`;
 }
 // END CAL LOCAL ISO
 
