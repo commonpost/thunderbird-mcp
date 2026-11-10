@@ -15,8 +15,23 @@ Let your AI assistant work with Thunderbird -- search mail, compose messages, ma
 Latest release: **v0.22.4** (2026-11-10) -- see the [changelog](CHANGELOG.md) or [all releases](https://github.com/commonpost/thunderbird-mcp/releases).
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Demo of the MCP server for Thunderbird" width="600">
+  <img src="docs/demo.gif" alt="An assistant checks four email accounts and the calendar in Thunderbird, finds a clash with a dentist appointment, adds it to the calendar and opens a reply for review. Real run on a demo mailbox, shown at 2x speed." width="600">
 </p>
+<p align="center"><a href="docs/demo.mp4">Full video (25 s)</a>: a real run on a demo mailbox with invented data.</p>
+
+- **Every account you already have in Thunderbird.** Gmail, Outlook, Microsoft 365, IMAP, POP: no new login, no
+  password to hand over.
+- **Mail, calendar and contacts together.** Your assistant can check an email against your calendar.
+- **Nothing is sent without you.** Replies open in Thunderbird's own window, for you to read and send.
+- **Runs on your computer.** What the assistant reads goes to the AI service you use, not to us.
+
+**Try asking:**
+
+```text
+Am I free Thursday at 2:30? Check my calendars and all my email accounts.
+Find the invoice for my dishwasher, whatever account it went to, and open a warranty claim with it attached.
+What needs a reply before Friday? Open each reply for me to review.
+```
 
 ---
 
@@ -43,7 +58,11 @@ Requirements: Windows, macOS or Linux, with Thunderbird 140 or later and Node.js
 Every tool works the same on the three systems. One difference: on Windows, attachments go through the bridge rather
 than by file path (see [attachments on Windows](#attachments-refused)).
 
-1. Install the extension. Download `commonpost-mcp-v<version>.xpi` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest). In Thunderbird: Tools > Add-ons and Themes > gear menu > Install Add-on From File. Restart Thunderbird. Thunderbird warns that the add-on gets "full, unrestricted access": it says so for every add-on of this kind ([why, and what this one does](#why-thunderbird-says-full-unrestricted-access)).
+1. Install the extension.
+   - Download `commonpost-mcp-v<version>.xpi` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest).
+   - In Thunderbird: Tools > Add-ons and Themes > gear menu > Install Add-on From File, then restart Thunderbird.
+   - Thunderbird warns that the add-on gets "full, unrestricted access": it says so for every add-on of this kind
+     ([why, and what this one does](#why-thunderbird-says-full-unrestricted-access)).
 2. Download `mcp-bridge.cjs` from the **same release** and put it in a folder you will keep, for example `~/commonpost-mcp/`. The bridge is a single file and needs nothing else: the release does not ship a `package.json`. (The bridge carries its own version; it reads no `package.json`.)
 3. Check Node.js: `node --version` must show 22 or later. The Claude Desktop bundle needs neither this step nor the
    previous one (see step 4).
@@ -70,6 +89,12 @@ than by file path (see [attachments on Windows](#attachments-refused)).
 
      ```
      claude mcp add -s user commonpost-mail -- node "C:\Users\<you>\commonpost-mcp\mcp-bridge.cjs"
+     ```
+
+   - Gemini CLI, as an extension (it carries the bridge, so step 2 is not needed):
+
+     ```
+     gemini extensions install https://github.com/commonpost/thunderbird-mcp
      ```
 
    - Other clients: add this to the client's MCP config (Claude Desktop, VS Code, Cursor, Codex CLI and Gemini CLI have their own file and format: see [Other MCP clients](#other-mcp-clients)). In JSON, write Windows paths with `/` or double the backslashes (`"C:/Users/<you>/commonpost-mcp/mcp-bridge.cjs"`). A JSON file does not expand `~`: write the full path. On macOS, if the client cannot find `node`, set `command` to the full path that `which node` prints.
