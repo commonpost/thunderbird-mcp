@@ -35,6 +35,7 @@ function load() {
   };
   vm.createContext(sandbox);
   vm.runInContext(`${region("FOLDER NAME HELPERS")}
+${region("CAL LOCAL ISO")}
 ${region("SEARCH ROW BUILDER")}
 ${region("RECENT MESSAGES")}
 this.buildSearchRow = buildSearchRow;
@@ -81,7 +82,7 @@ describe("getRecentMessages result rows", () => {
     const row = JSON.parse(JSON.stringify(buildSearchRow(hdr, folder)));
     assert.equal(row.ccList, "Bob Ålpha <bob@alpha.test>");
     assert.equal(row.subject, "Re: Project kickoff");
-    assert.equal(row.date, "2026-03-02T11:00:00.000Z");
+    assert.equal(new Date(row.date).getTime(), Date.UTC(2026, 2, 2, 11));
     assert.equal(row.preview, "See you there");
     assert.equal(row._threadId, undefined);
     const legacy = buildSearchRow(hdr, folder, true);
