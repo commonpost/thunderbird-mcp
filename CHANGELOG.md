@@ -9,7 +9,7 @@ this repository.
 ### Changed
 
 - The project's short description (README, package.json, GitHub, and the MCP registry from the next release):
-  "MCP server for Thunderbird: your AI assistant uses mail, calendar and contacts in all your accounts."
+  "MCP server for Thunderbird: mail, calendar, contacts in all your accounts. Windows, macOS, Linux."
 
 ## [0.22.4] - 2026-11-10
 
