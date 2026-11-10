@@ -4,6 +4,13 @@ All notable changes since 0.8.0, the first release of this project, are listed h
 before is the git history of [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) (MIT), kept in
 this repository.
 
+## [Unreleased]
+
+### Changed
+
+- The project's short description (README, package.json, GitHub, and the MCP registry from the next release):
+  "MCP server for Thunderbird: your AI assistant uses mail, calendar and contacts in all your accounts."
+
 ## [0.22.4] - 2026-11-10
 
 - New: `listEvents` and `listTasks` can read one event or task by its id.
