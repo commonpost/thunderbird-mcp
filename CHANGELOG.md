@@ -4,6 +4,13 @@ All notable changes since 0.8.0, the first release of this project, are listed h
 before is the git history of [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) (MIT), kept in
 this repository.
 
+## [Unreleased]
+
+### Added
+
+- `listEvents` takes `eventId` and `listTasks` takes `taskId`: one event or task by its id, in the same row format,
+  without guessing a date range. No new tool.
+
 ## [0.22.3] - 2026-11-09
 
 - Fixed: on a profile of more than 10,000 messages, asking for a whole conversation could return nothing, not even the

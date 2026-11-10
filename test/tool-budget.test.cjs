@@ -47,9 +47,11 @@ const byName = Object.fromEntries(tools.map(t => [t.name, t]));
 // About 500 more characters (November 2026), measured on Glama's per-tool scores (TDQS: a server's score weighs
 // its weakest tool at 40%). The seven weakest tools, all at 3 of 5 on usage guidelines, now say which sibling to use
 // instead: reorderFilters, the three folder tools, updateContact, getContact and replyToMessage.
+// About 150 more characters (November 2026): listEvents eventId and listTasks taskId read one item by its id, which
+// Glama's completeness review named as missing; no new tool.
 const MAX_TOOLS = 42;
 const MAX_TOOL_CHARS = 4100;
-const MAX_TOTAL_CHARS = 54600;
+const MAX_TOTAL_CHARS = 54800;
 const MIN_DESCRIPTION_CHARS = 30;
 const BOUNDED_RESULT_TOOLS = {
   searchMessages: 'maxResults', getRecentMessages: 'maxResults', searchContacts: 'maxResults',
