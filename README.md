@@ -10,7 +10,7 @@
 
 MCP server for AI assistants: Thunderbird mail, calendar, contacts, filters. Windows, macOS, Linux.
 
-Let your AI assistant work with Thunderbird -- search mail, compose messages, manage filters, and organize your inbox. All through the [Model Context Protocol](https://modelcontextprotocol.io/).
+Your AI assistant can search, read and draft mail in every account you have in Thunderbird, and check it against your calendar and contacts. Free and open source (MIT), through the [Model Context Protocol](https://modelcontextprotocol.io/).
 
 Latest release: **v0.22.4** (2026-11-10) -- see the [changelog](CHANGELOG.md) or [all releases](https://github.com/commonpost/thunderbird-mcp/releases).
 
@@ -19,11 +19,15 @@ Latest release: **v0.22.4** (2026-11-10) -- see the [changelog](CHANGELOG.md) or
 </p>
 <p align="center"><a href="docs/demo.mp4">Full video (25 s)</a>: a real run on a demo mailbox with invented data.</p>
 
-- **Every account you already have in Thunderbird.** Gmail, Outlook, Microsoft 365, IMAP, POP: no new login, no
-  password to hand over.
+- **Every account you already have in Thunderbird.** Gmail, Outlook.com, Microsoft 365, your own domain, IMAP, POP:
+  no new login, no password to hand over.
 - **Mail, calendar and contacts together.** Your assistant can check an email against your calendar.
-- **Nothing is sent without you.** Replies open in Thunderbird's own window, for you to read and send.
-- **Runs on your computer.** What the assistant reads goes to the AI service you use, not to us.
+- **Nothing is sent without your click.** New mail and replies open in Thunderbird's compose window, for you to read
+  and send. Calendar events are added directly by default, and no invitation is sent.
+- **Email is treated as untrusted.** Text a sender hides from you is removed before your assistant reads it. That
+  reduces prompt injection; it does not prevent it, which is why sending needs your click ([details](#protections)).
+- **Runs on your computer.** What the assistant reads goes to the AI service you use, not to us. Each release can be
+  rebuilt byte for byte from this source.
 
 **Try asking:**
 
@@ -53,68 +57,92 @@ What needs a reply before Friday? Open each reply for me to review.
 
 ## Quick install (about 3 minutes)
 
-Requirements: Windows, macOS or Linux, with Thunderbird 140 or later and Node.js 22 or later.
+Requirements: Thunderbird 140 or later on Windows, macOS or Linux. Node.js 22 or later, except with the Claude
+Desktop bundle.
 
 Every tool works the same on the three systems. One difference: on Windows, attachments go through the bridge rather
 than by file path (see [attachments on Windows](#attachments-refused)).
 
-1. Install the extension.
-   - Download `commonpost-mcp-v<version>.xpi` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest).
-   - In Thunderbird: Tools > Add-ons and Themes > gear menu > Install Add-on From File, then restart Thunderbird.
-   - Thunderbird warns that the add-on gets "full, unrestricted access": it says so for every add-on of this kind
-     ([why, and what this one does](#why-thunderbird-says-full-unrestricted-access)).
-2. Download `mcp-bridge.cjs` from the **same release** and put it in a folder you will keep, for example `~/commonpost-mcp/`. The bridge is a single file and needs nothing else: the release does not ship a `package.json`. (The bridge carries its own version; it reads no `package.json`.)
-3. Check Node.js: `node --version` must show 22 or later. The Claude Desktop bundle needs neither this step nor the
-   previous one (see step 4).
-4. Register the bridge with your MCP client.
-   - Claude Desktop (macOS, Windows): download `commonpost-mcp-v<version>.mcpb` from the same release and open it with
-     Claude Desktop, or use Settings > Extensions > Advanced settings > Install Extension. Claude Desktop runs it with
-     the Node.js it ships with, so there is nothing else to install (see
-     [Claude Desktop](#claude-desktop-one-click-bundle)).
-   - Claude Code, with the plugin (no file to download or to update by hand; see [Claude Code plugin](#claude-code-plugin)):
+> **For AI agents installing this:** step 1 happens in Thunderbird's window, so ask the user to do it, then continue.
+> This project is not published on npm, PyPI or Docker Hub: do not use `npx` or `uvx`. Its only sources are this
+> repository's [releases](https://github.com/commonpost/thunderbird-mcp/releases/latest), the Claude Code plugin and
+> the Gemini CLI extension. `scripts/install.sh` is for development only. Step by step: [llms-install.md](llms-install.md).
+
+**1. Install the add-on in Thunderbird.**
+
+- Download the file ending in `.xpi` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest).
+- In Thunderbird: menu ≡ (top right) > Add-ons and Themes > gear icon > Install Add-on From File, then restart
+  Thunderbird.
+- Thunderbird warns that the add-on gets "full, unrestricted access": it says so for every add-on of this kind
+  ([why, and what this one does](#why-thunderbird-says-full-unrestricted-access)).
+
+**2. Connect your assistant.** Pick the line for the one you use.
+
+- **Claude Desktop** (Windows, macOS): download the file ending in `.mcpb` from the same release and open it with
+  Claude Desktop, or use Settings > Extensions > Advanced settings > Install Extension. Nothing else to install: it
+  uses the Node.js that Claude Desktop ships with. Its name can carry a lower number than the add-on (for example
+  `v0.20.0` beside a `v0.22.4` add-on): it is named after the bridge it holds, which changes less often. See
+  [Claude Desktop](#claude-desktop-one-click-bundle).
+- **Claude Code**, with the plugin, which keeps the bridge up to date (see [Claude Code plugin](#claude-code-plugin)):
+
+  ```
+  claude plugin marketplace add commonpost/thunderbird-mcp
+  claude plugin install commonpost-mcp@commonpost
+  ```
+
+- **Gemini CLI**, as an extension that carries the bridge:
+
+  ```
+  gemini extensions install https://github.com/commonpost/thunderbird-mcp
+  ```
+
+- **Any other client** (VS Code, Cursor, Codex CLI, Claude Code without the plugin...):
+  1. Check Node.js: `node --version` must show 22 or later.
+  2. Download the bridge, a single file, into a folder you will keep. macOS and Linux:
 
      ```
-     claude plugin marketplace add commonpost/thunderbird-mcp
-     claude plugin install commonpost-mcp@commonpost
+     mkdir -p ~/commonpost-mcp && curl -fL -o ~/commonpost-mcp/mcp-bridge.cjs https://github.com/commonpost/thunderbird-mcp/releases/latest/download/mcp-bridge.cjs
      ```
 
-   - Claude Code, with the file. Use the absolute path of the file, in quotes. `-s user` makes the server available
-     in every folder; without it, Claude Code adds it to the folder you run the command in only.
+     Windows (PowerShell):
 
      ```
-     claude mcp add -s user commonpost-mail -- node "/absolute/path/to/mcp-bridge.cjs"
+     New-Item -ItemType Directory -Force "$env:USERPROFILE\commonpost-mcp" | Out-Null; Invoke-WebRequest -OutFile "$env:USERPROFILE\commonpost-mcp\mcp-bridge.cjs" https://github.com/commonpost/thunderbird-mcp/releases/latest/download/mcp-bridge.cjs
      ```
 
-   - Claude Code on Windows, for example:
+  3. Register it. Claude Code, on Linux and on Windows (`-s user` makes it available in every folder):
 
      ```
+     claude mcp add -s user commonpost-mail -- node "/home/<you>/commonpost-mcp/mcp-bridge.cjs"
      claude mcp add -s user commonpost-mail -- node "C:\Users\<you>\commonpost-mcp\mcp-bridge.cjs"
      ```
 
-   - Gemini CLI, as an extension (it carries the bridge, so step 2 is not needed):
-
-     ```
-     gemini extensions install https://github.com/commonpost/thunderbird-mcp
-     ```
-
-   - Other clients: add this to the client's MCP config (Claude Desktop, VS Code, Cursor, Codex CLI and Gemini CLI have their own file and format: see [Other MCP clients](#other-mcp-clients)). In JSON, write Windows paths with `/` or double the backslashes (`"C:/Users/<you>/commonpost-mcp/mcp-bridge.cjs"`). A JSON file does not expand `~`: write the full path. On macOS, if the client cannot find `node`, set `command` to the full path that `which node` prints.
+     Other clients: add this to the client's MCP config, with the full path of the file (each client has its own file
+     and format: see [Other MCP clients](#other-mcp-clients)). In JSON, write Windows paths with `/`
+     (`"C:/Users/<you>/commonpost-mcp/mcp-bridge.cjs"`); a JSON file does not expand `~`. On macOS, if the client
+     cannot find `node`, set `command` to the full path that `which node` prints.
 
      ```json
      {
        "mcpServers": {
          "commonpost-mail": {
            "command": "node",
-           "args": ["/absolute/path/to/mcp-bridge.cjs"]
+           "args": ["/home/<you>/commonpost-mcp/mcp-bridge.cjs"]
          }
        }
      }
      ```
 
-5. Test it. Keep Thunderbird open and ask your assistant: "list my Thunderbird accounts".
+**3. Test it.** With Thunderbird open, ask your assistant: "list my Thunderbird accounts". It should name your
+accounts; your client may first ask you to allow the tool. Nothing comes back? Check that Thunderbird is open and the
+add-on enabled, then quit your client completely and start it again (Claude Desktop on Windows: its icon near the
+clock > Quit). Still nothing: see [Troubleshooting](#troubleshooting).
 
-**The bridge is not updated automatically, and each MCP client has its own.** When one should be replaced, the extension says so in a tool result (your assistant passes it on) and in its options page (section Bridge), which lists the bridges that connected with "Up to date", "Newer version available" (it works; updating is optional) or "Update recommended". For a bridge to update or one the extension refuses, Thunderbird also shows a system notification, once per bridge and per Thunderbird session; the hidden preference `extensions.commonpost-mcp.bridgeUpdateAlert` set to `false` turns it off. Every [release page](https://github.com/commonpost/thunderbird-mcp/releases) starts with what the release brings, whether it changes the bridge, and the steps: download `mcp-bridge.cjs` and put it in place of your copy (its path is in the MCP configuration of your client; in Claude Code: `claude mcp get <server name>`), then reconnect your MCP client (`/mcp` in Claude Code); in Claude Desktop, install the `.mcpb` bundle again; with the [Claude Code plugin](#claude-code-plugin), update the plugin. A release that does not change the bridge ships the same bridge again. The extension's version is shown in Tools > Add-ons and Themes.
+**4. Choose what your assistant may see.** Open the add-on's options (menu ≡ > Add-ons and Themes > Commonpost MCP for
+Thunderbird > wrench button) and pick the accounts and tools. Until you do, every account and tool is visible to MCP
+clients.
 
-Right after installing, open the extension's options page (Tools > Add-ons and Themes > Commonpost MCP for Thunderbird > wrench button (Options); it opens in its own tab) and choose which accounts and tools your assistant may use. Until you do, every account and tool is visible to MCP clients.
+To update or remove it later, see [Updating](#updating) and [Uninstall](#uninstall).
 
 Snap, Flatpak and macOS need no extra step in most cases; see [Sandbox-aware connection discovery](#sandbox-aware-connection-discovery). If something fails, see [Troubleshooting](#troubleshooting).
 
@@ -228,7 +256,7 @@ OpenPGP and S/MIME messages are not decrypted for the assistant by default: `get
 |------|-------------|
 | `getAccountAccess` | View which accounts the MCP server can access |
 
-Account and tool access are configured via the extension settings page (Tools > Add-ons and Themes > Commonpost MCP for Thunderbird > wrench button (Options)). Access control is not MCP-exposed -- only the user can change it. Once you have disabled any tool, a tool added by a later update starts disabled too: the settings page marks it "new", and it stays off until you check it. If you have disabled nothing, new tools are enabled like the others.
+Account and tool access are configured via the extension settings page (menu ≡ > Add-ons and Themes > Commonpost MCP for Thunderbird > wrench button (Options)). Access control is not MCP-exposed -- only the user can change it. Once you have disabled any tool, a tool added by a later update starts disabled too: the settings page marks it "new", and it stays off until you check it. If you have disabled nothing, new tools are enabled like the others.
 
 The same settings page has a "Send Safety" section with two settings. **Block `skipReview`** for mail, enabled by default, rejects `skipReview: true` for `sendMail`, `replyToMessage` and `forwardMessage` (and `mode: "send"` for `replyToMessage` and `forwardMessage`); their review window still opens normally, and a direct send is honored only after you explicitly disable it. **Block `skipReview`** for events and tasks starts disabled on a new install: `createEvent` and `createTask` add the event or task at once, unless the client passes `skipReview: false` to open the dialog. Enabled, they always open the dialog and reject `skipReview: true`. An event or task added without the dialog sends no invitation (these tools take no attendees), but anyone the calendar is shared with sees it. An installation updated from a version without this setting keeps what it had: the setting for events and tasks takes the value of the one for mail.
 
@@ -238,7 +266,7 @@ The same settings page has a "Send Safety" section with two settings. **Block `s
 
 ### 1. Install the extension
 
-Download `commonpost-mcp-v<version>.xpi` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest), then in Thunderbird: Tools > Add-ons and Themes > gear menu > Install Add-on From File, and restart. Each release also carries a provenance attestation (`*.sigstore.json`) that ties the XPI to the commit and the workflow that built it; you can check it with `gh attestation verify <file>.xpi --repo commonpost/thunderbird-mcp`. The XPI can be rebuilt byte for byte from the tagged source with `node scripts/build-xpi-reproducible.cjs`.
+Download `commonpost-mcp-v<version>.xpi` from the [latest release](https://github.com/commonpost/thunderbird-mcp/releases/latest), then in Thunderbird: menu ≡ > Add-ons and Themes > gear icon > Install Add-on From File, and restart. Each release also carries a provenance attestation (`*.sigstore.json`) that ties the XPI to the commit and the workflow that built it; you can check it with `gh attestation verify <file>.xpi --repo commonpost/thunderbird-mcp`. The XPI can be rebuilt byte for byte from the tagged source with `node scripts/build-xpi-reproducible.cjs`.
 
 The MCP bridge, `mcp-bridge.cjs`, is attached to each release next to the XPI (with its own provenance attestation). You can also `git clone --branch v<version> https://github.com/commonpost/thunderbird-mcp.git` and use the file from the clone; use the bridge of the same version as the extension.
 
@@ -248,7 +276,7 @@ Requires Thunderbird 140 or later, and Node.js 22 or later for the bridge (`mcp-
 
 ### 2. Configure your MCP client
 
-Add to your MCP client config (e.g. `~/.claude.json` for Claude Code):
+Add to your MCP client config (Claude Code: use `claude mcp add` as in [Quick install](#quick-install-about-3-minutes) instead; other clients: [Other MCP clients](#other-mcp-clients)):
 
 ```json
 {
@@ -429,7 +457,7 @@ That's it. Your AI can now access Thunderbird.
 Both add-ons can be installed at the same time: they use different ids, preferences, ports (8780-8789 here, 8765-8774 there) and temporary directories. Nothing is shared or migrated automatically:
 
 - settings (`extensions.thunderbird-mcp.*`) are **not** copied; set them again in this add-on's options page. Until you do, **every account and tool is visible to MCP clients**: your account and tool restrictions are not carried over;
-- your MCP client must point its bridge at this repository's `mcp-bridge.cjs` (or the `commonpost-mcp` binary) and, if you set it, use `COMMONPOST_MCP_CONNECTION_FILE` (the old `THUNDERBIRD_MCP_CONNECTION_FILE` is ignored on purpose, so that one bridge never reads the other add-on's file);
+- your MCP client must point its bridge at this repository's `mcp-bridge.cjs` and, if you set it, use `COMMONPOST_MCP_CONNECTION_FILE` (the old `THUNDERBIRD_MCP_CONNECTION_FILE` is ignored on purpose, so that one bridge never reads the other add-on's file);
 - if you keep both, the options page shows a notice, and each MCP client must be configured for the one you want. To avoid two servers touching the same mailbox, disable the one you do not use;
 - `createEvent` and `createTask` add events and tasks at once instead of opening a dialog, unless you enable **Block `skipReview`** for events and tasks in Send Safety.
 
@@ -520,11 +548,30 @@ platform are on the [official Thunderbird site](https://www.thunderbird.net/en-U
 
 ---
 
+## Updating
+
+- **The add-on** updates itself through Thunderbird, like any add-on.
+- **The Claude Code plugin** and **the Gemini CLI extension** follow the releases (`gemini extensions update
+  commonpost-mcp`; for the plugin, see [Claude Code plugin](#claude-code-plugin)).
+- **A bridge you downloaded yourself, and the Claude Desktop bundle,** are not updated automatically, and each MCP client has its own. When one should be replaced, the extension says so in a tool result (your assistant passes it on) and in its options page (section Bridge), which lists the bridges that connected with "Up to date", "Newer version available" (it works; updating is optional) or "Update recommended". For a bridge to update or one the extension refuses, Thunderbird also shows a system notification, once per bridge and per Thunderbird session; the hidden preference `extensions.commonpost-mcp.bridgeUpdateAlert` set to `false` turns it off. Every [release page](https://github.com/commonpost/thunderbird-mcp/releases) starts with what the release brings, whether it changes the bridge, and the steps: download `mcp-bridge.cjs` and put it in place of your copy (its path is in the MCP configuration of your client; in Claude Code: `claude mcp get <server name>`), then reconnect your MCP client (`/mcp` in Claude Code); in Claude Desktop, install the `.mcpb` bundle again; with the [Claude Code plugin](#claude-code-plugin), update the plugin. A release that does not change the bridge ships the same bridge again. The extension's version is shown in menu ≡ > Add-ons and Themes.
+
+## Uninstall
+
+1. If you turned on "Use stable token" in the add-on's options, turn it off first.
+2. In Thunderbird: menu ≡ > Add-ons and Themes > Commonpost MCP for Thunderbird > Remove.
+3. In your assistant:
+   - Claude Desktop: Settings > Extensions, then remove Commonpost MCP for Thunderbird.
+   - Claude Code: `claude plugin uninstall commonpost-mcp@commonpost`, or `claude mcp remove -s user commonpost-mail`.
+   - Gemini CLI: `gemini extensions uninstall commonpost-mcp`.
+   - Other clients: remove the `commonpost-mail` entry from their MCP config.
+4. Delete the folder where you put `mcp-bridge.cjs`, if you downloaded it, and the bridge's tool cache (its folder is
+   named in [How it works](#how-it-works)).
+
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| Extension not loading | Check Tools > Add-ons and Themes. Errors: Tools > Developer Tools > Error Console |
+| Extension not loading | Check menu ≡ > Add-ons and Themes. Errors: menu ≡ > Tools > Developer Tools > Error Console |
 | Claude Code: no Thunderbird tools in another folder | `claude mcp add` without `-s user` adds the server to the folder it was run in only. In that folder, run `claude mcp remove commonpost-mail`, then add it again with `-s user` |
 | `Failed to connect` with `Connection closed`, right after adding the server | The path to `mcp-bridge.cjs` is wrong. Common causes: a path with a space and no quotes around it (`claude mcp get commonpost-mail` shows what was saved), or `~` in a JSON file, where it is not expanded. Write the full path, in quotes on the command line |
 | `Executable not found in $PATH: "node"` (with the plugin, Claude Code may name `"stdio"` instead) | Node.js is not installed, or not on the `PATH` the client sees. Install Node.js 22 or later, or set `command` to the full path of `node` (`which node`; `where node` on Windows). In Claude Desktop, the `.mcpb` bundle needs no Node.js of your own |
@@ -588,7 +635,7 @@ commonpost-mcp/
 │   ├── options.js              # Settings page logic
 │   ├── icons/                  # Extension icons
 │   └── mcp_server/
-│       ├── api.js              # All 40 MCP tools + auth + access control
+│       ├── api.js              # All MCP tools + auth + access control
 │       └── schema.json
 ├── test/                       # Test suite (node:test; fast-check for the property tests)
 ├── docs/                       # Experiment inventory, filter API notes
