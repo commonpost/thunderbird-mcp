@@ -4,7 +4,11 @@ All notable changes since 0.8.0, the first release of this project, are listed h
 before is the git history of [thunderbird-mcp](https://github.com/TKasperczyk/thunderbird-mcp) (MIT), kept in
 this repository.
 
-## [Unreleased]
+## [0.22.4] - 2026-11-10
+
+- New: `listEvents` and `listTasks` can read one event or task by its id.
+- Changed: message dates are given on your clock, with the offset, as calendar times already are.
+- **Bridge 0.20.0, unchanged.** Updating is optional.
 
 ### Changed
 
