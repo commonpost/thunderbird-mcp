@@ -6,6 +6,12 @@ this repository.
 
 ## [Unreleased]
 
+### Changed
+
+- The `date` of a message, in search results, `getMessage` and `getRecentMessages`, is the time on your clock
+  with its offset (`2026-11-09T01:40:00-05:00`), like the calendar tools since 0.22.2. It was UTC only. In UTC nothing
+  changes.
+
 ### Added
 
 - `listEvents` takes `eventId` and `listTasks` takes `taskId`: one event or task by its id, in the same row format,

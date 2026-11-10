@@ -15,7 +15,7 @@ const b = api.indexOf("// END CAL LOCAL ISO");
 assert.ok(a >= 0 && b > a, "CAL LOCAL ISO block missing");
 const sandbox = {};
 vm.createContext(sandbox);
-vm.runInContext(`${api.slice(a, b)}\nthis.format = formatDateTimeWithOffset;`, sandbox);
+vm.runInContext(`${api.slice(a, b)}\nthis.format = formatDateTimeWithOffset; this.mail = localISOFromMs;`, sandbox);
 const dt = (year, month, day, hour, minute, second, timezoneOffset) => ({ year, month, day, hour, minute, second, timezoneOffset });
 
 describe("formatDateTimeWithOffset", () => {
@@ -40,4 +40,20 @@ describe("the calendar results use it", () => {
     "startDate: calDateToLocalISO(item.entryDate)", "completedDate: calDateToLocalISO(item.completedDate)", "let endDateISO = calDateToLocalISO(item.endDate)"]) {
     it(line, () => assert.ok(api.includes(line)));
   }
+});
+
+describe("localISOFromMs (mail dates)", () => {
+  const at = (tz, fn) => { const old = process.env.TZ; process.env.TZ = tz; try { return fn(); } finally { if (old === undefined) delete process.env.TZ; else process.env.TZ = old; } };
+  const ms = Date.UTC(2026, 10, 9, 6, 40, 0);
+  it("writes the user's clock with its offset", () => {
+    assert.equal(at("America/Toronto", () => sandbox.mail(ms)), "2026-11-09T01:40:00-05:00");
+    assert.equal(at("Europe/Paris", () => sandbox.mail(ms)), "2026-11-09T07:40:00+01:00");
+  });
+  it("keeps the UTC form in UTC, and the same instant everywhere", () => {
+    assert.equal(at("UTC", () => sandbox.mail(ms)), "2026-11-09T06:40:00.000Z");
+    assert.equal(new Date(at("Asia/Kolkata", () => sandbox.mail(ms))).getTime(), ms);
+  });
+  it("crosses a daylight-saving change with the right offset", () => {
+    assert.equal(at("America/Toronto", () => sandbox.mail(Date.UTC(2026, 9, 28, 14, 0, 0))), "2026-10-28T10:00:00-04:00");
+  });
 });

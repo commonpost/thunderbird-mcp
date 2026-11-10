@@ -2371,6 +2371,14 @@ function formatDateTimeWithOffset(dt) {
   const sign = dt.timezoneOffset < 0 ? "-" : "+";
   return `${clock}${sign}${pad(Math.floor(offset / 3600))}:${pad(Math.floor(offset / 60) % 60)}`;
 }
+// A mail date (milliseconds) as the user's clock shows it, with its offset; UTC stays in the form it always had.
+function localISOFromMs(ms) {
+  const d = new Date(ms);
+  return formatDateTimeWithOffset({
+    year: d.getFullYear(), month: d.getMonth(), day: d.getDate(), hour: d.getHours(), minute: d.getMinutes(),
+    second: d.getSeconds(), timezoneOffset: -d.getTimezoneOffset() * 60,
+  });
+}
 // END CAL LOCAL ISO
 
 // The range listEvents queries. A date-only value ("2026-10-15") is a calendar
@@ -12558,7 +12566,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 author: msgHdr.mime2DecodedAuthor || msgHdr.author,
                 recipients: msgHdr.mime2DecodedRecipients || msgHdr.recipients,
                 ccList: decodeHeaderValue(msgHdr.ccList),
-                date: msgHdr.date ? new Date(msgHdr.date / 1000).toISOString() : null,
+                date: msgHdr.date ? localISOFromMs(msgHdr.date / 1000) : null,
                 folderPath: folder.URI,
                 read: msgHdr.isRead,
                 flagged: msgHdr.isFlagged,
@@ -15652,7 +15660,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                         author: msgHdr.mime2DecodedAuthor || msgHdr.author,
                         recipients: msgHdr.mime2DecodedRecipients || msgHdr.recipients,
                         ccList: decodeHeaderValue(msgHdr.ccList),
-                        date: msgHdr.date ? new Date(msgHdr.date / 1000).toISOString() : null,
+                        date: msgHdr.date ? localISOFromMs(msgHdr.date / 1000) : null,
                         tags: getUserTags(msgHdr),
                         body: ENCRYPTED_CONTENT_NOTICE,
                         bodyIsHtml: false,
@@ -15983,7 +15991,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       author: msgHdr.mime2DecodedAuthor || msgHdr.author,
                       recipients: msgHdr.mime2DecodedRecipients || msgHdr.recipients,
                       ccList: decodeHeaderValue(msgHdr.ccList),
-                      date: msgHdr.date ? new Date(msgHdr.date / 1000).toISOString() : null,
+                      date: msgHdr.date ? localISOFromMs(msgHdr.date / 1000) : null,
                       tags: msgTags,
                       body,
                       bodyIsHtml,
@@ -16563,7 +16571,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 source = "database";
                 const set = (key, value) => { if (value) headers[key] = clampHeaderValue(String(value)); };
                 set("messageId", msgHdr.messageId ? `<${msgHdr.messageId}>` : "");
-                set("date", msgHdr.date ? new Date(msgHdr.date / 1000).toISOString() : "");
+                set("date", msgHdr.date ? localISOFromMs(msgHdr.date / 1000) : "");
                 set("from", msgHdr.mime2DecodedAuthor || msgHdr.author);
                 set("to", msgHdr.mime2DecodedRecipients || msgHdr.recipients);
                 set("cc", decodeHeaderValue(msgHdr.ccList));
@@ -18623,7 +18631,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
               let date = "";
               try {
-                date = hdr.date ? new Date(hdr.date / 1000).toISOString().slice(0, 10) : "";
+                date = hdr.date ? localISOFromMs(hdr.date / 1000).slice(0, 10) : "";
               } catch (e) {
                 console.warn("commonpost-mcp: reply template date unreadable:", e);
               }

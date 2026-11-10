@@ -265,7 +265,7 @@ vm.createContext(sandbox);
 vm.runInContext(`"use strict";
 ${["STRIP HELPERS", "INLINE IMAGE CONTENT HELPERS", "ENCRYPTED MESSAGE HELPERS", "RAW MIME PARSING HELPERS",
   "RAW MIME ATTACHMENT HELPERS", "OUTBOUND ATTACHMENT LIMITS", "OUTBOUND ATTACHMENT CONVERSION",
-  "AUTHENTICATION RESULTS"].map(region).join("\n")}
+  "AUTHENTICATION RESULTS", "CAL LOCAL ISO"].map(region).join("\n")}
 ${source.slice(getMessageStart, getMessageEnd)}
 Object.assign(this, { getMessage, buildToolResultContent });`, sandbox);
 
