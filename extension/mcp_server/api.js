@@ -7763,6 +7763,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             endDate: { type: "string", description: "ISO 8601 end (default: start + 30 days); date-only includes the whole day" },
             maxResults: { type: "integer", minimum: 1, maximum: 500, default: 100, description: "Max events" },
             format: { type: "string", enum: ["objects", "table"], description: "'table' returns { columns, rows }" },
+            eventId: { type: "string", description: "One event by id instead of a range (recurring: its series)" },
             reviewId: { type: "string", description: "From createEvent: that dialog's state instead (open, saved + eventId, closed unsaved, failed)" },
           },
           required: [],
@@ -7845,6 +7846,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             dueBefore: { type: "string", description: "Return tasks due before this ISO 8601 date" },
             maxResults: { type: "integer", minimum: 1, maximum: 500, default: 100, description: "Max tasks" },
             format: { type: "string", enum: ["objects", "table"], description: "'table' returns { columns, rows }" },
+            taskId: { type: "string", description: "One task by id instead of a list" },
             reviewId: { type: "string", description: "From createTask: that dialog's state instead (open, saved + taskId, closed unsaved, failed)" },
           },
           required: [],
@@ -13808,6 +13810,30 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return { review };
             }
 
+            // listEvents eventId / listTasks taskId: that one item, in the same row format as the list, from one calendar
+            // or the first accessible calendar that holds it.
+            async function getCalendarItemById(kind, id, calendarId) {
+              if (!cal) return { error: "Calendar not available" };
+              const label = kind === "event" ? "eventId" : "taskId";
+              if (typeof id !== "string" || !id.trim()) return { error: `${label} must be a non-empty string` };
+              try {
+                const calendars = getAccessibleCalendars();
+                let targets = kind === "task" ? calendars.filter(c => c.getProperty("capabilities.tasks.supported") !== false) : calendars;
+                if (calendarId) {
+                  const found = calendars.find(c => c.id === calendarId);
+                  if (!found) return { error: `Calendar not found: ${calendarId}` };
+                  targets = [found];
+                }
+                for (const calendar of targets) {
+                  const item = kind === "event" ? await findEventItem(calendar, id) : await findTaskItem(calendar, id);
+                  if (item) return [kind === "event" ? formatEvent(item, calendar) : formatTask(item, calendar)];
+                }
+                return { error: `${kind === "event" ? "Event" : "Task"} not found: ${id}` + (calendarId ? "" : " (in the calendars this client can see)") };
+              } catch (e) {
+                return { error: e.toString() };
+              }
+            }
+
             async function listEvents(calendarId, startDate, endDate, maxResults) {
               if (!cal) {
                 return { error: "Calendar not available" };
@@ -19675,6 +19701,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   return await createEvent(args.title, args.startDate, args.endDate, args.location, args.description, args.calendarId, args.allDay, args.skipReview, args.status, args.showAs, args.categories, args.onlineMeeting, args.reminders);
                 case "listEvents":
                   if (args.reviewId !== undefined) return calendarReviewState(args.reviewId, "event");
+                  if (args.eventId !== undefined) return listResultAsTable(await getCalendarItemById("event", args.eventId, args.calendarId), args.format);
                   return listResultAsTable(await listEvents(args.calendarId, args.startDate, args.endDate, args.maxResults), args.format);
                 case "updateEvent":
                   return await updateEvent(args.eventId, args.calendarId, args.title, args.startDate, args.endDate, args.location, args.description, args.status, args.showAs, args.categories, args.onlineMeeting, args.reminders);
@@ -19686,6 +19713,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   return await createTask(args.title, args.dueDate, args.calendarId, args.description, args.priority, args.categories, args.skipReview);
                 case "listTasks":
                   if (args.reviewId !== undefined) return calendarReviewState(args.reviewId, "task");
+                  if (args.taskId !== undefined) return listResultAsTable(await getCalendarItemById("task", args.taskId, args.calendarId), args.format);
                   return listResultAsTable(await listTasks(args.calendarId, args.completed, args.dueBefore, args.maxResults), args.format);
                 case "updateTask":
                   return await updateTask(args.taskId, args.calendarId, args.title, args.dueDate, args.description, args.completed, args.percentComplete, args.priority);
