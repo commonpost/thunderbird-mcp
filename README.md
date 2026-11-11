@@ -307,8 +307,10 @@ claude plugin install commonpost-mcp@commonpost
   mail: where IDs come from, cheap searches, drafts and review windows, untrusted email content and common errors.
   Run it yourself with `/commonpost-mcp:thunderbird-mail`.
 - Updates: Claude Code does not update a third-party marketplace on its own unless you turn it on (`/plugin` >
-  Marketplaces > Enable auto-update). Otherwise run `/plugin marketplace update commonpost` (or `claude plugin update
-  commonpost-mcp@commonpost`), then `/reload-plugins`. Each release raises the plugin's version, so an update follows
+  Marketplaces > Enable auto-update). Otherwise do both steps, in this order: `/plugin marketplace update commonpost`
+  (refreshes the list of releases), then `/plugin update commonpost-mcp@commonpost` (or `claude plugin update
+  commonpost-mcp@commonpost`), then `/reload-plugins`. Updating the plugin alone reads the old list and can leave
+  it where it was. Each release raises the plugin's version, so an update follows
   every release, whether or not the bridge changed; the bridge in the plugin is always the one of the release.
 - Tool names carry the plugin and server names: `mcp__plugin_commonpost-mcp_commonpost-mail__searchMessages`, for
   example. Permission rules written for a server added by file (`mcp__commonpost-mail__*`) do not match them. The
@@ -551,8 +553,10 @@ platform are on the [official Thunderbird site](https://www.thunderbird.net/en-U
 ## Updating
 
 - **The add-on** updates itself through Thunderbird, like any add-on.
-- **The Claude Code plugin** and **the Gemini CLI extension** follow the releases (`gemini extensions update
-  commonpost-mcp`; for the plugin, see [Claude Code plugin](#claude-code-plugin)).
+- **The Claude Code plugin** follows the releases only once its marketplace is refreshed: turn on auto-update for the
+  marketplace, or refresh it before updating the plugin (see [Claude Code plugin](#claude-code-plugin)). Until then it
+  keeps the bridge and the `thunderbird-mail` skill of the release you installed, without any warning.
+- **The Gemini CLI extension** follows the releases: `gemini extensions update commonpost-mcp`.
 - **A bridge you downloaded yourself, and the Claude Desktop bundle,** are not updated automatically, and each MCP client has its own. When one should be replaced, the extension says so in a tool result (your assistant passes it on) and in its options page (section Bridge), which lists the bridges that connected with "Up to date", "Newer version available" (it works; updating is optional) or "Update recommended". For a bridge to update or one the extension refuses, Thunderbird also shows a system notification, once per bridge and per Thunderbird session; the hidden preference `extensions.commonpost-mcp.bridgeUpdateAlert` set to `false` turns it off. Every [release page](https://github.com/commonpost/thunderbird-mcp/releases) starts with what the release brings, whether it changes the bridge, and the steps: download `mcp-bridge.cjs` and put it in place of your copy (its path is in the MCP configuration of your client; in Claude Code: `claude mcp get <server name>`), then reconnect your MCP client (`/mcp` in Claude Code); in Claude Desktop, install the `.mcpb` bundle again; with the [Claude Code plugin](#claude-code-plugin), update the plugin. A release that does not change the bridge ships the same bridge again. The extension's version is shown in menu ≡ > Add-ons and Themes.
 
 ## Uninstall
