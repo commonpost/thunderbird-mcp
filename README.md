@@ -66,7 +66,9 @@ than by file path (see [attachments on Windows](#attachments-refused)).
 > **For AI agents installing this:** step 1 happens in Thunderbird's window, so ask the user to do it, then continue.
 > This project is not published on npm, PyPI or Docker Hub: do not use `npx` or `uvx`. Its only sources are this
 > repository's [releases](https://github.com/commonpost/thunderbird-mcp/releases/latest), the Claude Code plugin and
-> the Gemini CLI extension. `scripts/install.sh` is for development only. Step by step: [llms-install.md](llms-install.md).
+> the Gemini CLI extension. `scripts/install.sh` is for development only. For Claude Desktop, the `.mcpb` bundle is
+> the whole install: no Node.js and no config file to edit. The bridge and the add-on do not need the same version
+> number. Step by step: [llms-install.md](llms-install.md).
 
 **1. Install the add-on in Thunderbird.**
 
