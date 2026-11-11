@@ -3,8 +3,7 @@
 "use strict";
 
 // Tags by the name the user sees: updateMessage turns "Important" into "$label1". Another keyword is still
-// added, with a warning that Thunderbird does not show it and the list of known tags; what cannot be a
-// keyword is refused with that list, and nothing changes then.
+// added and what cannot be a keyword is skipped, as before, but the result now says so, with the known tags.
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
@@ -24,7 +23,7 @@ describe("resolveMessageTags", () => {
 
   it("turns labels into keys, any case, and keeps keys as they are", () => {
     assert.deepEqual(plain(resolveMessageTags(["Important", "à FAIRE", "$label2", "Projet X"], undefined)),
-      { tagsToAdd: ["$label1", "$label4", "$label2", "projet-x"], tagsToRemove: [], unknown: [], unknownWarning: null });
+      { tagsToAdd: ["$label1", "$label4", "$label2", "projet-x"], tagsToRemove: [], warning: null });
   });
 
   it("lists each key once", () => {
@@ -35,27 +34,25 @@ describe("resolveMessageTags", () => {
   it("adds another keyword as it is, with a warning that lists the known tags", () => {
     const r = resolveMessageTags(["lab-x", "Important"], undefined);
     assert.deepEqual(plain(r.tagsToAdd), ["lab-x", "$label1"]);
-    assert.equal(r.unknownWarning,
+    assert.equal(r.warning,
       "Not Thunderbird tags, added as keywords Thunderbird does not show: lab-x. Known tags: Important ($label1), "
       + "Travail ($label2), Personnel ($label3), À faire ($label4), Plus tard ($label5), Projet X (projet-x).");
   });
 
   it("removes a keyword that is on a message but not in the tag list, without a warning", () => {
     const r = plain(resolveMessageTags(undefined, ["Important", "Urgent"]));
-    assert.deepEqual([r.tagsToRemove, r.unknownWarning], [["$label1", "Urgent"], null]);
+    assert.deepEqual([r.tagsToRemove, r.warning], [["$label1", "Urgent"], null]);
   });
 
-  it("refuses what cannot be a keyword, with the known tags, and empty or non-string entries", () => {
-    assert.match(resolveMessageTags(["À faire bientôt"]).error,
-      /^Unknown tag 'À faire bientôt'\. Known tags: Important \(\$label1\).*\. Nothing was changed\.$/);
-    assert.match(resolveMessageTags(undefined, ["two words"]).error, /Unknown tag 'two words'/);
-    assert.match(resolveMessageTags(undefined, ['a"b']).error, /Unknown tag/);
-    assert.match(resolveMessageTags([""], undefined).error, /non-empty strings/);
-    assert.match(resolveMessageTags([42], undefined).error, /non-empty strings/);
+  it("skips what cannot be a keyword and says so, with the known tags", () => {
+    const r = plain(resolveMessageTags(["lab-ok", "À faire bientôt", "(x)", "", 42], ["two words"]));
+    assert.deepEqual([r.tagsToAdd, r.tagsToRemove], [["lab-ok"], []]);
+    assert.match(r.warning, /^Not Thunderbird tags, added as keywords Thunderbird does not show: lab-ok\. /);
+    assert.match(r.warning, / Not valid tags, skipped: "À faire bientôt", "\(x\)", "", 42, "two words"\. Known tags: Important/);
   });
 
   it("says so when Thunderbird has no tags at all", () => {
-    assert.match(loadTagHelpers([]).resolveMessageTags(["Important"]).unknownWarning, /Known tags: none\.$/);
+    assert.match(loadTagHelpers([]).resolveMessageTags(["Important"]).warning, /Known tags: none\.$/);
   });
 });
 
@@ -94,11 +91,12 @@ describe("updateMessage with tags by name", () => {
       [{ type: "addTags", value: ["$label1", "$label4"] }, { type: "removeTags", value: ["$label5"] }]);
   });
 
-  it("a tag that cannot be a keyword changes nothing at all, read state included", () => {
+  it("a tag that cannot be a keyword is skipped, the others applied, and the result says so", () => {
     const { update, mutations } = harness();
     const r = update(["Important", "À faire bientôt"], undefined);
-    assert.match(r.error, /Unknown tag 'À faire bientôt'.*À faire \(\$label4\)/);
-    assert.deepEqual(mutations, []);
+    assert.equal(r.success, true, JSON.stringify(r));
+    assert.deepEqual(mutations, [["read", true], ["addTags", "$label1"]]);
+    assert.match(r.warning, /Not valid tags, skipped: "À faire bientôt"\. Known tags: .*À faire \(\$label4\)/);
   });
 
   it("another keyword is added, and the result warns", () => {
