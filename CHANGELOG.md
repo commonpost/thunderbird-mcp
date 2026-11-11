@@ -6,6 +6,13 @@ this repository.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-10
+
+- Changed: the MCP server is named `thunderbird` (was `commonpost-mail`). With the Claude Code plugin or the Gemini
+  CLI extension, tool names change with it.
+- New: when a newer bridge came with the add-on, your assistant tells you once per session.
+- **Bridge 0.20.0, unchanged.** Updating is optional.
+
 ### Changed
 
 - When the bridge works but a newer one came with the add-on, the first tool result of each session says so, with
