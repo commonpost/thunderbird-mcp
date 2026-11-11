@@ -7252,6 +7252,17 @@ function bridgeNoticeText(info, extCore, thresholds) {
   return `Commonpost notice (please tell the user): the MCP bridge is version ${info.version}, older than ${thresholds.minBridge}, which this Thunderbird add-on (version ${extCore}) recommends. ${tail}`;
 }
 
+// The one-line note for a bridge that works but is older than the one published with this add-on (state
+// "newer-available"), or null. Without it, nothing told a user who works only through the assistant: the options
+// page was the only place, and a Claude Code plugin whose marketplace is never refreshed stays on its first bridge.
+function bridgeUpdateNoteText(info, extCore, thresholds) {
+  if (!extCore || extCore === "0.0.0" || bridgeState(info, extCore, thresholds) !== "newer-available") return null;
+  return `Commonpost note (tell the user once): a newer MCP bridge, ${thresholds.current}, came with ${bridgeAddOn(extCore)}; ` +
+    `this bridge is version ${info.version} and keeps working, so updating is optional. With the Claude Code plugin: ` +
+    `refresh its marketplace (/plugin marketplace update commonpost), then update the plugin. Otherwise: ` +
+    `${bridgeAdvice(info)} Release page: ${bridgeReleaseUrl(extCore)}`;
+}
+
 // The refusal of a tools/call from a bridge below the security floor (decision "refuse").
 function bridgeRefusalText(info, extCore, thresholds) {
   return `Commonpost (please tell the user): ${bridgeAddOn(extCore)} refuses MCP bridges older than ${thresholds.floor} for security reasons, and this bridge ${bridgePhrase(info)}. Nothing was done: nothing was sent, saved or changed. ${bridgeAdvice(info)} Release page: ${bridgeReleaseUrl(extCore)}`;
@@ -7352,11 +7363,12 @@ function bridgeAlertContent(info, extCore, thresholds) {
   return { title, text: `An MCP client connected with a bridge that ${bridgePhrase(info)}. ${advice}` };
 }
 
-// Appends the notice as the last item of a tools/call result when one is due; returns it, or null.
+// Appends the notice, or the note of an optional update, as the last item of a tools/call result when one is due,
+// once per session of a client (see armBridgeNotice); returns it, or null.
 function appendBridgeNotice(result, toolName, rawArgs, info, entry, extCore, thresholds, nowMs) {
   if (!result || !Array.isArray(result.content)) return null;
   if (isRawDirectSend(toolName, rawArgs)) return null;
-  const text = bridgeNoticeText(info, extCore, thresholds);
+  const text = bridgeNoticeText(info, extCore, thresholds) || bridgeUpdateNoteText(info, extCore, thresholds);
   if (!text || !takeBridgeNotice(entry, nowMs)) return null;
   result.content.push({ type: "text", text });
   return text;

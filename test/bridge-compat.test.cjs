@@ -28,7 +28,7 @@ this.x = {
   MIN_BRIDGE_VERSION, CURRENT_BRIDGE_VERSION, MODE_MIN_BRIDGE_VERSION, BRIDGE_SECURITY_FLOOR, BRIDGE_THRESHOLDS, BRIDGE_NOTICE_COOLDOWN_MS,
   BRIDGES_SEEN_MAX, versionCoreOf, compareVersionCores, parseBridgeHeader, bridgeFloorArmed, bridgeState,
   bridgeCompatDecision, bridgeReleaseUrl, bridgePhrase, bridgeAdvice, bridgeAddOn, bridgeNoticeText, bridgeRefusalText,
-  bridgeModeRefusal, isRawDirectSend, rememberBridge, armBridgeNotice, takeBridgeNotice, appendBridgeNotice,
+  bridgeModeRefusal, isRawDirectSend, rememberBridge, armBridgeNotice, takeBridgeNotice, appendBridgeNotice, bridgeUpdateNoteText,
   bridgeStatusView, takeBridgeAlert, bridgeAlertContent,
 };`, sandbox);
 const x = sandbox.x;
@@ -562,5 +562,35 @@ describe('shipped constants', () => {
     if (x.BRIDGE_SECURITY_FLOOR !== '0.0.0') {
       assert.ok(x.compareVersionCores(x.BRIDGE_SECURITY_FLOOR, x.MIN_BRIDGE_VERSION) <= 0);
     }
+  });
+});
+
+describe('note of an optional bridge update', () => {
+  const NOTE = 'Commonpost note (tell the user once): a newer MCP bridge, 0.13.0, came with this Thunderbird add-on (version 0.13.0); ' +
+    'this bridge is version 0.12.5 and keeps working, so updating is optional. With the Claude Code plugin: ' +
+    'refresh its marketplace (/plugin marketplace update commonpost), then update the plugin. Otherwise: ';
+  it('says a newer bridge exists, that this one works, and how to update the plugin or the file', () => {
+    const text = x.bridgeUpdateNoteText(info('0.12.5', 'file'), '0.13.0', TC);
+    assert.ok(text.startsWith(NOTE), text);
+    assert.ok(text.endsWith('Release page: https://github.com/commonpost/thunderbird-mcp/releases/tag/v0.13.0'), text);
+    assert.match(x.bridgeUpdateNoteText(info('0.12.5', 'mcpb'), '0.13.0', TC), /install it in Claude Desktop again/);
+  });
+  it('is only for the newer-available state, and needs the add-on version', () => {
+    assert.equal(x.bridgeUpdateNoteText(info('0.13.0'), '0.13.0', TC), null);
+    assert.equal(x.bridgeUpdateNoteText(info('0.11.9'), '0.13.0', TC), null);
+    assert.equal(x.bridgeUpdateNoteText(info('0.12.0'), '0.13.0', T0), null);
+    assert.equal(x.bridgeUpdateNoteText(info('0.12.0'), null, TC), null);
+    assert.equal(x.bridgeUpdateNoteText(info('0.12.0'), '0.0.0', TC), null);
+  });
+  it('goes into one result per session, not into a direct send, and the warning still wins below the minimum', () => {
+    const entry = x.rememberBridge(new Map(), info('0.12.5', 'file'), 1);
+    const first = { content: [{ type: 'text', text: 'ok' }] };
+    assert.ok(x.appendBridgeNotice(first, 'listAccounts', {}, info('0.12.5', 'file'), entry, '0.13.0', TC, 1).startsWith(NOTE));
+    assert.equal(first.content.length, 2);
+    assert.equal(x.appendBridgeNotice({ content: [] }, 'listAccounts', {}, info('0.12.5', 'file'), entry, '0.13.0', TC, 2), null);
+    const fresh = x.rememberBridge(new Map(), info('0.12.5', 'file'), 1);
+    assert.equal(x.appendBridgeNotice({ content: [] }, 'sendMail', { skipReview: true }, info('0.12.5', 'file'), fresh, '0.13.0', TC, 1), null);
+    const old = x.rememberBridge(new Map(), info('0.11.9', 'file'), 1);
+    assert.match(x.appendBridgeNotice({ content: [] }, 'listAccounts', {}, info('0.11.9', 'file'), old, '0.13.0', TC, 1), /^Commonpost notice \(please tell the user\)/);
   });
 });

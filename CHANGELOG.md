@@ -8,6 +8,10 @@ this repository.
 
 ### Changed
 
+- When the bridge works but a newer one came with the add-on, the first tool result of each session says so, with
+  how to update a Claude Code plugin (refresh its marketplace first). Only the options page said it, and a user who
+  works through the assistant never saw it: a plugin installed in October still ran the 0.17.1 bridge in November.
+
 - The project's short description (README, package.json, GitHub, and the MCP registry from the next release):
   "MCP server for Thunderbird: mail, calendar, contacts in all your accounts. Windows, macOS, Linux."
 
