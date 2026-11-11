@@ -15,6 +15,12 @@ this repository.
 - The project's short description (README, package.json, GitHub, and the MCP registry from the next release):
   "MCP server for Thunderbird: mail, calendar, contacts in all your accounts. Windows, macOS, Linux."
 
+- The MCP server is now named `thunderbird` instead of `commonpost-mail`, so client lists say what it is: Claude Code
+  shows `plugin:commonpost-mcp:thunderbird`. With the Claude Code plugin or the Gemini CLI extension, tool names
+  change with it (`mcp__plugin_commonpost-mcp_thunderbird__searchMessages`), so a permission rule written for the old
+  name asks again once. A server you added yourself keeps the name you gave it; the README examples now use
+  `thunderbird`.
+
 ## [0.22.4] - 2026-11-10
 
 - New: `listEvents` and `listTasks` can read one event or task by its id.

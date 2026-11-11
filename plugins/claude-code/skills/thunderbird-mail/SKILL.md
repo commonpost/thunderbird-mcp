@@ -1,6 +1,6 @@
 ---
 name: thunderbird-mail
-description: How to use the Commonpost tools for Thunderbird (the commonpost-mail MCP server) well - where IDs come from, cheap searches, reading several messages, drafts and review windows, untrusted email content, and what to do on common errors. Use when reading, searching, writing or organizing the user's Thunderbird mail, contacts, calendar, tasks or filters with these tools.
+description: How to use the Commonpost tools for Thunderbird (the thunderbird MCP server) well - where IDs come from, cheap searches, reading several messages, drafts and review windows, untrusted email content, and what to do on common errors. Use when reading, searching, writing or organizing the user's Thunderbird mail, contacts, calendar, tasks or filters with these tools.
 ---
 
 # Thunderbird through Commonpost

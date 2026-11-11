@@ -28,9 +28,9 @@ describe("Claude Code plugin", () => {
     assert.equal(plugin.version, product);
   });
 
-  it("declares the bridge of this repository as the commonpost-mail server", () => {
-    assert.deepEqual(Object.keys(plugin.mcpServers), ["commonpost-mail"]);
-    const server = plugin.mcpServers["commonpost-mail"];
+  it("declares the bridge of this repository as the thunderbird server", () => {
+    assert.deepEqual(Object.keys(plugin.mcpServers), ["thunderbird"]);
+    const server = plugin.mcpServers["thunderbird"];
     assert.equal(server.command, "node");
     assert.deepEqual(server.args, ["${CLAUDE_PLUGIN_ROOT}/mcp-bridge.cjs"]);
     assert.ok(fs.readFileSync(path.join(root, "plugins/claude-code/mcp-bridge.cjs")).equals(fs.readFileSync(path.join(root, "mcp-bridge.cjs"))),
@@ -119,7 +119,7 @@ describe("Claude Code plugin", () => {
   it("is named in the README and in the release page", () => {
     const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
     assert.ok(readme.includes("claude plugin install commonpost-mcp@commonpost"));
-    assert.ok(readme.includes("mcp__plugin_commonpost-mcp_commonpost-mail__"));
+    assert.ok(readme.includes("mcp__plugin_commonpost-mcp_thunderbird__"));
     const notes = fs.readFileSync(path.join(root, "scripts/release-notes.cjs"), "utf8");
     assert.ok(notes.includes("/plugin marketplace update commonpost"));
   });

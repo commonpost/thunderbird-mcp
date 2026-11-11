@@ -12,7 +12,7 @@ also run it as `/commonpost-mcp:thunderbird-mail`. The add-on itself is installe
 
 ## What it runs, and where it connects
 
-- The plugin declares one local MCP server, `commonpost-mail`, started as `node mcp-bridge.cjs` on your computer.
+- The plugin declares one local MCP server, `thunderbird`, started as `node mcp-bridge.cjs` on your computer.
   Node.js 22 or later must be on your `PATH`.
 - The bridge talks to the add-on only: it reads the add-on's connection file in your temporary directory
   (`commonpost-mcp/connection.json`, written by Thunderbird, holding the port and a session token) and sends every
@@ -73,8 +73,8 @@ marketplace in `/plugin`, or run `/plugin marketplace update commonpost`, then `
 
 ## Tool names
 
-Tools from this plugin are named `mcp__plugin_commonpost-mcp_commonpost-mail__<tool>`, for example
-`mcp__plugin_commonpost-mcp_commonpost-mail__searchMessages`; use that form in permission rules.
+Tools from this plugin are named `mcp__plugin_commonpost-mcp_thunderbird__<tool>`, for example
+`mcp__plugin_commonpost-mcp_thunderbird__searchMessages`; use that form in permission rules.
 
 Licensed under the MIT License (see `LICENSE`). Source, issues and releases:
 <https://github.com/commonpost/thunderbird-mcp>.

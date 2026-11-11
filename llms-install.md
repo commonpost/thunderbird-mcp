@@ -53,7 +53,7 @@ Pick the user's client.
   New-Item -ItemType Directory -Force "$env:USERPROFILE\commonpost-mcp" | Out-Null; Invoke-WebRequest -OutFile "$env:USERPROFILE\commonpost-mcp\mcp-bridge.cjs" https://github.com/commonpost/thunderbird-mcp/releases/latest/download/mcp-bridge.cjs
   ```
 
-  Then add a server named `commonpost-mail` that runs `node` with the full path of that file as its only argument.
+  Then add a server named `thunderbird` that runs `node` with the full path of that file as its only argument.
   In JSON configs, write Windows paths with `/` and never use `~`. The configuration file and format of each client
   are in the README, section "Other MCP clients".
 
