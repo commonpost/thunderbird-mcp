@@ -7841,7 +7841,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             endDate: { type: "string", description: "New end (ISO 8601; all-day: the last day)" },
             location: { type: "string", description: "New event location" },
             description: { type: "string", description: "New event description" },
-            status: { type: "string", enum: ["tentative", "confirmed", "cancelled", ""], description: "New VEVENT STATUS; '' clears it" },
+            status: { type: "string", description: "New VEVENT STATUS: 'tentative', 'confirmed' or 'cancelled'; '' clears it" },
             showAs: { type: "string", enum: ["busy", "free", ""], description: "'busy' (TRANSP:OPAQUE) blocks the time, 'free' (TRANSP:TRANSPARENT) leaves it available; '' clears TRANSP. Independent of status." },
             categories: { type: "array", items: { type: "string" }, description: "Category labels, case-sensitive (from listCategories, or new); [] clears them" },
             onlineMeeting: { type: "boolean", description: "If true, generates a Microsoft Teams meeting link via Exchange (OWL/Office 365 accounts only). Pass false to remove an existing Teams link." },
@@ -8168,7 +8168,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "updateMessage",
         group: "messages", crud: "update",
         title: "Update Message",
-        description: "Set read, flagged and tags on one message (messageId) or several (messageIds), and optionally move them (moveTo) or to Trash (trash); deleting for good is deleteMessages. Tags: label or key (other keywords: added, with a warning). On IMAP, tags set in the same call as a move may not reach the moved copy: use two calls.",
+        description: "Set read, flagged and tags on one message (messageId) or several (messageIds), and optionally move them (moveTo) or to Trash (trash); deleting for good is deleteMessages. Tags: label or key; others are added or skipped, with a warning. On IMAP, tags set in the same call as a move may not reach the moved copy: use two calls.",
         inputSchema: {
           type: "object",
           properties: {
@@ -17611,9 +17611,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (removeTags !== undefined && !Array.isArray(removeTags)) {
                   return { error: "removeTags must be an array of tag keyword strings" };
                 }
-                // Labels ("Important") become their keys ("$label1") before anything changes
+                // Labels ("Important") become their keys ("$label1")
                 const tagKeys = resolveMessageTags(addTags, removeTags);
-                if (tagKeys.error) return { error: tagKeys.error };
 
                 if (moveTo && trash === true) {
                   return { error: "Cannot specify both moveTo and trash" };
@@ -17730,7 +17729,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (targetFolder && (addTags || removeTags)) {
                   warnings.push("Tags were applied before move; on IMAP accounts, tags may not transfer to the moved copy. Consider separate calls if tags are missing.");
                 }
-                if (tagKeys.unknownWarning && tagKeys.tagsToAdd.length) warnings.push(tagKeys.unknownWarning);
+                if (tagKeys.warning) warnings.push(tagKeys.warning);
                 if (arrivalWarning) warnings.push(arrivalWarning);
                 if (warnings.length) result.warning = warnings.join(" ");
                 if (notFound.length > 0) result.notFound = notFound;
@@ -18502,34 +18501,43 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             const VALID_TAG_KEYWORD = /^[a-zA-Z0-9_$.\-&+!']+$/;
 
             /**
-             * Tag keys for updateMessage: a tag's label ("Important") becomes its key ("$label1"). Any other
-             * IMAP keyword is kept as it is, as a keyword Thunderbird does not show: `unknown` lists those
-             * added, for a warning. What cannot be a keyword is refused, with the known tags.
-             * Returns { tagsToAdd, tagsToRemove, unknown } or { error }.
+             * Tag keys for updateMessage: a tag's label ("Important") becomes its key ("$label1"); any other
+             * IMAP keyword is kept as it is, one Thunderbird does not show; what cannot be a keyword ("bad tag")
+             * is skipped. `warning` names the last two, with the known tags.
+             * Returns { tagsToAdd, tagsToRemove, warning }.
              */
             function resolveMessageTags(addTags, removeTags) {
               const tagsToAdd = [];
               const tagsToRemove = [];
               const unknown = [];
+              const skipped = [];
               let known = null;
               for (const [list, out] of [[addTags, tagsToAdd], [removeTags, tagsToRemove]]) {
                 for (const entry of list || []) {
-                  if (typeof entry !== "string" || !entry.trim()) return { error: "Tags must be non-empty strings" };
-                  let key;
-                  try {
-                    key = resolveTagKey(entry);
-                  } catch (e) {
-                    key = entry.trim();
-                    if (!VALID_TAG_KEYWORD.test(key)) return { error: `${e.message}. Nothing was changed.` };
-                    known = e.message.slice(e.message.indexOf("Known tags:"));
-                    if (out === tagsToAdd && !unknown.includes(key)) unknown.push(key);
+                  let key = null;
+                  if (typeof entry === "string" && entry.trim()) {
+                    try {
+                      key = resolveTagKey(entry);
+                    } catch (e) {
+                      known = e.message.slice(e.message.indexOf("Known tags:"));
+                      key = entry.trim();
+                      if (VALID_TAG_KEYWORD.test(key)) {
+                        if (out === tagsToAdd && !unknown.includes(key)) unknown.push(key);
+                      } else {
+                        key = null;
+                      }
+                    }
                   }
-                  if (!out.includes(key)) out.push(key);
+                  if (key !== null && !VALID_TAG_KEYWORD.test(key)) key = null;
+                  if (key === null) skipped.push(JSON.stringify(entry));
+                  else if (!out.includes(key)) out.push(key);
                 }
               }
-              return { tagsToAdd, tagsToRemove, unknown, unknownWarning: unknown.length
-                ? `Not Thunderbird tags, added as keywords Thunderbird does not show: ${unknown.join(", ")}. ${known}.`
-                : null };
+              const notes = [];
+              if (unknown.length) notes.push(`Not Thunderbird tags, added as keywords Thunderbird does not show: ${unknown.join(", ")}.`);
+              if (skipped.length) notes.push(`Not valid tags, skipped: ${skipped.join(", ")}.`);
+              if (notes.length && known) notes.push(`${known}.`);
+              return { tagsToAdd, tagsToRemove, warning: notes.length ? notes.join(" ") : null };
             }
 
             function getTagList() {

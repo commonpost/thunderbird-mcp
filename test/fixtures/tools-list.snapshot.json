@@ -789,13 +789,7 @@
           },
           "status": {
             "type": "string",
-            "enum": [
-              "tentative",
-              "confirmed",
-              "cancelled",
-              ""
-            ],
-            "description": "New VEVENT STATUS; '' clears it"
+            "description": "New VEVENT STATUS: 'tentative', 'confirmed' or 'cancelled'; '' clears it"
           },
           "showAs": {
             "type": "string",
@@ -1888,7 +1882,7 @@
     {
       "name": "updateMessage",
       "title": "Update Message",
-      "description": "Set read, flagged and tags on one message (messageId) or several (messageIds), and optionally move them (moveTo) or to Trash (trash); deleting for good is deleteMessages. Tags: label or key (other keywords: added, with a warning). On IMAP, tags set in the same call as a move may not reach the moved copy: use two calls.",
+      "description": "Set read, flagged and tags on one message (messageId) or several (messageIds), and optionally move them (moveTo) or to Trash (trash); deleting for good is deleteMessages. Tags: label or key; others are added or skipped, with a warning. On IMAP, tags set in the same call as a move may not reach the moved copy: use two calls.",
       "inputSchema": {
         "type": "object",
         "properties": {
