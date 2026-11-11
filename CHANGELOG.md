@@ -6,8 +6,19 @@ this repository.
 
 ## [Unreleased]
 
+### Added
+
+- Tasks get what events have. `createTask` and `updateTask` take `startDate` and `reminders` (display reminders in
+  minutes before the due date, stored as Thunderbird does, `TRIGGER;RELATED=END`); `updateTask` takes `categories`
+  (`[]` clears them). `listTasks` returns `categories` and `reminders`. Categories could be set on a new task but
+  not read or changed, tasks had no reminders, and the start date could be read but not written.
+- `listEvents` returns `showAs` (`busy` or `free`), which `createEvent` and `updateEvent` could only write.
+
 ### Changed
 
+- A task reminder needs a due date: one for a task with no due date is refused, and so is clearing the due date
+  while reminders count from it (pass `reminders: []` with it). A due date before the start date is refused, as
+  Thunderbird's task dialog does.
 - `updateMessage` takes tags by the name shown in Thunderbird (`Important`, `À faire`) as well as by key
   (`$label1`). A name was written as a keyword of its own, which Thunderbird does not show.
 - `updateMessage` says when a tag is not one of Thunderbird's, in `warning`, with the list of known tags: another

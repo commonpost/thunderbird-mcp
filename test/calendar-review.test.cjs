@@ -364,7 +364,7 @@ function loadTools({ calendars, accessible = calendars, openDialogReturns = "dia
     reminderCapabilityError: () => null,
     buildDisplayReminder: (minutes) => ({ minutes }),
     reminderSuppressedWarning: () => "reminders may not show",
-    CalTodo: class { setCategories() {} getProperty() { return null; } },
+    CalTodo: class { setCategories() {} getCategories() { return []; } getProperty() { return null; } },
     Services: { wm: { getMostRecentWindow: (type) => (type === "mail:3pane" ? win : null) } },
     isCalendarSkipReviewBlocked: () => calendarBlocked,
     stripEmailContentMarkers: (v) => v,
