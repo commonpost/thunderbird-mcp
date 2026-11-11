@@ -8168,7 +8168,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "updateMessage",
         group: "messages", crud: "update",
         title: "Update Message",
-        description: "Set read, flagged and tags on one message (messageId) or several (messageIds), and optionally move them (moveTo) or to Trash (trash); deleting for good is deleteMessages. Tags: label or key; an unknown tag returns the list of tags. On IMAP, tags set in the same call as a move may not reach the moved copy: use two calls.",
+        description: "Set read, flagged and tags on one message (messageId) or several (messageIds), and optionally move them (moveTo) or to Trash (trash); deleting for good is deleteMessages. Tags: label or key (other keywords: added, with a warning). On IMAP, tags set in the same call as a move may not reach the moved copy: use two calls.",
         inputSchema: {
           type: "object",
           properties: {
@@ -17730,6 +17730,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (targetFolder && (addTags || removeTags)) {
                   warnings.push("Tags were applied before move; on IMAP accounts, tags may not transfer to the moved copy. Consider separate calls if tags are missing.");
                 }
+                if (tagKeys.unknownWarning && tagKeys.tagsToAdd.length) warnings.push(tagKeys.unknownWarning);
                 if (arrivalWarning) warnings.push(arrivalWarning);
                 if (warnings.length) result.warning = warnings.join(" ");
                 if (notFound.length > 0) result.notFound = notFound;
@@ -18501,30 +18502,34 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             const VALID_TAG_KEYWORD = /^[a-zA-Z0-9_$.\-&+!']+$/;
 
             /**
-             * Tag keys for updateMessage. addTags must name one of Thunderbird's tags (label or
-             * key): an unknown keyword would not show in Thunderbird. removeTags also accepts any
-             * keyword already on a message. Returns { tagsToAdd, tagsToRemove } or { error }.
+             * Tag keys for updateMessage: a tag's label ("Important") becomes its key ("$label1"). Any other
+             * IMAP keyword is kept as it is, as a keyword Thunderbird does not show: `unknown` lists those
+             * added, for a warning. What cannot be a keyword is refused, with the known tags.
+             * Returns { tagsToAdd, tagsToRemove, unknown } or { error }.
              */
             function resolveMessageTags(addTags, removeTags) {
               const tagsToAdd = [];
               const tagsToRemove = [];
-              for (const [list, out, rawAllowed] of [[addTags, tagsToAdd, false], [removeTags, tagsToRemove, true]]) {
+              const unknown = [];
+              let known = null;
+              for (const [list, out] of [[addTags, tagsToAdd], [removeTags, tagsToRemove]]) {
                 for (const entry of list || []) {
                   if (typeof entry !== "string" || !entry.trim()) return { error: "Tags must be non-empty strings" };
                   let key;
                   try {
                     key = resolveTagKey(entry);
                   } catch (e) {
-                    if (!rawAllowed || !VALID_TAG_KEYWORD.test(entry.trim())) {
-                      return { error: `${e.message}. Nothing was changed. New tags are made in Thunderbird (Settings > General > Tags).` };
-                    }
                     key = entry.trim();
+                    if (!VALID_TAG_KEYWORD.test(key)) return { error: `${e.message}. Nothing was changed.` };
+                    known = e.message.slice(e.message.indexOf("Known tags:"));
+                    if (out === tagsToAdd && !unknown.includes(key)) unknown.push(key);
                   }
-                  if (!VALID_TAG_KEYWORD.test(key)) return { error: `Invalid tag keyword: ${JSON.stringify(key)}. Nothing was changed.` };
                   if (!out.includes(key)) out.push(key);
                 }
               }
-              return { tagsToAdd, tagsToRemove };
+              return { tagsToAdd, tagsToRemove, unknown, unknownWarning: unknown.length
+                ? `Not Thunderbird tags, added as keywords Thunderbird does not show: ${unknown.join(", ")}. ${known}.`
+                : null };
             }
 
             function getTagList() {

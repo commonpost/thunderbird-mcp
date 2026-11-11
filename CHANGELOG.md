@@ -10,9 +10,9 @@ this repository.
 
 - `updateMessage` takes tags by the name shown in Thunderbird (`Important`, `À faire`) as well as by key
   (`$label1`). A name was written as a keyword of its own, which Thunderbird does not show.
-- `updateMessage` refuses a tag Thunderbird does not know, with the list of known tags, and changes nothing. Such a
-  tag was dropped without a word, or written where Thunderbird does not show it, and the call reported success.
-  `removeTags` still removes any keyword already on a message.
+- `updateMessage` says when a tag is not one of Thunderbird's: another keyword is still added, with a `warning` that
+  Thunderbird does not show it and the list of known tags; what cannot be a keyword (`À faire bientôt`) is refused
+  with that list, and nothing changes. Both were silent, and the second was dropped while the call reported success.
 - `searchMessages` with an unknown `tag` says so in `warning`, with the list of known tags; it still matches the raw
   keyword. It returned 0 messages without a word.
 - `updateEvent` replaces the description Thunderbird shows. A description written in Thunderbird's editor keeps an
