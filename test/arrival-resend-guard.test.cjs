@@ -24,6 +24,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { loadTagHelpers } = require("./support/message-tags.cjs");
 
 const apiSource = fs.readFileSync(path.resolve(__dirname, "../extension/mcp_server/api.js"), "utf8");
 
@@ -210,6 +211,7 @@ function loadHandlers(byUri, { restricted = [], hdrs = [], source = IMAP_ARCHIVE
       return { folder: byUri.get(uri) };
     },
     openFolder: () => ({ folder: src, db }),
+    resolveMessageTags: loadTagHelpers().resolveMessageTags,
     findTrashFolder: () => byUri.get(trash) || null,
     folderDisplayName: (f) => f.name,
     assertFilterText: () => {},

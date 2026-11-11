@@ -7603,7 +7603,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             sortOrder: { type: "string", enum: ["desc", "asc"], description: "By date; default desc, asc with threadOf" },
             unreadOnly: { type: "boolean", description: "Only unread" },
             flaggedOnly: { type: "boolean", description: "Only flagged/starred" },
-            tag: { type: "string", description: "Tag label or key (e.g. 'Important' or '$label1')" },
+            tag: { type: "string", description: "Tag label or key (e.g. 'Important' or '$label1'); an unknown one returns the list" },
             includeSubfolders: { type: "boolean", default: true, description: "Search subfolders of folderPath" },
             includeTrash: { type: "boolean", default: false, description: "Also search Trash and Junk" },
             countOnly: { type: "boolean", description: "Return only { count }" },
@@ -7841,8 +7841,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             endDate: { type: "string", description: "New end (ISO 8601; all-day: the last day)" },
             location: { type: "string", description: "New event location" },
             description: { type: "string", description: "New event description" },
-            status: { type: "string", description: "New VEVENT STATUS: 'tentative', 'confirmed', or 'cancelled'" },
-            showAs: { type: "string", enum: ["busy", "free"], description: "'busy' (TRANSP:OPAQUE) blocks the time, 'free' (TRANSP:TRANSPARENT) leaves it available; null clears TRANSP. Independent of status." },
+            status: { type: "string", enum: ["tentative", "confirmed", "cancelled", ""], description: "New VEVENT STATUS; '' clears it" },
+            showAs: { type: "string", enum: ["busy", "free", ""], description: "'busy' (TRANSP:OPAQUE) blocks the time, 'free' (TRANSP:TRANSPARENT) leaves it available; '' clears TRANSP. Independent of status." },
             categories: { type: "array", items: { type: "string" }, description: "Category labels, case-sensitive (from listCategories, or new); [] clears them" },
             onlineMeeting: { type: "boolean", description: "If true, generates a Microsoft Teams meeting link via Exchange (OWL/Office 365 accounts only). Pass false to remove an existing Teams link." },
             reminders: { type: "array", items: { type: "integer", minimum: 0, maximum: 40320 }, maxItems: 5, description: "Replaces the display reminders (minutes before start); [] removes them, other alarms are kept" },
@@ -7900,7 +7900,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           properties: {
             calendarId: { type: "string", description: "Calendar ID (from listCalendars); omit for all" },
             completed: { type: "boolean", description: "true: completed only, false: open only; omit for all" },
-            dueBefore: { type: "string", description: "Return tasks due before this ISO 8601 date" },
+            dueBefore: { type: "string", description: "Tasks due before this ISO 8601 date; undated tasks are left out" },
             maxResults: { type: "integer", minimum: 1, maximum: 500, default: 100, description: "Max tasks" },
             format: { type: "string", enum: ["objects", "table"], description: "'table' returns { columns, rows }" },
             taskId: { type: "string", description: "One task by id instead of a list" },
@@ -7958,7 +7958,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         inputSchema: {
           type: "object",
           properties: {
-            query: { type: "string", description: "Words that must all match email, name or organization (e.g. 'acme' or '@acme.com')" },
+            query: { type: "string", description: "Words that must all match email, name or organization (e.g. 'acme' or '@acme.com'); '' lists all" },
             maxResults: { type: "integer", minimum: 1, maximum: MAX_SEARCH_RESULTS_CAP, default: DEFAULT_MAX_RESULTS, description: "Max contacts" },
             format: { type: "string", enum: ["objects", "table"], description: "'table' returns { contacts: { columns, rows } }" },
           },
@@ -8168,7 +8168,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "updateMessage",
         group: "messages", crud: "update",
         title: "Update Message",
-        description: "Set read, flagged and tags on one message (messageId) or several (messageIds), and optionally move them (moveTo) or to Trash (trash); deleting for good is deleteMessages. Tags are Thunderbird keywords (see the addTags parameter). On IMAP, tags set in the same call as a move may not reach the moved copy: use two calls.",
+        description: "Set read, flagged and tags on one message (messageId) or several (messageIds), and optionally move them (moveTo) or to Trash (trash); deleting for good is deleteMessages. Tags: label or key; an unknown tag returns the list of tags. On IMAP, tags set in the same call as a move may not reach the moved copy: use two calls.",
         inputSchema: {
           type: "object",
           properties: {
@@ -8177,8 +8177,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             folderPath: { type: "string", description: "The folder URI containing the message(s) (from searchMessages)" },
             read: { type: "boolean", description: "Set to true/false to mark read/unread" },
             flagged: { type: "boolean", description: "Set to true/false to flag/unflag" },
-            addTags: { type: "array", items: { type: "string" }, description: "Tag keywords to add (e.g. ['$label1', 'project-x']); built-in: $label1 Important, $label2 Work, $label3 Personal, $label4 To Do, $label5 Later" },
-            removeTags: { type: "array", items: { type: "string" }, description: "Tag keywords to remove from the message(s)" },
+            addTags: { type: "array", items: { type: "string" }, description: "Tags to add, by label or key (e.g. 'Important' or '$label1')" },
+            removeTags: { type: "array", items: { type: "string" }, description: "Tags to remove, by label or key" },
             moveTo: { type: "string", description: "Destination folder URI. Cannot be used with trash." },
             trash: { type: "boolean", description: "Set to true to move message to Trash. Cannot be used with moveTo." },
           },
@@ -12679,8 +12679,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               );
 
               let tagKey = null;
+              let tagWarning = null;
               if (args.tag) {
-                try { tagKey = resolveTagKey(args.tag); } catch { tagKey = args.tag; }
+                // Not one of Thunderbird's tags: still matched as a raw keyword, with the list of known tags
+                try { tagKey = resolveTagKey(args.tag); } catch (e) { tagKey = String(args.tag).trim(); tagWarning = `${e.message}. Matched as a raw keyword.`; }
               }
 
               const { unreadOnly, flaggedOnly } = args;
@@ -12698,11 +12700,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 limit,
                 sortOrder: args.sortOrder === "asc" || (args.sortOrder !== "desc" && args.threadOf) ? "asc" : "desc",
                 passesHeaderFilters,
+                tagWarning,
               };
             }
 
             // Dedup, count, sort, group and page collected rows into the search envelope.
             function finishSearch(rows, args, prepared, incomplete) {
+              const out = searchEnvelope(rows, args, prepared, incomplete);
+              if (prepared.tagWarning && out && !Array.isArray(out)) {
+                out.warning = out.warning ? `${out.warning} ${prepared.tagWarning}` : prepared.tagWarning;
+              }
+              return out;
+            }
+
+            function searchEnvelope(rows, args, prepared, incomplete) {
               const finalRows = args.dedupByMessageId !== false ? dedupeSearchMessageResults(rows) : rows;
               if (args.countOnly) {
                 return incomplete ? { count: finalRows.length, incomplete: true } : { count: finalRows.length };
@@ -14128,7 +14139,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
 
                 if (location !== undefined) { newItem.setProperty("LOCATION", stripEmailContentMarkers(location)); changes.push("location"); }
-                if (description !== undefined) { newItem.setProperty("DESCRIPTION", stripEmailContentMarkers(description)); changes.push("description"); }
+                if (description !== undefined) {
+                  // Deleted first: setProperty alone keeps the ALTREP (HTML) parameter Thunderbird's
+                  // editor adds, and Thunderbird goes on showing that old HTML description.
+                  newItem.deleteProperty("DESCRIPTION");
+                  newItem.setProperty("DESCRIPTION", stripEmailContentMarkers(description));
+                  changes.push("description");
+                }
                 if (status !== undefined) {
                   if (status === null || status === "") {
                     newItem.deleteProperty("STATUS");
@@ -17594,6 +17611,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (removeTags !== undefined && !Array.isArray(removeTags)) {
                   return { error: "removeTags must be an array of tag keyword strings" };
                 }
+                // Labels ("Important") become their keys ("$label1") before anything changes
+                const tagKeys = resolveMessageTags(addTags, removeTags);
+                if (tagKeys.error) return { error: tagKeys.error };
 
                 if (moveTo && trash === true) {
                   return { error: "Cannot specify both moveTo and trash" };
@@ -17685,12 +17705,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
 
                 if (addTags || removeTags) {
-                  // Validate: allow IMAP atom chars per RFC 3501 plus & for modified UTF-7
-                  // tag keys that Thunderbird generates for non-ASCII labels.
-                  // Blocks whitespace, null bytes, parens, braces, wildcards, quotes, backslash.
-                  const VALID_TAG = /^[a-zA-Z0-9_$.\-&+!']+$/;
-                  const tagsToAdd = (addTags || []).filter(t => typeof t === "string" && VALID_TAG.test(t));
-                  const tagsToRemove = (removeTags || []).filter(t => typeof t === "string" && VALID_TAG.test(t));
+                  const { tagsToAdd, tagsToRemove } = tagKeys;
                   // Use folder-level keyword APIs for proper IMAP sync
                   if (tagsToAdd.length > 0) {
                     folder.addKeywordsToMessages(foundHdrs, tagsToAdd.join(" "));
@@ -18478,6 +18493,38 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               } catch (e) {
                 return { error: e.toString() };
               }
+            }
+
+            // IMAP atom characters (RFC 3501) plus & for the modified UTF-7 keys Thunderbird
+            // makes for non-ASCII labels. Blocks whitespace, null bytes, parens, braces,
+            // wildcards, quotes, backslash.
+            const VALID_TAG_KEYWORD = /^[a-zA-Z0-9_$.\-&+!']+$/;
+
+            /**
+             * Tag keys for updateMessage. addTags must name one of Thunderbird's tags (label or
+             * key): an unknown keyword would not show in Thunderbird. removeTags also accepts any
+             * keyword already on a message. Returns { tagsToAdd, tagsToRemove } or { error }.
+             */
+            function resolveMessageTags(addTags, removeTags) {
+              const tagsToAdd = [];
+              const tagsToRemove = [];
+              for (const [list, out, rawAllowed] of [[addTags, tagsToAdd, false], [removeTags, tagsToRemove, true]]) {
+                for (const entry of list || []) {
+                  if (typeof entry !== "string" || !entry.trim()) return { error: "Tags must be non-empty strings" };
+                  let key;
+                  try {
+                    key = resolveTagKey(entry);
+                  } catch (e) {
+                    if (!rawAllowed || !VALID_TAG_KEYWORD.test(entry.trim())) {
+                      return { error: `${e.message}. Nothing was changed. New tags are made in Thunderbird (Settings > General > Tags).` };
+                    }
+                    key = entry.trim();
+                  }
+                  if (!VALID_TAG_KEYWORD.test(key)) return { error: `Invalid tag keyword: ${JSON.stringify(key)}. Nothing was changed.` };
+                  if (!out.includes(key)) out.push(key);
+                }
+              }
+              return { tagsToAdd, tagsToRemove };
             }
 
             function getTagList() {

@@ -6,6 +6,22 @@ this repository.
 
 ## [Unreleased]
 
+### Changed
+
+- `updateMessage` takes tags by the name shown in Thunderbird (`Important`, `À faire`) as well as by key
+  (`$label1`). A name was written as a keyword of its own, which Thunderbird does not show.
+- `updateMessage` refuses a tag Thunderbird does not know, with the list of known tags, and changes nothing. Such a
+  tag was dropped without a word, or written where Thunderbird does not show it, and the call reported success.
+  `removeTags` still removes any keyword already on a message.
+- `searchMessages` with an unknown `tag` says so in `warning`, with the list of known tags; it still matches the raw
+  keyword. It returned 0 messages without a word.
+- `updateEvent` replaces the description Thunderbird shows. A description written in Thunderbird's editor keeps an
+  HTML copy, and Thunderbird went on showing that old copy after a change.
+- `updateEvent` lists the values of `status`, and `''` clears `status` and `showAs`; the schema refused the `null`
+  its own description offered.
+- The descriptions say that `listTasks` with `dueBefore` leaves out tasks with no due date, and that
+  `searchContacts` with an empty query lists every contact.
+
 ## [0.23.1] - 2026-11-11
 
 - New: `updateFilter` and `deleteFilter` refuse a filter index that now points at another rule (`filterName`);
