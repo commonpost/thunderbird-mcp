@@ -6,6 +6,14 @@ this repository.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-11
+
+- New: tasks take a start date, categories and reminders (minutes before the due date), and `listTasks` reads them
+  back; `listEvents` says whether an event shows as busy or free.
+- Changed: tags work by the name shown in Thunderbird (`Important`), and a tag that is not one of Thunderbird's is
+  named in a warning instead of passing in silence. `updateEvent` replaces the description Thunderbird shows.
+- **Bridge 0.20.0, unchanged.** Updating is optional.
+
 ### Added
 
 - Tasks get what events have. `createTask` and `updateTask` take `startDate` and `reminders` (display reminders in

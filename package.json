@@ -1,6 +1,6 @@
 {
   "name": "commonpost-mcp",
-  "version": "0.23.1",
+  "version": "0.24.0",
   "description": "MCP server for Thunderbird: mail, calendar, contacts in all your accounts. Windows, macOS, Linux.",
   "author": "Commonpost contributors",
   "license": "MIT",
