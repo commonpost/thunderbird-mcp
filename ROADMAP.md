@@ -33,8 +33,8 @@ Follows the plan in [docs/experiment-inventory.md](docs/experiment-inventory.md)
 
 - Attachment search that also finds attachments inside signed messages (today Thunderbird does not flag them as
   having attachments, so they are not searched).
-- Further options on existing tools rather than new tools: the tool list is kept to about 40 tools (41 since
-  `deleteTask`) so that assistants can choose among them reliably.
+- Further options on existing tools rather than new tools: the tool list is kept to about 40 tools (42 since
+  `deleteTask` and `listAddressBooks`) so that assistants can choose among them reliably.
 - An optional bridge setting to expose only some domains of tools (for example mail only), for models with a small
   context; the default stays all tools.
 
