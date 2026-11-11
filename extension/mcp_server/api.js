@@ -2426,20 +2426,20 @@ const MAX_EVENT_REMINDERS = 5;
 const MAX_REMINDER_MINUTES = 40320; // four weeks
 
 // Validates a `reminders` argument. Returns { minutes } (deduplicated, earliest
-// reminder first) or { error }.
-function normalizeReminderMinutes(value) {
+// reminder first) or { error }. `anchor`: what the minutes count from.
+function normalizeReminderMinutes(value, anchor = "the start", kind = "event") {
   if (!Array.isArray(value)) {
-    return { error: "reminders must be an array of minutes before the start" };
+    return { error: `reminders must be an array of minutes before ${anchor}` };
   }
   const seen = new Set();
   for (const m of value) {
     if (!Number.isInteger(m) || m < 0 || m > MAX_REMINDER_MINUTES) {
-      return { error: `Invalid reminder: ${JSON.stringify(m)}. Expected whole minutes before the start, 0 to ${MAX_REMINDER_MINUTES}.` };
+      return { error: `Invalid reminder: ${JSON.stringify(m)}. Expected whole minutes before ${anchor}, 0 to ${MAX_REMINDER_MINUTES}.` };
     }
     seen.add(m);
   }
   if (seen.size > MAX_EVENT_REMINDERS) {
-    return { error: `At most ${MAX_EVENT_REMINDERS} reminders per event, got ${seen.size}` };
+    return { error: `At most ${MAX_EVENT_REMINDERS} reminders per ${kind}, got ${seen.size}` };
   }
   return { minutes: [...seen].sort((a, b) => b - a) };
 }
@@ -7811,7 +7811,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "listEvents",
         group: "calendar", crud: "read",
         title: "List Events",
-        description: "List events in a date range (default: next 30 days) from all calendars or one, by start time; recurring events come as occurrences sharing the series id, with a recurrenceId. At most maxResults, no paging: narrow the range for more. Rows: id, calendarId, title, start, end (all-day: the last day), location, description, status, categories, reminders, onlineMeetingURL.",
+        description: "List events in a date range (default: next 30 days) from all calendars or one, by start time; recurring events come as occurrences sharing the series id, with a recurrenceId. At most maxResults, no paging: narrow the range for more. Rows: id, calendarId, title, start, end (all-day: the last day), location, description, status, categories, showAs, reminders, onlineMeetingURL.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7879,6 +7879,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             priority: { type: "integer", minimum: 0, maximum: 9, description: "Priority: 1=high, 5=normal, 9=low" },
             categories: { type: "array", items: { type: "string" }, description: "Category labels, case-sensitive: names from listCategories, or new ones (not added to its list)" },
             skipReview: { type: "boolean", description: "true: add at once (refused if the settings ask for the dialog); false: open the dialog (default: the settings)" },
+            startDate: { type: "string", description: "Start date, ISO 8601" },
+            reminders: { type: "array", items: { type: "integer", minimum: 0, maximum: 40320 }, maxItems: 5, description: "Display reminders in minutes before the due date (needs dueDate)" },
           },
           required: ["title"],
         },
@@ -7894,7 +7896,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "listTasks",
         group: "calendar", crud: "read",
         title: "List Tasks",
-        description: "List tasks (to-dos) from all task calendars or one, sorted by due date (undated last, by title); at most maxResults, no paging. Rows: id, calendarId, title, dueDate, startDate, completed, completedDate, percentComplete, priority (1 high, 5 normal, 9 low), description. To change one, updateTask; events: listEvents.",
+        description: "List tasks (to-dos) from all task calendars or one, sorted by due date (undated last, by title); at most maxResults, no paging. Rows: id, calendarId, title, dueDate, startDate, completed, completedDate, percentComplete, priority (1 high, 5 normal, 9 low), description, categories, reminders. To change one, updateTask; events: listEvents.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7925,6 +7927,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             completed: { type: "boolean", description: "true: done, false: reopened; not with percentComplete" },
             percentComplete: { type: "integer", minimum: 0, maximum: 100, description: "Completion percentage" },
             priority: { type: "integer", minimum: 0, maximum: 9, description: "Priority: 1=high, 5=normal, 9=low, 0=none" },
+            startDate: { type: "string", description: "New start date, ISO 8601; '' clears it" },
+            categories: { type: "array", items: { type: "string" }, description: "Category labels (from listCategories, or new); [] clears them" },
+            reminders: { type: "array", items: { type: "integer", minimum: 0, maximum: 40320 }, maxItems: 5, description: "Replaces the display reminders (minutes before the due date); [] removes them" },
           },
           required: ["taskId", "calendarId"],
         },
@@ -13392,9 +13397,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
 
             // A display alarm `minutes` before the start (see EVENT REMINDER HELPERS).
-            function buildDisplayReminder(minutes) {
+            // `related`: ALARM_RELATED_START for an event, ALARM_RELATED_END (the due date) for a task.
+            function buildDisplayReminder(minutes, related = Ci.calIAlarm.ALARM_RELATED_START) {
               const alarm = new CalAlarm();
-              alarm.related = Ci.calIAlarm.ALARM_RELATED_START;
+              alarm.related = related;
               alarm.action = "DISPLAY";
               const offset = cal.createDuration();
               offset.minutes = minutes;
@@ -13402,6 +13408,27 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               offset.isNegative = minutes > 0;
               alarm.offset = offset;
               return alarm;
+            }
+
+            // Replaces the display reminders of `item` (a clone being changed) by `minutes`, counted from
+            // `related`; every other alarm stays. Returns { changed } or { error }.
+            function replaceDisplayReminders(item, calendar, minutes, related) {
+              const plan = planReminderUpdate(item.getAlarms(), minutes, related);
+              if (!plan.changed) return { changed: false };
+              const capError = reminderCapabilityError(calendar, plan.managedCount, plan.otherCount);
+              if (capError) return { error: capError };
+              item.clearAlarms();
+              for (const a of plan.kept) item.addAlarm(a);
+              for (const m of plan.add) item.addAlarm(buildDisplayReminder(m, related));
+              // As Thunderbird's dialog does when reminders change: a snooze or
+              // an acknowledgement of the old ones must not hide the new ones.
+              item.alarmLastAck = null;
+              const snoozeProps = [];
+              for (const [prop] of item.properties) {
+                if (prop.startsWith("X-MOZ-SNOOZE-TIME")) snoozeProps.push(prop);
+              }
+              for (const prop of snoozeProps) item.deleteProperty(prop);
+              return { changed: true };
             }
 
             // Opens Thunderbird's event dialog, which is also its task dialog, for the new `item` in a window of its
@@ -13655,9 +13682,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
             // Minutes before the start of the item's display reminders; an
             // occurrence reads its series' alarms.
-            function itemReminderMinutes(item) {
+            // A task's count from its due date (taskReminderMinutes).
+            function itemReminderMinutes(item, related) {
               try {
-                return eventReminderMinutes(item.getAlarms(), Ci.calIAlarm.ALARM_RELATED_START);
+                return eventReminderMinutes(item.getAlarms(), related ?? Ci.calIAlarm.ALARM_RELATED_START);
               } catch {
                 return [];
               }
@@ -13689,6 +13717,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 // as implicit -- Thunderbird renders it like confirmed).
                 status: (item.getProperty("STATUS") || "").toLowerCase(),
                 categories: item.getCategories(),
+                // TRANSP: TRANSPARENT leaves the time free; OPAQUE or none blocks it
+                showAs: String(item.getProperty("TRANSP") || "").toUpperCase() === "TRANSPARENT" ? "free" : "busy",
                 onlineMeetingURL: item.getProperty("X-MICROSOFT-SKYPETEAMSMEETINGURL") || null,
                 allDay,
                 isRecurring: !!item.recurrenceInfo,
@@ -13717,7 +13747,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 percentComplete: item.percentComplete || 0,
                 priority,
                 description: item.getProperty("DESCRIPTION") || "",
+                categories: item.getCategories(),
+                reminders: taskReminderMinutes(item),
               };
+            }
+
+            function taskReminderMinutes(item) {
+              try {
+                return itemReminderMinutes(item, Ci.calIAlarm.ALARM_RELATED_END);
+              } catch {
+                return [];
+              }
             }
 
             // The id and dates of an event or task createEvent or createTask just added, read as listEvents and
@@ -13765,7 +13805,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return items.find(i => i.id === taskId) || null;
             }
 
-            async function updateTask(taskId, calendarId, title, dueDate, description, completed, percentComplete, priority) {
+            async function updateTask(taskId, calendarId, title, dueDate, description, completed, percentComplete, priority, startDate, categories, reminders) {
               if (!cal) return { error: "Calendar not available" };
               try {
                 if (!taskId) return { error: "taskId is required" };
@@ -13814,6 +13854,41 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   }
                   changes.push("dueDate");
                 }
+                if (startDate !== undefined) {
+                  if (startDate === null || startDate === "") {
+                    newItem.entryDate = null;
+                  } else {
+                    const parsed = taskDateArg(startDate, "startDate");
+                    if (parsed.error) return { error: parsed.error };
+                    newItem.entryDate = parsed.dt;
+                  }
+                  changes.push("startDate");
+                }
+                const datesError = taskDatesError(newItem);
+                if (datesError) return { error: datesError };
+                // null/undefined keeps the categories; [] clears them.
+                if (Array.isArray(categories)) {
+                  newItem.setCategories(categories);
+                  changes.push("categories");
+                }
+                // Task reminders count from the due date (RELATED=END): with no due date they never go off.
+                const END = Ci.calIAlarm.ALARM_RELATED_END;
+                let reminderWarning = null;
+                if (reminders !== undefined && reminders !== null) {
+                  if (!CalAlarm) return { error: "Calendar reminders are not available" };
+                  const parsed = normalizeReminderMinutes(reminders, "the due date", "task");
+                  if (parsed.error) return { error: parsed.error };
+                  if (parsed.minutes.length && !newItem.dueDate) {
+                    return { error: "Task reminders count from the due date: give the task a dueDate" };
+                  }
+                  const replaced = replaceDisplayReminders(newItem, calendar, parsed.minutes, END);
+                  if (replaced.error) return { error: replaced.error };
+                  reminderWarning = reminderSuppressedWarning(calendar, parsed.minutes.length);
+                  changes.push("reminders");
+                }
+                if (!newItem.dueDate && taskReminderMinutes(newItem).length) {
+                  return { error: "The task's reminders count from its due date: pass reminders: [] to clear it" };
+                }
 
                 // 'completed' and 'percentComplete' both control completion state.
                 // Reject ambiguous input rather than guessing precedence.
@@ -13853,9 +13928,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
                 await calendar.modifyItem(newItem, oldItem);
                 const result = { success: true, updated: changes, task: formatTask(newItem, calendar) };
-                if (newItem.recurrenceInfo) {
-                  result.warning = "This is a recurring task -- changes apply to the entire series.";
-                }
+                const warnings = [];
+                if (newItem.recurrenceInfo) warnings.push("This is a recurring task -- changes apply to the entire series.");
+                if (reminderWarning) warnings.push(reminderWarning);
+                if (warnings.length) result.warning = warnings.join(" ");
                 return result;
               } catch (e) {
                 return { error: e.toString() };
@@ -14193,23 +14269,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   const parsed = normalizeReminderMinutes(reminders);
                   if (parsed.error) return { error: parsed.error };
                   reminderMinutes = parsed.minutes;
-                  const plan = planReminderUpdate(newItem.getAlarms(), reminderMinutes, Ci.calIAlarm.ALARM_RELATED_START);
-                  if (plan.changed) {
-                    const capError = reminderCapabilityError(calendar, plan.managedCount, plan.otherCount);
-                    if (capError) return { error: capError };
-                    remindersChanged = true;
-                    newItem.clearAlarms();
-                    for (const a of plan.kept) newItem.addAlarm(a);
-                    for (const m of plan.add) newItem.addAlarm(buildDisplayReminder(m));
-                    // As Thunderbird's dialog does when reminders change: a snooze or
-                    // an acknowledgement of the old ones must not hide the new ones.
-                    newItem.alarmLastAck = null;
-                    const snoozeProps = [];
-                    for (const [prop] of newItem.properties) {
-                      if (prop.startsWith("X-MOZ-SNOOZE-TIME")) snoozeProps.push(prop);
-                    }
-                    for (const prop of snoozeProps) newItem.deleteProperty(prop);
-                  }
+                  const replaced = replaceDisplayReminders(newItem, calendar, reminderMinutes, Ci.calIAlarm.ALARM_RELATED_START);
+                  if (replaced.error) return { error: replaced.error };
+                  remindersChanged = replaced.changed;
                   reminderWarning = reminderSuppressedWarning(calendar, reminderMinutes.length);
                   changes.push("reminders");
                 }
@@ -14338,23 +14400,33 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return `<html><body><div>${processed.replace(/\n/g, "<br>")}</div></body></html>`;
             }
 
-            async function createTask(title, dueDate, calendarId, description, priority, categories, skipReview) {
+            async function createTask(title, dueDate, calendarId, description, priority, categories, skipReview, startDate, reminders) {
               if (!cal || !CalTodo) return { error: "Calendar module not available" };
               const mode = calendarCreateMode(skipReview, isCalendarSkipReviewBlocked());
               if (mode === "refused") return { error: CALENDAR_SKIPREVIEW_BLOCKED_ERROR };
               try {
                 let dueDt = null;
                 if (dueDate) {
-                  const js = parseDateArg(dueDate);
-                  if (isNaN(js.getTime())) return { error: `Invalid dueDate: ${dueDate}` };
                   // Date-only string (YYYY-MM-DD) means all-day
-                  if (/^\d{4}-\d{2}-\d{2}$/.test(dueDate.trim())) {
-                    dueDt = cal.createDateTime();
-                    dueDt.resetTo(js.getFullYear(), js.getMonth(), js.getDate(), 0, 0, 0, cal.dtz.floating);
-                    dueDt.isDate = true;
-                  } else {
-                    dueDt = cal.dtz.jsDateToDateTime(js, cal.dtz.defaultTimezone);
+                  const parsed = taskDateArg(dueDate, "dueDate");
+                  if (parsed.error) return { error: parsed.error };
+                  dueDt = parsed.dt;
+                }
+                let startDt = null;
+                if (startDate) {
+                  const parsed = taskDateArg(startDate, "startDate");
+                  if (parsed.error) return { error: parsed.error };
+                  startDt = parsed.dt;
+                }
+                let reminderMinutes = null;
+                if (reminders !== undefined && reminders !== null) {
+                  if (!CalAlarm) return { error: "Calendar reminders are not available" };
+                  const parsed = normalizeReminderMinutes(reminders, "the due date", "task");
+                  if (parsed.error) return { error: parsed.error };
+                  if (parsed.minutes.length && !dueDt) {
+                    return { error: "Task reminders count from the due date: give the task a dueDate" };
                   }
+                  reminderMinutes = parsed.minutes;
                 }
 
                 // Find target calendar (must support tasks)
@@ -14382,6 +14454,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 const todo = new CalTodo();
                 todo.title = stripEmailContentMarkers(title);
                 if (dueDt) todo.dueDate = dueDt;
+                if (startDt) todo.entryDate = startDt;
+                const datesError = taskDatesError(todo);
+                if (datesError) return { error: datesError };
                 if (description) todo.descriptionHTML = descriptionToHTML(stripEmailContentMarkers(description));
                 if (priority !== undefined && priority !== null) todo.priority = priority;
                 if (categories && categories.length > 0) todo.setCategories(categories);
@@ -14398,11 +14473,22 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
                 todo.calendar = targetCalendar;
 
+                // The task dialog shows these alarms and saves them on OK.
+                let reminderWarning = null;
+                if (reminderMinutes && reminderMinutes.length) {
+                  const capError = reminderCapabilityError(targetCalendar, reminderMinutes.length, 0);
+                  if (capError) return { error: capError };
+                  for (const m of reminderMinutes) todo.addAlarm(buildDisplayReminder(m, Ci.calIAlarm.ALARM_RELATED_END));
+                  reminderWarning = reminderSuppressedWarning(targetCalendar, reminderMinutes.length);
+                }
+
                 if (mode === "direct") {
                   const added = await targetCalendar.addItem(todo);
                   return {
                     success: true,
                     ...addedItemFields(added || todo, targetCalendar, "task"),
+                    ...(reminderMinutes ? { reminders: reminderMinutes } : {}),
+                    ...(reminderWarning ? { warning: reminderWarning } : {}),
                     message: `Task "${title}" created in calendar "${targetCalendar.name}"`,
                   };
                 }
@@ -14421,6 +14507,27 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               } catch (e) {
                 return { error: e.toString() };
               }
+            }
+
+            // A task date argument: date only (YYYY-MM-DD) is all-day. Returns { dt } or { error }.
+            function taskDateArg(value, name) {
+              const js = parseDateArg(value);
+              if (isNaN(js.getTime())) return { error: `Invalid ${name}: ${value}` };
+              if (/^\d{4}-\d{2}-\d{2}$/.test(String(value).trim())) {
+                const dt = cal.createDateTime();
+                dt.resetTo(js.getFullYear(), js.getMonth(), js.getDate(), 0, 0, 0, cal.dtz.floating);
+                dt.isDate = true;
+                return { dt };
+              }
+              return { dt: cal.dtz.jsDateToDateTime(js, cal.dtz.defaultTimezone) };
+            }
+
+            // Thunderbird's task dialog refuses a due date before the start.
+            function taskDatesError(item) {
+              if (item.entryDate && item.dueDate && item.dueDate.compare(item.entryDate) < 0) {
+                return "dueDate must not be before startDate";
+              }
+              return null;
             }
 
             // BEGIN RAW MIME PARSING HELPERS
@@ -19845,13 +19952,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "listCategories":
                   return listCategories();
                 case "createTask":
-                  return await createTask(args.title, args.dueDate, args.calendarId, args.description, args.priority, args.categories, args.skipReview);
+                  return await createTask(args.title, args.dueDate, args.calendarId, args.description, args.priority, args.categories, args.skipReview, args.startDate, args.reminders);
                 case "listTasks":
                   if (args.reviewId !== undefined) return calendarReviewState(args.reviewId, "task");
                   if (args.taskId !== undefined) return listResultAsTable(await getCalendarItemById("task", args.taskId, args.calendarId), args.format);
                   return listResultAsTable(await listTasks(args.calendarId, args.completed, args.dueBefore, args.maxResults), args.format);
                 case "updateTask":
-                  return await updateTask(args.taskId, args.calendarId, args.title, args.dueDate, args.description, args.completed, args.percentComplete, args.priority);
+                  return await updateTask(args.taskId, args.calendarId, args.title, args.dueDate, args.description, args.completed, args.percentComplete, args.priority, args.startDate, args.categories, args.reminders);
                 case "deleteTask":
                   return await deleteTask(args.taskId, args.calendarId);
                 case "sendMail":

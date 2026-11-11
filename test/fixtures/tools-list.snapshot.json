@@ -703,7 +703,7 @@
     {
       "name": "listEvents",
       "title": "List Events",
-      "description": "List events in a date range (default: next 30 days) from all calendars or one, by start time; recurring events come as occurrences sharing the series id, with a recurrenceId. At most maxResults, no paging: narrow the range for more. Rows: id, calendarId, title, start, end (all-day: the last day), location, description, status, categories, reminders, onlineMeetingURL.",
+      "description": "List events in a date range (default: next 30 days) from all calendars or one, by start time; recurring events come as occurrences sharing the series id, with a recurrenceId. At most maxResults, no paging: narrow the range for more. Rows: id, calendarId, title, start, end (all-day: the last day), location, description, status, categories, showAs, reminders, onlineMeetingURL.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -901,6 +901,20 @@
           "skipReview": {
             "type": "boolean",
             "description": "true: add at once (refused if the settings ask for the dialog); false: open the dialog (default: the settings)"
+          },
+          "startDate": {
+            "type": "string",
+            "description": "Start date, ISO 8601"
+          },
+          "reminders": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 40320
+            },
+            "maxItems": 5,
+            "description": "Display reminders in minutes before the due date (needs dueDate)"
           }
         },
         "required": [
@@ -932,7 +946,7 @@
     {
       "name": "listTasks",
       "title": "List Tasks",
-      "description": "List tasks (to-dos) from all task calendars or one, sorted by due date (undated last, by title); at most maxResults, no paging. Rows: id, calendarId, title, dueDate, startDate, completed, completedDate, percentComplete, priority (1 high, 5 normal, 9 low), description. To change one, updateTask; events: listEvents.",
+      "description": "List tasks (to-dos) from all task calendars or one, sorted by due date (undated last, by title); at most maxResults, no paging. Rows: id, calendarId, title, dueDate, startDate, completed, completedDate, percentComplete, priority (1 high, 5 normal, 9 low), description, categories, reminders. To change one, updateTask; events: listEvents.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1023,6 +1037,27 @@
             "minimum": 0,
             "maximum": 9,
             "description": "Priority: 1=high, 5=normal, 9=low, 0=none"
+          },
+          "startDate": {
+            "type": "string",
+            "description": "New start date, ISO 8601; '' clears it"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Category labels (from listCategories, or new); [] clears them"
+          },
+          "reminders": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 40320
+            },
+            "maxItems": 5,
+            "description": "Replaces the display reminders (minutes before the due date); [] removes them"
           }
         },
         "required": [

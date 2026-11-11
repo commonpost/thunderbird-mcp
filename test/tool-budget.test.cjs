@@ -52,9 +52,12 @@ const byName = Object.fromEntries(tools.map(t => [t.name, t]));
 // About 300 more characters (November 2026), from an assistant's report of its own errors: filterName on updateFilter
 // and deleteFilter refuses a filter index that now points at another rule, and listFilters format "table" lists the
 // rules without their conditions (about 6 KB of conditions for 12 rule names in that report); no new tool.
+// About 700 more characters (November 2026), from the same assistant's second report: tasks could be given categories
+// but not have them read or changed, had no reminders while events did, and had a start date that could be read but
+// not written. createTask and updateTask take startDate and reminders, updateTask categories; no new tool.
 const MAX_TOOLS = 42;
 const MAX_TOOL_CHARS = 4100;
-const MAX_TOTAL_CHARS = 55100;
+const MAX_TOTAL_CHARS = 55800;
 const MIN_DESCRIPTION_CHARS = 30;
 const BOUNDED_RESULT_TOOLS = {
   searchMessages: 'maxResults', getRecentMessages: 'maxResults', searchContacts: 'maxResults',
