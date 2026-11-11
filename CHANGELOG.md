@@ -6,6 +6,13 @@ this repository.
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-11-11
+
+- New: `updateFilter` and `deleteFilter` refuse a filter index that now points at another rule (`filterName`);
+  `listFilters` lists rules in a short table and names their types.
+- Changed: `limit` and `index`, the names the results use, are read as `maxResults` and `filterIndex`.
+- **Bridge 0.20.0, unchanged.** Updating is optional.
+
 ### Added
 
 - `updateFilter` and `deleteFilter` take `filterName`, the rule's name from `listFilters`: the call is refused,
