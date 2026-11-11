@@ -113,8 +113,8 @@ than by file path (see [attachments on Windows](#attachments-refused)).
   3. Register it. Claude Code, on Linux and on Windows (`-s user` makes it available in every folder):
 
      ```
-     claude mcp add -s user commonpost-mail -- node "/home/<you>/commonpost-mcp/mcp-bridge.cjs"
-     claude mcp add -s user commonpost-mail -- node "C:\Users\<you>\commonpost-mcp\mcp-bridge.cjs"
+     claude mcp add -s user thunderbird -- node "/home/<you>/commonpost-mcp/mcp-bridge.cjs"
+     claude mcp add -s user thunderbird -- node "C:\Users\<you>\commonpost-mcp\mcp-bridge.cjs"
      ```
 
      Other clients: add this to the client's MCP config, with the full path of the file (each client has its own file
@@ -125,7 +125,7 @@ than by file path (see [attachments on Windows](#attachments-refused)).
      ```json
      {
        "mcpServers": {
-         "commonpost-mail": {
+         "thunderbird": {
            "command": "node",
            "args": ["/home/<you>/commonpost-mcp/mcp-bridge.cjs"]
          }
@@ -281,7 +281,7 @@ Add to your MCP client config (Claude Code: use `claude mcp add` as in [Quick in
 ```json
 {
   "mcpServers": {
-    "commonpost-mail": {
+    "thunderbird": {
       "command": "node",
       "args": ["/absolute/path/to/commonpost-mcp/mcp-bridge.cjs"]
     }
@@ -292,7 +292,7 @@ Add to your MCP client config (Claude Code: use `claude mcp add` as in [Quick in
 ### Claude Code plugin
 
 This repository is also a [Claude Code plugin marketplace](https://code.claude.com/docs/en/plugins): the plugin
-`commonpost-mcp` declares the `commonpost-mail` MCP server and carries the bridge of the release, so there is no
+`commonpost-mcp` declares the `thunderbird` MCP server and carries the bridge of the release, so there is no
 `mcp-bridge.cjs` to download or to replace by hand.
 
 ```
@@ -312,8 +312,8 @@ claude plugin install commonpost-mcp@commonpost
   commonpost-mcp@commonpost`), then `/reload-plugins`. Updating the plugin alone reads the old list and can leave
   it where it was. Each release raises the plugin's version, so an update follows
   every release, whether or not the bridge changed; the bridge in the plugin is always the one of the release.
-- Tool names carry the plugin and server names: `mcp__plugin_commonpost-mcp_commonpost-mail__searchMessages`, for
-  example. Permission rules written for a server added by file (`mcp__commonpost-mail__*`) do not match them. The
+- Tool names carry the plugin and server names: `mcp__plugin_commonpost-mcp_thunderbird__searchMessages`, for
+  example. Permission rules written for a server added by file (`mcp__thunderbird__*`) do not match them. The
   options page of the add-on (section Bridge) lists this bridge as a `mcp-bridge.cjs` file.
 - The plugin comes from a published release, never from work merged since. Claude Code reads the marketplace from
   this repository's `main` branch, and the marketplace points the plugin at the latest release: the
@@ -332,14 +332,14 @@ On macOS and Windows, Claude Desktop can install the bridge from a `.mcpb` bundl
 
 ### Other MCP clients
 
-The bridge is a standard MCP stdio server and is not tied to any client: it works with any client that can launch a local server. The `mcpServers` layout above is common but not universal, so each client below has its own file and format. In every case use the absolute path of `mcp-bridge.cjs` and the server name `commonpost-mail`, then restart the client.
+The bridge is a standard MCP stdio server and is not tied to any client: it works with any client that can launch a local server. The `mcpServers` layout above is common but not universal, so each client below has its own file and format. In every case use the absolute path of `mcp-bridge.cjs` and the server name `thunderbird`, then restart the client.
 
 **Claude Desktop.** Edit `claude_desktop_config.json` (Settings > Developer > Edit Config opens it): `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows. In JSON, double the backslashes of Windows paths.
 
 ```json
 {
   "mcpServers": {
-    "commonpost-mail": {
+    "thunderbird": {
       "command": "node",
       "args": ["C:\\Users\\<you>\\commonpost-mcp\\mcp-bridge.cjs"]
     }
@@ -352,7 +352,7 @@ The bridge is a standard MCP stdio server and is not tied to any client: it work
 ```json
 {
   "servers": {
-    "commonpost-mail": {
+    "thunderbird": {
       "type": "stdio",
       "command": "node",
       "args": ["/absolute/path/to/mcp-bridge.cjs"]
@@ -366,7 +366,7 @@ The bridge is a standard MCP stdio server and is not tied to any client: it work
 ```json
 {
   "mcpServers": {
-    "commonpost-mail": {
+    "thunderbird": {
       "command": "node",
       "args": ["/absolute/path/to/mcp-bridge.cjs"]
     }
@@ -377,7 +377,7 @@ The bridge is a standard MCP stdio server and is not tied to any client: it work
 **OpenAI Codex CLI.** Edit `~/.codex/config.toml` (or `.codex/config.toml` in a trusted project). This is TOML, not JSON: one table per server.
 
 ```toml
-[mcp_servers.commonpost-mail]
+[mcp_servers.thunderbird]
 command = "node"
 args = ["/absolute/path/to/mcp-bridge.cjs"]
 startup_timeout_sec = 30
@@ -390,7 +390,7 @@ startup_timeout_sec = 30
 ```json
 {
   "mcpServers": {
-    "commonpost-mail": {
+    "thunderbird": {
       "command": "node",
       "args": ["/absolute/path/to/mcp-bridge.cjs"]
     }
@@ -398,7 +398,7 @@ startup_timeout_sec = 30
 }
 ```
 
-The bridge normally finds Thunderbird's connection file by itself, so no environment variable is needed. Only if it cannot, set `COMMONPOST_MCP_CONNECTION_FILE` to the file's real path in the server's environment: an `"env": { ... }` object next to `args` in the JSON formats, a `[mcp_servers.commonpost-mail.env]` table for Codex (see [Sandbox-aware connection discovery](#sandbox-aware-connection-discovery); on Windows the file must be under the bridge's own `%TEMP%`). A path set there replaces the automatic discovery, so never leave a placeholder in it. Client formats change; if one of these no longer matches, follow the client's own MCP documentation and keep the same command and arguments.
+The bridge normally finds Thunderbird's connection file by itself, so no environment variable is needed. Only if it cannot, set `COMMONPOST_MCP_CONNECTION_FILE` to the file's real path in the server's environment: an `"env": { ... }` object next to `args` in the JSON formats, a `[mcp_servers.thunderbird.env]` table for Codex (see [Sandbox-aware connection discovery](#sandbox-aware-connection-discovery); on Windows the file must be under the bridge's own `%TEMP%`). A path set there replaces the automatic discovery, so never leave a placeholder in it. Client formats change; if one of these no longer matches, follow the client's own MCP documentation and keep the same command and arguments.
 
 **Read-only mode.** Set `COMMONPOST_MCP_READ_ONLY` to `1` (or `true`) in the same `env` to give one MCP client reading tools only. The bridge then lists the tools that change nothing (`readOnlyHint`), plus `getMessage` and `getMessages` without `saveAttachments`, their only write, and it refuses any other tool before the call reaches Thunderbird. `0`, `false` or an empty value leave it off; any other value leaves it off too, with a line on the client's error output. It adds to the add-on's own settings and does not replace them: the accounts and tools you allow in the options page still apply, and only the person who edits the client's configuration can turn the mode off.
 
@@ -411,7 +411,7 @@ network inside the encrypted SSH connection:
 ```json
 {
   "mcpServers": {
-    "commonpost-mail": {
+    "thunderbird": {
       "command": "ssh",
       "args": ["-o", "BatchMode=yes", "you@thunderbird-host", "node", "/absolute/path/to/mcp-bridge.cjs"]
     }
@@ -441,7 +441,7 @@ Example override:
 ```json
 {
   "mcpServers": {
-    "commonpost-mail": {
+    "thunderbird": {
       "command": "node",
       "args": ["/absolute/path/to/commonpost-mcp/mcp-bridge.cjs"],
       "env": {
@@ -565,9 +565,9 @@ platform are on the [official Thunderbird site](https://www.thunderbird.net/en-U
 2. In Thunderbird: menu ≡ > Add-ons and Themes > Commonpost MCP for Thunderbird > Remove.
 3. In your assistant:
    - Claude Desktop: Settings > Extensions, then remove Commonpost MCP for Thunderbird.
-   - Claude Code: `claude plugin uninstall commonpost-mcp@commonpost`, or `claude mcp remove -s user commonpost-mail`.
+   - Claude Code: `claude plugin uninstall commonpost-mcp@commonpost`, or `claude mcp remove -s user thunderbird`.
    - Gemini CLI: `gemini extensions uninstall commonpost-mcp`.
-   - Other clients: remove the `commonpost-mail` entry from their MCP config.
+   - Other clients: remove the `thunderbird` entry from their MCP config.
 4. Delete the folder where you put `mcp-bridge.cjs`, if you downloaded it, and the bridge's tool cache (its folder is
    named in [How it works](#how-it-works)).
 
@@ -576,8 +576,8 @@ platform are on the [official Thunderbird site](https://www.thunderbird.net/en-U
 | Problem | Fix |
 |---------|-----|
 | Extension not loading | Check menu ≡ > Add-ons and Themes. Errors: menu ≡ > Tools > Developer Tools > Error Console |
-| Claude Code: no Thunderbird tools in another folder | `claude mcp add` without `-s user` adds the server to the folder it was run in only. In that folder, run `claude mcp remove commonpost-mail`, then add it again with `-s user` |
-| `Failed to connect` with `Connection closed`, right after adding the server | The path to `mcp-bridge.cjs` is wrong. Common causes: a path with a space and no quotes around it (`claude mcp get commonpost-mail` shows what was saved), or `~` in a JSON file, where it is not expanded. Write the full path, in quotes on the command line |
+| Claude Code: no Thunderbird tools in another folder | `claude mcp add` without `-s user` adds the server to the folder it was run in only. In that folder, run `claude mcp remove thunderbird`, then add it again with `-s user` |
+| `Failed to connect` with `Connection closed`, right after adding the server | The path to `mcp-bridge.cjs` is wrong. Common causes: a path with a space and no quotes around it (`claude mcp get thunderbird` shows what was saved), or `~` in a JSON file, where it is not expanded. Write the full path, in quotes on the command line |
 | `Executable not found in $PATH: "node"` (with the plugin, Claude Code may name `"stdio"` instead) | Node.js is not installed, or not on the `PATH` the client sees. Install Node.js 22 or later, or set `command` to the full path of `node` (`which node`; `where node` on Windows). In Claude Desktop, the `.mcpb` bundle needs no Node.js of your own |
 | `claude mcp list` shows `tools fetch failed` with `Request timed out` | Thunderbird is not running: this check gives up after about 5 s, while the bridge waits up to 20 s for Thunderbird on a first start. Start Thunderbird and run the check again |
 | Connection refused | Make sure Thunderbird is running and the extension is enabled |
