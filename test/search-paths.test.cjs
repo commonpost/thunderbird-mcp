@@ -11,6 +11,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { loadTagHelpers } = require("./support/message-tags.cjs");
 
 const apiSource = fs.readFileSync(path.resolve(__dirname, "../extension/mcp_server/api.js"), "utf8");
 
@@ -378,5 +379,37 @@ describe("threadOf on a profile larger than the read limit", () => {
     hdr(w.trash, { id: "t@lab.test", subject: "Gone", author: "Ann <ann@acme.test>", daysAgo: 1 });
     assert.deepEqual(thread(w, "t@lab.test", w.trash.URI).messages, []);
     assert.deepEqual(thread(w, "t@lab.test", w.trash.URI, { includeTrash: true }).messages.map(m => m.id), ["t@lab.test"]);
+  });
+});
+
+describe("searchMessages tag", () => {
+  function seedTags() {
+    const w = world({ restricted: false });
+    const tagged = (id, keywords) => {
+      const h = hdr(w.inbox, { id, subject: "Report", author: "Ann <ann@acme.test>" });
+      h.getStringProperty = (name) => (name === "keywords" ? keywords : "");
+    };
+    tagged("important@lab.test", "$label1");
+    tagged("raw@lab.test", "Urgent");
+    tagged("none@lab.test", "");
+    w.sandbox.resolveTagKey = loadTagHelpers().resolveTagKey;
+    return w;
+  }
+
+  it("finds messages by the tag's label, without a warning", () => {
+    const { sandbox } = seedTags();
+    const res = plain(sandbox.searchMessages({ query: "", tag: "important" }));
+    assert.deepEqual(res.messages.map(m => m.id), ["important@lab.test"]);
+    assert.equal(res.warning, undefined);
+  });
+
+  it("an unknown tag still matches the raw keyword, and the result lists the known tags", () => {
+    const { sandbox } = seedTags();
+    const res = plain(sandbox.searchMessages({ query: "", tag: "Urgent" }));
+    assert.deepEqual(res.messages.map(m => m.id), ["raw@lab.test"]);
+    assert.match(res.warning, /^Unknown tag 'Urgent'\. Known tags: Important \(\$label1\).*Matched as a raw keyword\.$/);
+    const count = plain(sandbox.searchMessages({ query: "", tag: "Urgent", countOnly: true }));
+    assert.equal(count.count, 1);
+    assert.match(count.warning, /Known tags/);
   });
 });

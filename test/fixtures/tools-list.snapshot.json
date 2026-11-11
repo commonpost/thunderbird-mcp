@@ -113,7 +113,7 @@
           },
           "tag": {
             "type": "string",
-            "description": "Tag label or key (e.g. 'Important' or '$label1')"
+            "description": "Tag label or key (e.g. 'Important' or '$label1'); an unknown one returns the list"
           },
           "includeSubfolders": {
             "type": "boolean",
@@ -789,15 +789,22 @@
           },
           "status": {
             "type": "string",
-            "description": "New VEVENT STATUS: 'tentative', 'confirmed', or 'cancelled'"
+            "enum": [
+              "tentative",
+              "confirmed",
+              "cancelled",
+              ""
+            ],
+            "description": "New VEVENT STATUS; '' clears it"
           },
           "showAs": {
             "type": "string",
             "enum": [
               "busy",
-              "free"
+              "free",
+              ""
             ],
-            "description": "'busy' (TRANSP:OPAQUE) blocks the time, 'free' (TRANSP:TRANSPARENT) leaves it available; null clears TRANSP. Independent of status."
+            "description": "'busy' (TRANSP:OPAQUE) blocks the time, 'free' (TRANSP:TRANSPARENT) leaves it available; '' clears TRANSP. Independent of status."
           },
           "categories": {
             "type": "array",
@@ -945,7 +952,7 @@
           },
           "dueBefore": {
             "type": "string",
-            "description": "Return tasks due before this ISO 8601 date"
+            "description": "Tasks due before this ISO 8601 date; undated tasks are left out"
           },
           "maxResults": {
             "type": "integer",
@@ -1088,7 +1095,7 @@
         "properties": {
           "query": {
             "type": "string",
-            "description": "Words that must all match email, name or organization (e.g. 'acme' or '@acme.com')"
+            "description": "Words that must all match email, name or organization (e.g. 'acme' or '@acme.com'); '' lists all"
           },
           "maxResults": {
             "type": "integer",
@@ -1881,7 +1888,7 @@
     {
       "name": "updateMessage",
       "title": "Update Message",
-      "description": "Set read, flagged and tags on one message (messageId) or several (messageIds), and optionally move them (moveTo) or to Trash (trash); deleting for good is deleteMessages. Tags are Thunderbird keywords (see the addTags parameter). On IMAP, tags set in the same call as a move may not reach the moved copy: use two calls.",
+      "description": "Set read, flagged and tags on one message (messageId) or several (messageIds), and optionally move them (moveTo) or to Trash (trash); deleting for good is deleteMessages. Tags: label or key; an unknown tag returns the list of tags. On IMAP, tags set in the same call as a move may not reach the moved copy: use two calls.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1913,14 +1920,14 @@
             "items": {
               "type": "string"
             },
-            "description": "Tag keywords to add (e.g. ['$label1', 'project-x']); built-in: $label1 Important, $label2 Work, $label3 Personal, $label4 To Do, $label5 Later"
+            "description": "Tags to add, by label or key (e.g. 'Important' or '$label1')"
           },
           "removeTags": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Tag keywords to remove from the message(s)"
+            "description": "Tags to remove, by label or key"
           },
           "moveTo": {
             "type": "string",

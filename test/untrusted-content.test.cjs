@@ -137,7 +137,7 @@ describe("stripEmailContentMarkers", () => {
       /event\.setProperty\("DESCRIPTION", stripEmailContentMarkers\(description\)\);/,
       /newItem\.title = stripEmailContentMarkers\(title\); changes\.push\("title"\);/,
       /newItem\.setProperty\("LOCATION", stripEmailContentMarkers\(location\)\); changes\.push\("location"\);/,
-      /newItem\.setProperty\("DESCRIPTION", stripEmailContentMarkers\(description\)\); changes\.push\("description"\);/,
+      /newItem\.deleteProperty\("DESCRIPTION"\);\s+newItem\.setProperty\("DESCRIPTION", stripEmailContentMarkers\(description\)\);\s+changes\.push\("description"\);/,
       /todo\.title = stripEmailContentMarkers\(title\);/,
       /todo\.descriptionHTML = descriptionToHTML\(stripEmailContentMarkers\(description\)\);/,
       /newItem\.descriptionHTML = descriptionToHTML\(stripEmailContentMarkers\(description\)\); changes\.push\("description"\);/,

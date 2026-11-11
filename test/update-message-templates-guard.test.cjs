@@ -13,6 +13,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { loadTagHelpers } = require("./support/message-tags.cjs");
 
 const TEMPLATES_FLAG = 0x400000;
 const QUEUE_FLAG = 0x800; // nsMsgFolderFlags.Queue: the Outbox ("Unsent Messages")
@@ -28,7 +29,7 @@ function loadUpdateMessage(dependencies) {
   const end = source.indexOf(endMarker, start);
   assert.ok(end > start, "updateMessage end marker missing");
 
-  const sandbox = { Ci, arrivalResendCheck: () => null, someUnread: () => true, ...dependencies }; // arrival guard: arrival-resend-guard.test.cjs
+  const sandbox = { Ci, arrivalResendCheck: () => null, someUnread: () => true, resolveMessageTags: loadTagHelpers().resolveMessageTags, ...dependencies }; // arrival guard: arrival-resend-guard.test.cjs
   sandbox.MailServices = { ...sandbox.MailServices, accounts: { allIdentities: dependencies.identities || [] } };
   vm.createContext(sandbox);
   // The slice runs up to createFolder, so it holds the special folder guards updateMessage uses.
