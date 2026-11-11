@@ -2136,6 +2136,14 @@
           "confirmationId": {
             "type": "string",
             "description": "With confirmation: true, a confirmationId (from a pending_user_confirmation result) to read that one request"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "objects",
+              "table"
+            ],
+            "description": "'table': one row per filter, conditions counted, not listed"
           }
         },
         "required": []
@@ -2250,6 +2258,10 @@
             "type": "number",
             "description": "Filter index (from listFilters)"
           },
+          "filterName": {
+            "type": "string",
+            "description": "Its name (listFilters): refused if it no longer matches"
+          },
           "name": {
             "type": "string",
             "description": "New filter name"
@@ -2335,6 +2347,10 @@
           "filterIndex": {
             "type": "number",
             "description": "Filter index to delete (from listFilters)"
+          },
+          "filterName": {
+            "type": "string",
+            "description": "Its name (listFilters): refused if it no longer matches"
           }
         },
         "required": [

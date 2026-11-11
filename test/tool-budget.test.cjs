@@ -49,9 +49,12 @@ const byName = Object.fromEntries(tools.map(t => [t.name, t]));
 // instead: reorderFilters, the three folder tools, updateContact, getContact and replyToMessage.
 // About 150 more characters (November 2026): listEvents eventId and listTasks taskId read one item by its id, which
 // Glama's completeness review named as missing; no new tool.
+// About 300 more characters (November 2026), from an assistant's report of its own errors: filterName on updateFilter
+// and deleteFilter refuses a filter index that now points at another rule, and listFilters format "table" lists the
+// rules without their conditions (about 6 KB of conditions for 12 rule names in that report); no new tool.
 const MAX_TOOLS = 42;
 const MAX_TOOL_CHARS = 4100;
-const MAX_TOTAL_CHARS = 54800;
+const MAX_TOTAL_CHARS = 55100;
 const MIN_DESCRIPTION_CHARS = 30;
 const BOUNDED_RESULT_TOOLS = {
   searchMessages: 'maxResults', getRecentMessages: 'maxResults', searchContacts: 'maxResults',

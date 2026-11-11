@@ -120,3 +120,28 @@ describe('numeric bounds', () => {
     assert.deepEqual(call('updateTask', { ...TASK, priority: 0, percentComplete: 100 }).errors, []);
   });
 });
+
+describe('names the results use for a parameter', () => {
+  it('limit is read as maxResults, as searchMessages reports it', () => {
+    const r = call('searchMessages', { query: 'x', limit: 5 });
+    assert.deepEqual(r.errors, []);
+    assert.equal(r.args.maxResults, 5);
+    assert.equal('limit' in r.args, false);
+  });
+
+  it('index is read as filterIndex, as listFilters reports it', () => {
+    const r = call('deleteFilter', { accountId: 'a', index: 2 });
+    assert.deepEqual(r.errors, []);
+    assert.equal(r.args.filterIndex, 2);
+  });
+
+  it('never replaces a value given under the real name', () => {
+    const r = call('searchMessages', { query: 'x', maxResults: 3, limit: 9 });
+    assert.equal(r.args.maxResults, 3);
+    assert.match(r.errors.join(), /Unknown parameter: limit/);
+  });
+
+  it('only where the tool has the real parameter', () => {
+    assert.match(call('reorderFilters', { accountId: 'a', index: 1, toIndex: 0 }).errors.join(), /Unknown parameter: index/);
+  });
+});

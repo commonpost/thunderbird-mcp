@@ -1857,7 +1857,7 @@ describe("wiring", () => {
     const def = apiSource.slice(i, apiSource.indexOf('name: "createFilter"', i));
     assert.match(def, /group: "filters", crud: "read"/);
     assert.match(def, /confirmation: \{ type: "boolean"/);
-    assert.match(apiSource, /case "listFilters":\s*\n\s*return listFilters\(args\.accountId, args\.confirmation, args\.confirmationId\);/);
+    assert.match(apiSource, /case "listFilters":\s*\n\s*return listFilters\(args\.accountId, args\.confirmation, args\.confirmationId, args\.format\);/);
     assert.doesNotMatch(apiSource, /name: "getFilterConfirmation"|case "getFilterConfirmation"/);
   });
   it("tool descriptions state the real default (Always block), not the opposite", () => {
@@ -1934,4 +1934,53 @@ describe("reorderFilters: toIndex is the final position of the rule", () => {
       assert.equal(order(w)[to], ["A", "B", "C", "D"][from]);
     });
   }
+});
+
+describe("filterName guards a filter index; listFilters format table", () => {
+  let w;
+  beforeEach(() => {
+    w = makeWorld();
+    w.lists.account1.filters.push(makeFilter("first"), makeFilter("second"));
+  });
+
+  it("deleteFilter acts when the name still matches", () => {
+    const r = w.h.deleteFilter("account1", 1, "second");
+    assert.equal(r.success, true);
+    assert.equal(r.deleted, "second");
+    assert.equal(w.lists.account1.filterCount, 1);
+  });
+
+  it("deleteFilter refuses an index that now points at another rule, changing nothing", () => {
+    const r = w.h.deleteFilter("account1", 0, "second");
+    assert.match(r.error, /Filter 0 is named "first", not "second": the list has changed\. Nothing was changed/);
+    assert.equal(w.lists.account1.filterCount, 2);
+    assert.equal(w.lists.account1.saves, 0);
+  });
+
+  it("updateFilter refuses it too; without filterName nothing changes in how it works", () => {
+    const r = w.h.updateFilter("account1", 0, undefined, false, undefined, undefined, undefined, "second");
+    assert.match(r.error, /Filter 0 is named "first", not "second"/);
+    assert.equal(w.lists.account1.getFilterAt(0).enabled, true);
+    assert.equal(w.h.updateFilter("account1", 0, undefined, false).success, true);
+    assert.equal(w.lists.account1.getFilterAt(0).enabled, false);
+  });
+
+  it("the full listing names the type bits next to the number", () => {
+    const [account] = w.h.listFilters("account1");
+    assert.equal(account.filters[0].type, 17);
+    assert.deepEqual([...account.filters[0].typeNames], ["inbox", "manual"]);
+  });
+
+  it("format table lists the rules without their conditions", () => {
+    const f = w.lists.account1.getFilterAt(1);
+    f.appendTerm(f.createTerm());
+    const [account] = w.h.listFilters("account1", undefined, undefined, "table");
+    assert.deepEqual([...account.filters.columns], ["index", "name", "enabled", "typeNames", "conditions", "actions", "error"]);
+    assert.equal(account.filters.rows.length, 2);
+    const [row0, row1] = account.filters.rows.map(r => JSON.parse(JSON.stringify(r)));
+    assert.deepEqual(row0.slice(0, 5), [0, "first", true, ["inbox", "manual"], 0]);
+    assert.equal(row1[1], "second");
+    assert.equal(row1[4], 1);
+    assert.equal(account.filterCount, 2);
+  });
 });

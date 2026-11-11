@@ -4201,6 +4201,19 @@ function serializeSearchTerm(term) {
   return readTermGrouping(term, t);
 }
 
+// listFilters format "table": the rules without their conditions, to find one
+// by name before reading or changing it. An unreadable rule keeps its row.
+const FILTER_TABLE_COLUMNS = ["index", "name", "enabled", "typeNames", "conditions", "actions", "error"];
+function filterRulesTable(rules) {
+  const rows = rules.map(r => [
+    r.index, r.name ?? null, r.enabled ?? null, r.typeNames ?? null,
+    Array.isArray(r.terms) ? r.terms.length : null,
+    Array.isArray(r.actions) ? r.actions.map(a => a.type) : null,
+    r.error ?? r.termsError ?? null,
+  ]);
+  return { columns: FILTER_TABLE_COLUMNS, rows };
+}
+
 // Read a rule back for listFilters/updateFilter. Nothing unreadable is
 // skipped silently: the entry says what could not be read.
 function serializeFilterRule(filter, index) {
@@ -4247,6 +4260,7 @@ function serializeFilterRule(filter, index) {
     name: filter.filterName,
     enabled: filter.enabled,
     type: filter.filterType,
+    typeNames: filterTypeNames(filter.filterType),
     temporary: filter.temporary,
     terms,
     actions,
@@ -4281,6 +4295,29 @@ const FILTER_TYPE_KNOWN_BITS = (() => {
   }
   return mask || 0x1ff; // no XPCOM (unit tests without Ci): nsMsgFilterCore.idl
 })();
+
+// The bits of a filter type, named: what Thunderbird's filter editor calls
+// "Getting new mail", "Manually run" and so on. Bits it does not know are left out.
+const FILTER_TYPE_NAMES = [
+  ["InboxRule", 0x1, "inbox"], ["InboxJavaScript", 0x2, "inbox-javascript"], ["NewsRule", 0x4, "news"],
+  ["NewsJavaScript", 0x8, "news-javascript"], ["Manual", 0x10, "manual"], ["PostPlugin", 0x20, "post-plugin"],
+  ["PostOutgoing", 0x40, "post-outgoing"], ["Archive", 0x80, "archive"], ["Periodic", 0x100, "periodic"],
+].map(([idl, fallback, label]) => [resolveXpcomConstant("nsMsgFilterType", idl) ?? fallback, label]);
+function filterTypeNames(type) {
+  if (!Number.isInteger(type)) return [];
+  return FILTER_TYPE_NAMES.filter(([bit]) => (type & bit) !== 0).map(([, label]) => label);
+}
+
+// filterName given with a filterIndex: the rule at that index must still
+// carry it. Indexes shift when a rule is added, deleted or moved, so a stale
+// index would otherwise act on another rule. Returns the refusal, or null.
+function filterNameMismatch(filter, index, expected) {
+  if (expected === undefined || expected === null) return null;
+  const actual = filter.filterName;
+  if (actual === expected) return null;
+  return `Filter ${index} is named ${JSON.stringify(actual)}, not ${JSON.stringify(expected)}: `
+    + "the list has changed. Nothing was changed; call listFilters again.";
+}
 
 function validateFilterType(type) {
   if (!Number.isInteger(type) || type <= 0 || type > FILTER_TYPE_KNOWN_BITS || (type & ~FILTER_TYPE_KNOWN_BITS) !== 0) {
@@ -8249,6 +8286,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             accountId: { type: "string", description: "Account ID from listAccounts (omit for all accounts); ignored with confirmation" },
             confirmation: { type: "boolean", description: "When true, return the state of the pending and recent filter confirmations instead of the filters (optional, default false)" },
             confirmationId: { type: "string", description: "With confirmation: true, a confirmationId (from a pending_user_confirmation result) to read that one request" },
+            format: { type: "string", enum: ["objects", "table"], description: "'table': one row per filter, conditions counted, not listed" },
           },
           required: [],
         },
@@ -8305,6 +8343,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           properties: {
             accountId: { type: "string", description: "Account ID" },
             filterIndex: { type: "number", description: "Filter index (from listFilters)" },
+            filterName: { type: "string", description: "Its name (listFilters): refused if it no longer matches" },
             name: { type: "string", description: "New filter name" },
             enabled: { type: "boolean", description: "Enable/disable" },
             type: { type: "number", description: "New filter type bitmask" },
@@ -8347,6 +8386,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           properties: {
             accountId: { type: "string", description: "Account ID" },
             filterIndex: { type: "number", description: "Filter index to delete (from listFilters)" },
+            filterName: { type: "string", description: "Its name (listFilters): refused if it no longer matches" },
           },
           required: ["accountId", "filterIndex"],
         },
@@ -18681,7 +18721,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
             // ── Filter tool handlers ──
 
-            function listFilters(accountId, confirmation, confirmationId) {
+            function listFilters(accountId, confirmation, confirmationId, format) {
               if (confirmation === true) return getFilterConfirmation(confirmationId);
               try {
                 const results = [];
@@ -18721,7 +18761,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       accountName: server.prettyName,
                       filterCount: filterList.filterCount,
                       loggingEnabled: filterList.loggingEnabled,
-                      filters,
+                      filters: format === "table" ? filterRulesTable(filters) : filters,
                     });
                   } catch (e) {
                     results.push({ accountId: account.key, error: `Could not read filters: ${describeError(e)}` });
@@ -18800,6 +18840,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 return { error: `Invalid filter index: ${a.filterIndex}` };
               }
 
+              const staleUpdate = filterNameMismatch(filterList.getFilterAt(a.filterIndex), a.filterIndex, a.filterName);
+              if (staleUpdate) return { error: staleUpdate };
               if (a.name !== undefined) validateFilterName(a.name);
               if (a.type !== undefined) validateFilterType(a.type);
 
@@ -18869,6 +18911,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 return { error: `Invalid filter index: ${a.filterIndex}` };
               }
 
+              const staleDelete = filterNameMismatch(filterList.getFilterAt(a.filterIndex), a.filterIndex, a.filterName);
+              if (staleDelete) return { error: staleDelete };
               if (policy === "block") guardFilterList(filterList, "delete", a.filterIndex);
               const filter = filterList.getFilterAt(a.filterIndex);
               const rule = serializeFilter(filter, a.filterIndex);
@@ -19362,7 +19406,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
-            function updateFilter(accountId, filterIndex, name, enabled, type, conditions, actions) {
+            function updateFilter(accountId, filterIndex, name, enabled, type, conditions, actions, filterName) {
               try {
                 // Coerce from MCP client
                 if (typeof filterIndex === "string") filterIndex = parseInt(filterIndex, 10);
@@ -19380,17 +19424,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   }
                 }
                 return runFilterOperation("updateFilter",
-                  { accountId, filterIndex, name, enabled, type, conditions, actions });
+                  { accountId, filterIndex, name, enabled, type, conditions, actions, filterName });
               } catch (e) {
                 return { error: e.toString() };
               }
             }
 
-            function deleteFilter(accountId, filterIndex) {
+            function deleteFilter(accountId, filterIndex, filterName) {
               try {
                 if (typeof filterIndex === "string") filterIndex = parseInt(filterIndex, 10);
                 if (!Number.isInteger(filterIndex)) return { error: "filterIndex must be an integer" };
-                return runFilterOperation("deleteFilter", { accountId, filterIndex });
+                return runFilterOperation("deleteFilter", { accountId, filterIndex, filterName });
               } catch (e) {
                 return { error: e.toString() };
               }
@@ -19619,6 +19663,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               const schema = tool?.inputSchema;
               if (!schema) return args;
               const props = schema.properties || {};
+              // Names the results themselves use for a parameter: a model that
+              // pages with the "limit" of searchMessages, or acts on the "index"
+              // of listFilters, sends them back. Renamed only when the tool has no
+              // parameter of that name and the real one is not given as well.
+              const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+              for (const [alias, real] of [["limit", "maxResults"], ["index", "filterIndex"]]) {
+                if (has(args, alias) && !has(props, alias) && has(props, real) && args[real] === undefined) {
+                  args[real] = args[alias];
+                  delete args[alias];
+                }
+              }
               for (const [key, value] of Object.entries(args)) {
                 if (value === undefined || value === null) continue;
                 const propSchema = Object.prototype.hasOwnProperty.call(props, key) ? props[key] : undefined;
@@ -19769,13 +19824,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "moveFolder":
                   return moveFolder(args.folderPath, args.newParentPath);
                 case "listFilters":
-                  return listFilters(args.accountId, args.confirmation, args.confirmationId);
+                  return listFilters(args.accountId, args.confirmation, args.confirmationId, args.format);
                 case "createFilter":
                   return createFilter(args.accountId, args.name, args.enabled, args.type, args.conditions, args.actions, args.insertAtIndex);
                 case "updateFilter":
-                  return updateFilter(args.accountId, args.filterIndex, args.name, args.enabled, args.type, args.conditions, args.actions);
+                  return updateFilter(args.accountId, args.filterIndex, args.name, args.enabled, args.type, args.conditions, args.actions, args.filterName);
                 case "deleteFilter":
-                  return deleteFilter(args.accountId, args.filterIndex);
+                  return deleteFilter(args.accountId, args.filterIndex, args.filterName);
                 case "reorderFilters":
                   return reorderFilters(args.accountId, args.fromIndex, args.toIndex);
                 case "applyFilters":

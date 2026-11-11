@@ -12,7 +12,9 @@ These notes add to the server's instructions; each tool's description stays the 
 - `accountId` comes from `listAccounts`; a `folderPath` is a folder URI from `listFolders`; `messageId` and
   `folderPath` come from the rows of `searchMessages` or `getRecentMessages`. Never build or guess one.
 - `calendarId` comes from `listCalendars`; `eventId` + `calendarId` from `listEvents`; `taskId` + `calendarId` from
-  `listTasks`; a contact id from `searchContacts`; a filter index from `listFilters`.
+  `listTasks`; a contact id from `searchContacts`; a filter index (`filterIndex`) from `listFilters`. Indexes shift
+  when a rule is added, deleted or moved: pass the rule's name as `filterName` to `updateFilter` and `deleteFilter`,
+  which then refuse a stale index. `listFilters` with `format: "table"` lists the rules without their conditions.
 - `getAccountAccess` shows which accounts the tools may reach. The user sets it in the add-on's options page; no
   tool can change it.
 
