@@ -6,6 +6,21 @@ this repository.
 
 ## [Unreleased]
 
+### Added
+
+- `updateFilter` and `deleteFilter` take `filterName`, the rule's name from `listFilters`: the call is refused,
+  changing nothing, if the rule at `filterIndex` has another name. Indexes shift when a rule is added, deleted or
+  moved, and a stale one acted on another rule without a word.
+- `listFilters` takes `format: "table"`: one row per rule (index, name, enabled, types, number of conditions,
+  actions) without the conditions themselves. A list of 12 rules was about 6 KB, most of it conditions.
+- Each rule from `listFilters` carries `typeNames` (`["inbox", "manual"]`) next to its numeric `type` (17).
+
+### Changed
+
+- `limit` is read as `maxResults`, the name `searchMessages` and `getRecentMessages` give it in their results, and
+  `index` as `filterIndex`, the name `listFilters` gives it. An assistant that paged or acted on what it had just
+  read got "Unknown parameter". Only where the tool has no parameter of that name, and never over the real one.
+
 ## [0.23.0] - 2026-11-10
 
 - Changed: the MCP server is named `thunderbird` (was `commonpost-mail`). With the Claude Code plugin or the Gemini

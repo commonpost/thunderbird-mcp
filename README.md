@@ -211,10 +211,10 @@ Compose tools validate the `from` identity strictly -- if the specified sender d
 
 | Tool | Description |
 |------|-------------|
-| `listFilters` | List all filter rules with human-readable conditions and actions; with `confirmation: true`, read the state of a pending or recent confirmation instead, optionally one by `confirmationId` (see below) |
+| `listFilters` | List all filter rules with human-readable conditions and actions; with `confirmation: true`, read the state of a pending or recent confirmation instead, optionally one by `confirmationId` (see below). `format: "table"`: one row per rule, without its conditions |
 | `createFilter` | Create filters with structured conditions (from, subject, date...) and actions (move, tag, flag...) |
-| `updateFilter` | Modify a filter's name, enabled state, conditions, or actions |
-| `deleteFilter` | Remove a filter by index |
+| `updateFilter` | Modify a filter's name, enabled state, conditions, or actions; `filterName` refuses an index that now points at another rule |
+| `deleteFilter` | Remove a filter by index; `filterName` refuses an index that now points at another rule |
 | `reorderFilters` | Change filter execution priority |
 | `applyFilters` | Run filters on a folder on demand -- let your AI organize your inbox |
 
