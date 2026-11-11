@@ -25,7 +25,8 @@ Wait until they confirm.
 Pick the user's client.
 
 - Claude Desktop (Windows, macOS): ask the user to download the file ending in `.mcpb` from the same release page and
-  open it with Claude Desktop. No Node.js needed. Its version number can be lower than the add-on's: that is expected.
+  open it with Claude Desktop. No Node.js needed and no config file to edit: do not also add the bridge by hand.
+  Its version number can be lower than the add-on's: that is expected.
 - Claude Code:
 
   ```
