@@ -6,6 +6,11 @@ this repository.
 
 ## [Unreleased]
 
+### Added
+
+- `searchContacts` takes `offset` and `addressBookId`: a cut list gives `nextOffset` to reach the next page,
+  including the address books the first page did not get to, and one address book can be searched alone (#212).
+
 ### Changed
 
 - `listAddressBooks` and `listFilters` describe what they return; the confirmation part of `listFilters` is shorter.

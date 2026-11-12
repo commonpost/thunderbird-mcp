@@ -231,7 +231,7 @@ OpenPGP and S/MIME messages are not decrypted for the assistant by default: `get
 | Tool | Description |
 |------|-------------|
 | `listAddressBooks` | List the address books the assistant may use, empty ones included, with the `addressBookId` that `createContact` takes and which one it uses by default |
-| `searchContacts` | Search contacts across all address books by any of their email addresses, name, or organization (e.g. `acme` or `@acme.com`); empty fields are omitted. Supports `maxResults` and `format: "table"`. |
+| `searchContacts` | Search contacts across all address books by any of their email addresses, name, or organization (e.g. `acme` or `@acme.com`); empty fields are omitted. Supports `maxResults`, `offset` (a cut list gives `nextOffset` for the next page), `addressBookId` (one book, from `listAddressBooks`) and `format: "table"`. |
 | `getContact` | Read full contact details by UID, including every email address (`emails`: address, work/home type, primary; `invalid: true` on a stored value that is not one plain address) |
 | `createContact` | Create a contact with optional email or several `emails` (work/home, one primary), name, phones, postal addresses, organization, title, note, and birthday. Phone-only contacts are supported. |
 | `updateContact` | Update contact fields; omitted fields stay unchanged; `emails`, phones and addresses replace their lists (an empty array clears it), `email` alone changes only the primary address |

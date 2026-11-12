@@ -55,9 +55,12 @@ const byName = Object.fromEntries(tools.map(t => [t.name, t]));
 // About 700 more characters (November 2026), from the same assistant's second report: tasks could be given categories
 // but not have them read or changed, had no reminders while events did, and had a start date that could be read but
 // not written. createTask and updateTask take startDate and reminders, updateTask categories; no new tool.
+// About 250 more characters (November 2026), from the same assistant's third report (issue #212): searchContacts
+// stopped at one page with no way to the next, and could not search one address book; it takes offset and
+// addressBookId; no new tool.
 const MAX_TOOLS = 42;
 const MAX_TOOL_CHARS = 4100;
-const MAX_TOTAL_CHARS = 55800;
+const MAX_TOTAL_CHARS = 56050;
 const MIN_DESCRIPTION_CHARS = 30;
 const BOUNDED_RESULT_TOOLS = {
   searchMessages: 'maxResults', getRecentMessages: 'maxResults', searchContacts: 'maxResults',
