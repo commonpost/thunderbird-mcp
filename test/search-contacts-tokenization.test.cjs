@@ -118,3 +118,71 @@ describe("searchContacts: hasMore only when a match was left out", () => {
     assert.equal(plain(search("", 2, "table")).hasMore, true);
   });
 });
+
+describe("searchContacts: pages and one address book (issue #212)", () => {
+  const plain = (r) => JSON.parse(JSON.stringify(r));
+  const bookA = { dirName: "A", URI: "jsaddrbook://a.sqlite", dirPrefId: "ldap_2.servers.a", UID: "uid-a", childCards: [KLOCOK, SMITH].map(card) };
+  const bookB = { dirName: "B", URI: "jsaddrbook://b.sqlite", dirPrefId: "ldap_2.servers.b", UID: "uid-b", childCards: [ROE].map(card) };
+  const sandbox = { MailServices: { ab: { directories: [bookA, bookB] } }, getAccessibleAddressBooks: () => [bookA, bookB] };
+  vm.createContext(sandbox);
+  vm.runInContext(`${region("CONTACT FIELD HELPERS")}
+${region("MESSAGE SEARCH HELPERS")}
+${region("SEARCH CONTACTS")}
+this.searchContacts = searchContacts;`, sandbox);
+  const two = sandbox.searchContacts;
+
+  it("a full page gives nextOffset, and the next page reaches the other book", () => {
+    const first = plain(two("", 2));
+    assert.equal(first.hasMore, true);
+    assert.equal(first.nextOffset, 2);
+    assert.match(first.message, /^Results limited to 2\. Pass offset: 2/);
+    assert.deepEqual(first.contacts.map((c) => c.addressBook), ["A", "A"]);
+    const next = plain(two("", 2, undefined, first.nextOffset));
+    assert.ok(Array.isArray(next), JSON.stringify(next));
+    assert.deepEqual(next.map((c) => c.displayName), ["Jane Roe"]);
+  });
+
+  it("pages never repeat or skip a contact", () => {
+    const seen = [];
+    let offset = 0;
+    for (let i = 0; i < 5; i++) {
+      const r = plain(two("", 1, undefined, offset));
+      const rows = Array.isArray(r) ? r : r.contacts;
+      seen.push(...rows.map((c) => c.displayName));
+      if (Array.isArray(r)) break;
+      offset = r.nextOffset;
+    }
+    assert.deepEqual(seen, ["Klocok, Viliam", "Smith, John", "Jane Roe"]);
+  });
+
+  it("table format carries nextOffset too", () => {
+    const r = plain(two("", 1, "table"));
+    assert.equal(r.hasMore, true);
+    assert.equal(r.nextOffset, 1);
+  });
+
+  it("an offset past the end returns an empty list", () => {
+    assert.deepEqual(plain(two("", 10, undefined, 99)), []);
+  });
+
+  it("refuses a bad offset", () => {
+    for (const bad of [-1, 1.5, "2", true]) {
+      assert.equal(plain(two("", 10, undefined, bad)).error, "offset must be a non-negative integer", JSON.stringify(bad));
+    }
+  });
+
+  it("addressBookId limits the search to that book, by URI, UID or dirPrefId", () => {
+    for (const id of ["jsaddrbook://b.sqlite", "uid-b", "ldap_2.servers.b"]) {
+      assert.deepEqual(plain(two("", 10, undefined, undefined, id)).map((c) => c.displayName), ["Jane Roe"], id);
+    }
+    assert.deepEqual(plain(two("roe", 10, undefined, undefined, "jsaddrbook://a.sqlite")), []);
+  });
+
+  it("refuses an unknown address book", () => {
+    assert.equal(plain(two("", 10, undefined, undefined, "jsaddrbook://nope.sqlite")).error, "Address book not found: jsaddrbook://nope.sqlite");
+  });
+
+  it("an empty addressBookId searches every book", () => {
+    assert.equal(plain(two("", 10, undefined, undefined, "")).length, 3);
+  });
+});

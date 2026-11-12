@@ -1118,7 +1118,7 @@
     {
       "name": "searchContacts",
       "title": "Search Contacts",
-      "description": "Find contacts in the address books MCP clients may use, by words matching email, name or organization; rows carry id (the contactId of the contact tools) and addressBookId. Search before createContact to avoid duplicates. A cut list sets hasMore: refine the query.",
+      "description": "Find contacts in the address books MCP clients may use, by words matching email, name or organization; rows carry id (the contactId of the contact tools) and addressBookId. Search before createContact to avoid duplicates. A cut list sets hasMore and nextOffset: pass it as offset for the next page.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1140,6 +1140,16 @@
               "table"
             ],
             "description": "'table' returns { contacts: { columns, rows } }"
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Matches to skip; use with nextOffset"
+          },
+          "addressBookId": {
+            "type": "string",
+            "description": "Only this address book (from listAddressBooks)"
           }
         },
         "required": [

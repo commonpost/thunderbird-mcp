@@ -7959,13 +7959,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "searchContacts",
         group: "contacts", crud: "read",
         title: "Search Contacts",
-        description: "Find contacts in the address books MCP clients may use, by words matching email, name or organization; rows carry id (the contactId of the contact tools) and addressBookId. Search before createContact to avoid duplicates. A cut list sets hasMore: refine the query.",
+        description: "Find contacts in the address books MCP clients may use, by words matching email, name or organization; rows carry id (the contactId of the contact tools) and addressBookId. Search before createContact to avoid duplicates. A cut list sets hasMore and nextOffset: pass it as offset for the next page.",
         inputSchema: {
           type: "object",
           properties: {
             query: { type: "string", description: "Words that must all match email, name or organization (e.g. 'acme' or '@acme.com'); '' lists all" },
             maxResults: { type: "integer", minimum: 1, maximum: MAX_SEARCH_RESULTS_CAP, default: DEFAULT_MAX_RESULTS, description: "Max contacts" },
             format: { type: "string", enum: ["objects", "table"], description: "'table' returns { contacts: { columns, rows } }" },
+            offset: { type: "integer", minimum: 0, default: 0, description: "Matches to skip; use with nextOffset" },
+            addressBookId: { type: "string", description: "Only this address book (from listAddressBooks)" },
           },
           required: ["query"],
         },
@@ -13140,8 +13142,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
-            function searchContacts(query, maxResults, format) {
+            function searchContacts(query, maxResults, format, offset, addressBookId) {
               const results = [];
+              if (offset !== undefined && offset !== null && !(Number.isInteger(offset) && offset >= 0)) {
+                return { error: "offset must be a non-negative integer" };
+              }
+              const skip = offset || 0;
+              let books = getAccessibleAddressBooks();
+              if (addressBookId !== undefined && addressBookId !== null && addressBookId !== "") {
+                books = books.filter((book) => book.dirPrefId === addressBookId || book.UID === addressBookId || book.URI === addressBookId);
+                if (!books.length) return { error: `Address book not found: ${addressBookId}` };
+              }
               const lowerQuery = (query || "").toLowerCase();
               const hasQuery = !!lowerQuery;
               let queryTokens = [];
@@ -13155,8 +13166,9 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 ? Math.min(Math.floor(requestedLimit), MAX_SEARCH_RESULTS_CAP)
                 : DEFAULT_MAX_RESULTS;
               let truncated = false;
+              let skipped = 0;
 
-              for (const book of getAccessibleAddressBooks()) {
+              for (const book of books) {
                 for (const card of book.childCards) {
                   if (card.isMailList) continue;
 
@@ -13169,6 +13181,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     fields.some(field => field.includes(token))
                   );
                   if (matches) {
+                    // Pages count matches in a stable order: books, then their cards.
+                    if (skipped < skip) { skipped++; continue; }
                     // A match beyond the limit is what makes the result truncated
                     if (results.length >= limit) { truncated = true; break; }
                     results.push(compactSearchRow(contact));
@@ -13177,11 +13191,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (truncated) break;
               }
 
+              const nextOffset = skip + results.length;
               if (format === "table") {
-                return truncated ? { contacts: rowsToTable(results), hasMore: true } : { contacts: rowsToTable(results) };
+                return truncated ? { contacts: rowsToTable(results), hasMore: true, nextOffset } : { contacts: rowsToTable(results) };
               }
               if (truncated) {
-                return { contacts: results, hasMore: true, message: `Results limited to ${limit}. Refine your query to see more.` };
+                return { contacts: results, hasMore: true, nextOffset, message: `Results limited to ${limit}. Pass offset: ${nextOffset} for the next page, or refine the query.` };
               }
               return results;
             }
@@ -19928,7 +19943,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "listAddressBooks":
                   return listAddressBooks();
                 case "searchContacts":
-                  return searchContacts(args.query || "", args.maxResults, args.format);
+                  return searchContacts(args.query || "", args.maxResults, args.format, args.offset, args.addressBookId);
                 case "getContact":
                   return getContact(args.contactId);
                 case "createContact":
