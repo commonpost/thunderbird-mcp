@@ -1103,7 +1103,7 @@
     {
       "name": "listAddressBooks",
       "title": "List Address Books",
-      "description": "Address books MCP clients may use: addressBookId (for createContact), name, readOnly, default (used when createContact gets no addressBookId). Lists empty books, which searchContacts cannot show.",
+      "description": "Address books MCP clients may use, as { addressBookId (what createContact takes), name, readOnly, default (the book createContact uses without one) }. Lists empty books, which searchContacts cannot show; few per profile.",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -2157,7 +2157,7 @@
     {
       "name": "listFilters",
       "title": "List Filters",
-      "description": "List the mail filters (rules) of one account or all, with conditions and actions. With confirmation: true it instead reads, changing nothing, filter changes awaiting or settled by the user's confirmation in Thunderbird: pending, accepted (written), refused (or dialog closed), expired (no answer in 10 minutes) or failed (accepted, but the filters, account or setting changed: nothing written). Without confirmationId: the pending request, the recent ones and the limits (one pending, five dialogs per hour); with it: that request. MCP clients cannot accept, refuse or cancel a confirmation.",
+      "description": "List the mail filters (rules) of one account or all: per account { accountId, accountName, filterCount, filters }, each with index (the filterIndex of other tools), name, enabled, typeNames (when it runs), terms and actions.\nconfirmation: true instead reads, changing nothing, filter changes awaiting or settled by the user's confirmation in Thunderbird: pending, accepted (written), refused, expired (10 min) or failed (nothing written); the pending request, recent ones and limits (one pending, five dialogs per hour), or one with confirmationId. MCP clients cannot answer them.",
       "inputSchema": {
         "type": "object",
         "properties": {

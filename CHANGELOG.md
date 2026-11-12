@@ -6,6 +6,10 @@ this repository.
 
 ## [Unreleased]
 
+### Changed
+
+- `listAddressBooks` and `listFilters` describe what they return; the confirmation part of `listFilters` is shorter.
+
 ## [0.24.0] - 2026-11-11
 
 - New: tasks take a start date, categories and reminders (minutes before the due date), and `listTasks` reads them
