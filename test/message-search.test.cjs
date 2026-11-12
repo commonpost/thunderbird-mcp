@@ -18,7 +18,7 @@ assert.ok(start >= 0 && end > start, 'MESSAGE SEARCH HELPERS markers missing');
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${apiSource.slice(start, end)}
-this.api = { parseSearchQuery, matchSearchTerms, glodaSearchTerms, compactSearchRow, rowsToTable, listResultAsTable,
+this.api = { parseSearchQuery, matchSearchTerms, foldSearchText, glodaSearchTerms, compactSearchRow, rowsToTable, listResultAsTable,
   threadSubjectKey, counterpartEmails, threadPeople, threadKeysOf, conversationMembers, groupSearchRows, buildSearchPage, legacySearchPage, pageTextField, pageMessageBody, SEARCH_PREVIEW_CHARS,
   DEFAULT_SEARCH_RESULTS, DEFAULT_GET_MESSAGE_BODY_CHARS, MAX_BODY_CHARS };`, sandbox);
 const api = sandbox.api;
@@ -438,5 +438,39 @@ describe('body paging', () => {
     const r = api.pageMessageBody({ body: 'abc\u{1F600}def' }, 0, 4, 100);
     assert.equal(r.body, 'abc');
     assert.equal(r.nextBodyOffset, 3);
+  });
+});
+
+describe('accents in header search (issue #214)', () => {
+  const fields = (subject) => {
+    const f = { subject, author: 'Ann <ann@example.com>', recipients: '', ccList: '', bccList: '', preview: '' };
+    for (const k of Object.keys(f)) f[k] = api.foldSearchText(f[k]);
+    return f;
+  };
+  const hit = (query, subject) => api.matchSearchTerms(api.parseSearchQuery(query).terms, fields(subject));
+
+  it('folds case and diacritics, leaving ASCII as lowercase', () => {
+    assert.equal(api.foldSearchText('Québec ÉTÉ Ñandú Ça'), 'quebec ete nandu ca');
+    assert.equal(api.foldSearchText('Plain ASCII @Example.COM'), 'plain ascii @example.com');
+    assert.equal(api.foldSearchText(undefined), '');
+  });
+
+  it('finds both spellings with either query', () => {
+    for (const query of ['quebec', 'québec', 'QUÉBEC']) {
+      assert.equal(hit(query, 'Réunion à Québec'), true, query);
+      assert.equal(hit(query, 'Reunion a Quebec'), true, query);
+    }
+    assert.equal(hit('subject:"réunion a"', 'Reunion à Québec'), true);
+    assert.equal(hit('février', 'Montreal'), false);
+  });
+
+  it('matches decomposed text (NFD) as well as precomposed', () => {
+    assert.equal(hit('quebec', 'Que\u0301bec'), true);
+    assert.equal(hit('qu\u00e9bec', 'Que\u0301bec'), true);
+  });
+
+  it('leaves participant domains working', () => {
+    assert.equal(hit('participant:@example.com', 'x'), true);
+    assert.equal(hit('participant:@exämple.com', 'x'), true);
   });
 });
