@@ -51,7 +51,8 @@ this.searchContacts = searchContacts;`, sandbox);
 const KLOCOK = { displayName: "Klocok, Viliam", firstName: "Viliam", lastName: "Klocok", email: "viliam.klocok@example.test" };
 const SMITH = { displayName: "Smith, John", firstName: "John", lastName: "Smith" };
 const ROE = { displayName: "Jane Roe", email: "jane@acme.example", organization: "Acme Corp" };
-const search = loadSearchContacts([KLOCOK, { displayName: "Guedes, Robson" }, SMITH, ROE]);
+const ECO = { displayName: "Hélène Côté", organization: "Écomax Québec" };
+const search = loadSearchContacts([KLOCOK, { displayName: "Guedes, Robson" }, SMITH, ROE, ECO]);
 const names = query => JSON.parse(JSON.stringify(search(query))).map(c => c.displayName);
 
 describe("searchContacts tokenization", () => {
@@ -73,7 +74,7 @@ describe("searchContacts tokenization", () => {
   });
 
   it("handles empty and failed queries", () => {
-    assert.equal(names("").length, 4);
+    assert.equal(names("").length, 5);
     for (const query of ["   ", ",,,", " , "]) assert.deepEqual(names(query), [], JSON.stringify(query));
   });
 
@@ -184,5 +185,11 @@ this.searchContacts = searchContacts;`, sandbox);
 
   it("an empty addressBookId searches every book", () => {
     assert.equal(plain(two("", 10, undefined, undefined, "")).length, 3);
+  });
+});
+
+describe("searchContacts ignores accents (issue #214)", () => {
+  it("finds an accented name or organization by either spelling", () => {
+    for (const q of ["ecomax", "Écomax", "helene cote", "HÉLÈNE", "quebec"]) assert.deepEqual(names(q), ["Hélène Côté"], q);
   });
 });

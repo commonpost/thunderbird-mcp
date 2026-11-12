@@ -2861,13 +2861,22 @@ const SEARCH_ROW_COLUMNS = ["id", "folderPath", "date", "author", "recipients", 
 const SEARCH_FIELD_CHOICES = SEARCH_ROW_COLUMNS.filter(c => c !== "id" && c !== "folderPath");
 
 /**
+ * Lowercase and drop diacritics ("Québec" -> "quebec"), as Gloda's full-text tokenizer does, so a header or contact
+ * search finds both spellings. ASCII text is only lowercased.
+ */
+function foldSearchText(value) {
+  const lower = String(value || "").toLowerCase();
+  return /[^\x00-\x7f]/.test(lower) ? lower.normalize("NFD").replace(/\p{M}/gu, "") : lower;
+}
+
+/**
  * Parse a search query into { terms: [{ field, value }], failed }.
  * field is null (any field), a row field name, or "participant" (from/to/cc/bcc).
  * One leading operator keeps the legacy meaning: every word goes to that field.
  */
 function parseSearchQuery(query) {
   const raw = String(query || "");
-  const q = raw.toLowerCase().trim();
+  const q = foldSearchText(raw).trim();
   // "" matches all; whitespace-only matches nothing
   if (!q) return { terms: [], failed: raw.length > 0 };
   const tokens = [];
@@ -2930,7 +2939,7 @@ function emptySearchHint(parsed) {
     return `Nothing matched. A single leading operator applies to every word: all ${parsed.terms.length} words were searched in ${op}: only. `
       + `Put the operator last ("other words ${op}:value") or search fewer words.`;
   }
-  return "Nothing matched. Every word must match as written (no other word forms): search fewer or other words.";
+  return "Nothing matched. Every word must match (case and accents aside; no other word forms): search fewer or other words.";
 }
 
 // Adds the hint to an empty search envelope ({ totalMatches: 0 } or { count: 0 }); anything else is returned as is.
@@ -2956,7 +2965,7 @@ function matchParticipant(value, fields) {
   });
 }
 
-// fields: lowercased { subject, author, recipients, ccList, bccList, preview }.
+// fields: folded (foldSearchText) { subject, author, recipients, ccList, bccList, preview }.
 function matchSearchTerms(terms, fields) {
   return terms.every(({ field, value }) => {
     if (field === "participant") return matchParticipant(value, fields);
@@ -12964,12 +12973,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 	              if (!terms.length) return true;
 	              // mime2Decoded* so "=?UTF-8?Q?...?=" headers match plain text
 	              return matchSearchTerms(terms, {
-	                subject: displaySubject(msgHdr).toLowerCase(),
-	                author: (msgHdr.mime2DecodedAuthor || msgHdr.author || "").toLowerCase(),
-	                recipients: (msgHdr.mime2DecodedRecipients || msgHdr.recipients || "").toLowerCase(),
-	                ccList: decodeHeaderValue(msgHdr.ccList).toLowerCase(),
-	                bccList: decodeHeaderValue(msgHdr.bccList).toLowerCase(),
-	                preview: (msgHdr.getStringProperty("preview") || "").toLowerCase(),
+	                subject: foldSearchText(displaySubject(msgHdr)),
+	                author: foldSearchText((msgHdr.mime2DecodedAuthor || msgHdr.author || "")),
+	                recipients: foldSearchText((msgHdr.mime2DecodedRecipients || msgHdr.recipients || "")),
+	                ccList: foldSearchText(decodeHeaderValue(msgHdr.ccList)),
+	                bccList: foldSearchText(decodeHeaderValue(msgHdr.bccList)),
+	                preview: foldSearchText((msgHdr.getStringProperty("preview") || "")),
 	              });
 	            }
 
@@ -13153,7 +13162,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 books = books.filter((book) => book.dirPrefId === addressBookId || book.UID === addressBookId || book.URI === addressBookId);
                 if (!books.length) return { error: `Address book not found: ${addressBookId}` };
               }
-              const lowerQuery = (query || "").toLowerCase();
+              const lowerQuery = foldSearchText(query);
               const hasQuery = !!lowerQuery;
               let queryTokens = [];
               // Tokenize so CardDAV "Lastname, Firstname" names match natural-order searches.
@@ -13176,7 +13185,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   const contact = formatContact(card, book);
                   // Every address of the contact, not only the primary one.
                   const fields = [contact.email, ...contact.emails.map(e => e.address), contact.displayName, contact.firstName, contact.lastName, contact.organization]
-                    .map(v => (v || "").toLowerCase());
+                    .map(foldSearchText);
                   const matches = !hasQuery || queryTokens.every(token =>
                     fields.some(field => field.includes(token))
                   );

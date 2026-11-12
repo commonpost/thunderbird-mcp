@@ -13,6 +13,8 @@ this repository.
 
 ### Changed
 
+- `searchMessages` (header search) and `searchContacts` ignore accents, as the full-text search (`searchBody`)
+  already did: `quebec` and `québec` find the same mail and contacts (#214).
 - `listAddressBooks` and `listFilters` describe what they return; the confirmation part of `listFilters` is shorter.
 
 ## [0.24.0] - 2026-11-11

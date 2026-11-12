@@ -35,9 +35,9 @@ describe('empty search hint', () => {
     assert.match(hint, /"other words from:value"/);
   });
 
-  it('says that every word must match as written', () => {
+  it('says that every word must match, case and accents aside', () => {
     const hint = api.emptySearchHint(api.parseSearchQuery('card expiring'));
-    assert.match(hint, /Every word must match as written/);
+    assert.match(hint, /Every word must match \(case and accents aside; no other word forms\)/);
     assert.equal(api.parseSearchQuery('card expiring').allInOperator, undefined);
     assert.equal(api.parseSearchQuery('budget from:carol').allInOperator, undefined);
   });
