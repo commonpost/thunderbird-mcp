@@ -125,8 +125,16 @@ jobs:
           test "$(git -C lab rev-parse HEAD)" = "$LAB_SHA"
           echo "lab at $LAB_SHA"
 
+      # The image pulls packages from Debian mirrors, which sometimes drop a connection. A retry reuses the layers
+      # already built, so only the failed step runs again.
       - name: Build the lab image
-        run: docker build -t thunderbird-mcp-lab:ci lab/harness
+        run: |
+          for attempt in 1 2 3; do
+            if docker build -t thunderbird-mcp-lab:ci lab/harness; then exit 0; fi
+            echo "::warning::lab image build failed (attempt $attempt of 3)"
+            if [ "$attempt" -lt 3 ]; then sleep 30; fi
+          done
+          exit 1
 
       - name: Run the public scenarios of this shard
         working-directory: lab
