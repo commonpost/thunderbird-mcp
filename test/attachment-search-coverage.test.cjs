@@ -22,7 +22,7 @@ function region(name) {
 const sandbox = { Uint8Array, TextDecoder, atob: globalThis.atob };
 vm.createContext(sandbox);
 vm.runInContext(`${[
-  "STRIP HELPERS", "ENCRYPTED MESSAGE HELPERS", "RAW MIME PARSING HELPERS", "RAW MIME ATTACHMENT HELPERS", "ATTACHMENT SEARCH HELPERS",
+  "STRIP HELPERS", "SEARCH TEXT FOLDING", "ENCRYPTED MESSAGE HELPERS", "RAW MIME PARSING HELPERS", "RAW MIME ATTACHMENT HELPERS", "ATTACHMENT SEARCH HELPERS",
 ].map(region).join("\n")}
 Object.assign(this, { parseAttachmentFilter, attachmentMatchesFilter, rawMimeParameter, rawMimePartFilename,
   listRawMimeAttachments, rawMimeDecodedSize, scanAttachmentCandidates, ATTACHMENT_SEARCH_LIMITS,
