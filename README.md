@@ -12,7 +12,7 @@ MCP server for Thunderbird: mail, calendar, contacts in all your accounts. Windo
 
 Your AI assistant can search, read and draft mail in every account you have in Thunderbird, and check it against your calendar and contacts. Free and open source (MIT), through the [Model Context Protocol](https://modelcontextprotocol.io/).
 
-Latest release: **v0.24.0** (2026-11-11) -- see the [changelog](CHANGELOG.md) or [all releases](https://github.com/commonpost/thunderbird-mcp/releases).
+Latest release: **v0.25.0** (2026-11-12) -- see the [changelog](CHANGELOG.md) or [all releases](https://github.com/commonpost/thunderbird-mcp/releases).
 
 <p align="center">
   <img src="docs/demo.gif" alt="An assistant checks four email accounts and the calendar in Thunderbird, finds a clash with a dentist appointment, adds it to the calendar and opens a reply for review. Real run on a demo mailbox, shown at 2x speed." width="600">
