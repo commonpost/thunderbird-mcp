@@ -6,6 +6,12 @@ this repository.
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-11-13
+
+- Changed: the descriptions of `listAddressBooks` and `listCategories` start with what the tools do. No change in
+  behaviour.
+- **Bridge 0.20.0, unchanged.** Updating is optional.
+
 ### Changed
 
 - `listAddressBooks` and `listCategories` start with what they do; `listAddressBooks` says it changes nothing.
