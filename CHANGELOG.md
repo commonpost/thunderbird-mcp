@@ -6,6 +6,10 @@ this repository.
 
 ## [Unreleased]
 
+### Changed
+
+- `listAddressBooks` says what it does and that it changes nothing.
+
 ## [0.25.0] - 2026-11-12
 
 - New: `searchContacts` pages through long results (`offset`, `nextOffset`) and can search one address book
