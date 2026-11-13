@@ -21,7 +21,11 @@ function loadTagHelpers(tags = DEFAULT_TAGS) {
   if (start < 0 || end < 0) throw new Error("tag helper markers missing in api.js");
   const sandbox = { MailServices: { tags: { getAllTags: () => tags } } };
   vm.createContext(sandbox);
-  vm.runInContext(`${source.slice(start, end)}
+  const foldStart = source.indexOf("// BEGIN SEARCH TEXT FOLDING");
+  const foldEnd = source.indexOf("// END SEARCH TEXT FOLDING", foldStart);
+  if (foldStart < 0 || foldEnd < 0) throw new Error("SEARCH TEXT FOLDING missing in api.js");
+  vm.runInContext(`${source.slice(foldStart, foldEnd)}
+${source.slice(start, end)}
 this.resolveMessageTags = resolveMessageTags; this.resolveTagKey = resolveTagKey; this.getTagList = getTagList;`, sandbox);
   return { resolveMessageTags: sandbox.resolveMessageTags, resolveTagKey: sandbox.resolveTagKey, getTagList: sandbox.getTagList };
 }

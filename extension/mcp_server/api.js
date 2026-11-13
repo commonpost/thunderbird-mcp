@@ -2860,6 +2860,7 @@ const SEARCH_ROW_COLUMNS = ["id", "folderPath", "date", "author", "recipients", 
 // so are the columns an option or a state adds (attachments, linkedBy, encrypted...).
 const SEARCH_FIELD_CHOICES = SEARCH_ROW_COLUMNS.filter(c => c !== "id" && c !== "folderPath");
 
+// BEGIN SEARCH TEXT FOLDING
 /**
  * Lowercase and drop diacritics ("Québec" -> "quebec"), as Gloda's full-text tokenizer does, so a header or contact
  * search finds both spellings. ASCII text is only lowercased.
@@ -2868,6 +2869,7 @@ function foldSearchText(value) {
   const lower = String(value || "").toLowerCase();
   return /[^\x00-\x7f]/.test(lower) ? lower.normalize("NFD").replace(/\p{M}/gu, "") : lower;
 }
+// END SEARCH TEXT FOLDING
 
 /**
  * Parse a search query into { terms: [{ field, value }], failed }.
@@ -3029,7 +3031,30 @@ function rowsToTable(rows) {
 // format "table" for tools that return a plain array of objects.
 function listResultAsTable(result, format) {
   if (format !== "table" || !Array.isArray(result)) return result;
-  return rowsToTable(result.map(r => compactSearchRow(r)));
+  const table = rowsToTable(result.map(r => compactSearchRow(r)));
+  const cut = result[LIST_CUT];
+  return cut ? { ...table, hasMore: true, nextOffset: cut.nextOffset } : table;
+}
+
+// listEvents and listTasks return a plain array, which cannot carry hasMore. When the sorted list holds more than
+// one page, the page keeps its shape and says so beside it: a second text block for MCP clients, and
+// hasMore + nextOffset in the table format (listResultAsTable). Without this, a cut list looked complete.
+const LIST_CUT = Symbol("listCut");
+function pageOfList(sorted, offset, limit, what) {
+  const page = sorted.slice(offset, offset + limit);
+  if (sorted.length > offset + limit) {
+    const nextOffset = offset + page.length;
+    page[LIST_CUT] = { nextOffset };
+    page[MCP_EXTRA_CONTENT_BLOCKS] = [{
+      type: "text",
+      text: `List cut: ${page.length} ${what} shown, more exist. Pass offset: ${nextOffset} for the next page.`,
+    }];
+  }
+  return page;
+}
+function listOffsetError(offset) {
+  return offset === undefined || offset === null || (Number.isInteger(offset) && offset >= 0)
+    ? null : "offset must be a non-negative integer";
 }
 
 // The address inside the first "<...>" that holds something, else the whole author. Found with indexOf: the
@@ -7820,7 +7845,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "listEvents",
         group: "calendar", crud: "read",
         title: "List Events",
-        description: "List events in a date range (default: next 30 days) from all calendars or one, by start time; recurring events come as occurrences sharing the series id, with a recurrenceId. At most maxResults, no paging: narrow the range for more. Rows: id, calendarId, title, start, end (all-day: the last day), location, description, status, categories, showAs, reminders, onlineMeetingURL.",
+        description: "List events in a date range (default: next 30 days) from all calendars or one, by start time; recurring events come as occurrences sharing the series id, with a recurrenceId. A cut list says so: page with offset. Rows: id, calendarId, title, start, end (all-day: the last day), location, description, status, categories, showAs, reminders, onlineMeetingURL.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7828,6 +7853,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             startDate: { type: "string", description: "ISO 8601 start (default: now)" },
             endDate: { type: "string", description: "ISO 8601 end (default: start + 30 days); date-only includes the whole day" },
             maxResults: { type: "integer", minimum: 1, maximum: 500, default: 100, description: "Max events" },
+            offset: { type: "integer", minimum: 0, default: 0, description: "Events to skip" },
             format: { type: "string", enum: ["objects", "table"], description: "'table' returns { columns, rows }" },
             eventId: { type: "string", description: "One event by id instead of a range (recurring: its series)" },
             reviewId: { type: "string", description: "From createEvent: that dialog's state instead (open, saved + eventId, closed unsaved, failed)" },
@@ -7905,7 +7931,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "listTasks",
         group: "calendar", crud: "read",
         title: "List Tasks",
-        description: "List tasks (to-dos) from all task calendars or one, sorted by due date (undated last, by title); at most maxResults, no paging. Rows: id, calendarId, title, dueDate, startDate, completed, completedDate, percentComplete, priority (1 high, 5 normal, 9 low), description, categories, reminders. To change one, updateTask; events: listEvents.",
+        description: "List tasks (to-dos) from all task calendars or one, sorted by due date (undated last, by title); a cut list says so: page with offset. Rows: id, calendarId, title, dueDate, startDate, completed, completedDate, percentComplete, priority (1 high, 5 normal, 9 low), description, categories, reminders. To change one, updateTask; events: listEvents.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7913,6 +7939,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             completed: { type: "boolean", description: "true: completed only, false: open only; omit for all" },
             dueBefore: { type: "string", description: "Tasks due before this ISO 8601 date; undated tasks are left out" },
             maxResults: { type: "integer", minimum: 1, maximum: 500, default: 100, description: "Max tasks" },
+            offset: { type: "integer", minimum: 0, default: 0, description: "Tasks to skip" },
             format: { type: "string", enum: ["objects", "table"], description: "'table' returns { columns, rows }" },
             taskId: { type: "string", description: "One task by id instead of a list" },
             reviewId: { type: "string", description: "From createTask: that dialog's state instead (open, saved + taskId, closed unsaved, failed)" },
@@ -14005,10 +14032,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
-            async function listEvents(calendarId, startDate, endDate, maxResults) {
+            async function listEvents(calendarId, startDate, endDate, maxResults, offset) {
               if (!cal) {
                 return { error: "Calendar not available" };
               }
+              if (listOffsetError(offset)) return { error: listOffsetError(offset) };
+              const skip = offset || 0;
               try {
                 const calendars = getAccessibleCalendars();
                 let targets = calendars;
@@ -14070,7 +14099,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   // Cap recurring expansion to prevent a malformed daily-over-decades
                   // master from blowing up the result. Tracked independently of Phase 1
                   // so a busy date range cannot starve recurring expansion.
-                  const OCCURRENCE_EXPANSION_CAP = limit * 10;
+                  const OCCURRENCE_EXPANSION_CAP = Math.max(limit * 10, skip + limit + 1);
                   let expanded = 0;
                   for (const item of allItems) {
                     if (expanded >= OCCURRENCE_EXPANSION_CAP) break;
@@ -14092,7 +14121,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 }
 
                 results.sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
-                return results.slice(0, limit);
+                return pageOfList(results, skip, limit, "events");
               } catch (e) {
                 return { error: e.toString() };
               }
@@ -14106,8 +14135,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
-            async function listTasks(calendarId, completed, dueBefore, maxResults) {
+            async function listTasks(calendarId, completed, dueBefore, maxResults, offset) {
               if (!cal) return { error: "Calendar not available" };
+              if (listOffsetError(offset)) return { error: listOffsetError(offset) };
+              const skip = offset || 0;
               try {
                 const calendars = getAccessibleCalendars();
                 let targets = calendars.filter(c =>
@@ -14143,7 +14174,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 } else {
                   itemFilter |= COMPLETED_YES | COMPLETED_NO;
                 }
-                const TASK_COLLECTION_CAP = limit * 10;
+                const TASK_COLLECTION_CAP = Math.max(limit * 10, skip + limit + 1);
                 const results = [];
 
                 for (const calendar of targets) {
@@ -14183,7 +14214,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (b.dueDate) return 1;
                   return (a.title || "").localeCompare(b.title || "");
                 });
-                return results.slice(0, limit);
+                return pageOfList(results, skip, limit, "tasks");
               } catch (e) {
                 return { error: e.toString() };
               }
@@ -15304,7 +15335,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (args[key].length > ATTACHMENT_FILTER_MAX_CHARS) return { error: `${key} is longer than ${ATTACHMENT_FILTER_MAX_CHARS} characters` };
               }
               const filter = { name: null, type: null, typePrefix: false };
-              if (given("attachmentName")) filter.name = args.attachmentName.trim().normalize("NFC").toLowerCase();
+              if (given("attachmentName")) filter.name = foldSearchText(args.attachmentName.trim());
               if (given("attachmentType")) {
                 // "image", "image/" and "image/*" are prefixes; "application/pdf" is exact
                 const m = args.attachmentType.trim().toLowerCase().match(/^([a-z0-9][a-z0-9!#$&^_.+-]*)(?:\/(\*|[a-z0-9][a-z0-9!#$&^_.+-]*)?)?$/);
@@ -15316,7 +15347,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
 
             function attachmentMatchesFilter(attachment, filter) {
-              if (filter.name !== null && !String(attachment.name || "").normalize("NFC").toLowerCase().includes(filter.name)) return false;
+              if (filter.name !== null && !foldSearchText(attachment.name).includes(filter.name)) return false;
               if (filter.type !== null) {
                 const ct = String(attachment.contentType || "");
                 if (filter.typePrefix ? !ct.startsWith(filter.type) : ct !== filter.type) return false;
@@ -18687,6 +18718,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 || tags.find(t => t.key.toLowerCase() === lower)
                 || tags.find(t => (t.label || "").toLowerCase() === lower);
               if (hit) return hit.key;
+              // Accents aside ("prive" for "Privé"), when exactly one label matches.
+              const folded = foldSearchText(wanted);
+              const loose = tags.filter(t => foldSearchText(t.label) === folded);
+              if (loose.length === 1) return loose[0].key;
               const known = tags.map(t => `${t.label} (${t.key})`).join(", ") || "none";
               throw new Error(`Unknown tag '${wanted}'. Known tags: ${known}`);
             }
@@ -19968,7 +20003,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "listEvents":
                   if (args.reviewId !== undefined) return calendarReviewState(args.reviewId, "event");
                   if (args.eventId !== undefined) return listResultAsTable(await getCalendarItemById("event", args.eventId, args.calendarId), args.format);
-                  return listResultAsTable(await listEvents(args.calendarId, args.startDate, args.endDate, args.maxResults), args.format);
+                  return listResultAsTable(await listEvents(args.calendarId, args.startDate, args.endDate, args.maxResults, args.offset), args.format);
                 case "updateEvent":
                   return await updateEvent(args.eventId, args.calendarId, args.title, args.startDate, args.endDate, args.location, args.description, args.status, args.showAs, args.categories, args.onlineMeeting, args.reminders);
                 case "deleteEvent":
@@ -19980,7 +20015,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "listTasks":
                   if (args.reviewId !== undefined) return calendarReviewState(args.reviewId, "task");
                   if (args.taskId !== undefined) return listResultAsTable(await getCalendarItemById("task", args.taskId, args.calendarId), args.format);
-                  return listResultAsTable(await listTasks(args.calendarId, args.completed, args.dueBefore, args.maxResults), args.format);
+                  return listResultAsTable(await listTasks(args.calendarId, args.completed, args.dueBefore, args.maxResults, args.offset), args.format);
                 case "updateTask":
                   return await updateTask(args.taskId, args.calendarId, args.title, args.dueDate, args.description, args.completed, args.percentComplete, args.priority, args.startDate, args.categories, args.reminders);
                 case "deleteTask":

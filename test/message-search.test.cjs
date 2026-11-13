@@ -15,10 +15,11 @@ const start = apiSource.indexOf('// BEGIN MESSAGE SEARCH HELPERS');
 const end = apiSource.indexOf('// END MESSAGE SEARCH HELPERS', start);
 assert.ok(start >= 0 && end > start, 'MESSAGE SEARCH HELPERS markers missing');
 
-const sandbox = {};
+const EXTRA_BLOCKS = Symbol('extra-content-blocks');
+const sandbox = { MCP_EXTRA_CONTENT_BLOCKS: EXTRA_BLOCKS };
 vm.createContext(sandbox);
 vm.runInContext(`${apiSource.slice(start, end)}
-this.api = { parseSearchQuery, matchSearchTerms, foldSearchText, glodaSearchTerms, compactSearchRow, rowsToTable, listResultAsTable,
+this.api = { pageOfList, listOffsetError, LIST_CUT, parseSearchQuery, matchSearchTerms, foldSearchText, glodaSearchTerms, compactSearchRow, rowsToTable, listResultAsTable,
   threadSubjectKey, counterpartEmails, threadPeople, threadKeysOf, conversationMembers, groupSearchRows, buildSearchPage, legacySearchPage, pageTextField, pageMessageBody, SEARCH_PREVIEW_CHARS,
   DEFAULT_SEARCH_RESULTS, DEFAULT_GET_MESSAGE_BODY_CHARS, MAX_BODY_CHARS };`, sandbox);
 const api = sandbox.api;
@@ -472,5 +473,57 @@ describe('accents in header search (issue #214)', () => {
   it('leaves participant domains working', () => {
     assert.equal(hit('participant:@example.com', 'x'), true);
     assert.equal(hit('participant:@exämple.com', 'x'), true);
+  });
+});
+
+describe('listEvents / listTasks: a cut list says so (neighbours of issue #212)', () => {
+  const rows = n => Array.from({ length: n }, (_, i) => ({ id: `t${i}`, title: `Task ${i}` }));
+
+  it('returns the whole list as a plain array, with nothing beside it, when it fits', () => {
+    const page = api.pageOfList(rows(3), 0, 5, 'tasks');
+    assert.equal(Array.isArray(page), true);
+    assert.equal(page.length, 3);
+    assert.equal(page[EXTRA_BLOCKS], undefined);
+    assert.equal(page[api.LIST_CUT], undefined);
+    assert.equal(JSON.stringify(page), JSON.stringify(rows(3)));
+  });
+
+  it('keeps the array shape when cut, and says where the next page starts', () => {
+    const page = api.pageOfList(rows(5), 0, 2, 'tasks');
+    assert.equal(JSON.stringify(page), JSON.stringify(rows(5).slice(0, 2)));
+    assert.equal(page[EXTRA_BLOCKS].length, 1);
+    assert.equal(page[EXTRA_BLOCKS][0].type, 'text');
+    assert.equal(page[EXTRA_BLOCKS][0].text, 'List cut: 2 tasks shown, more exist. Pass offset: 2 for the next page.');
+    assert.equal(page[api.LIST_CUT].nextOffset, 2);
+  });
+
+  it('pages to the end: the last page is not marked as cut', () => {
+    const middle = api.pageOfList(rows(5), 2, 2, 'events');
+    assert.deepEqual(Array.from(middle, r => r.id), ['t2', 't3']);
+    assert.equal(middle[api.LIST_CUT].nextOffset, 4);
+    assert.match(middle[EXTRA_BLOCKS][0].text, /^List cut: 2 events shown, more exist\. Pass offset: 4 /);
+    const last = api.pageOfList(rows(5), 4, 2, 'events');
+    assert.deepEqual(Array.from(last, r => r.id), ['t4']);
+    assert.equal(last[api.LIST_CUT], undefined);
+    assert.equal(api.pageOfList(rows(5), 9, 2, 'events').length, 0);
+  });
+
+  it('a list that ends exactly at the page size is not marked as cut', () => {
+    assert.equal(api.pageOfList(rows(2), 0, 2, 'tasks')[api.LIST_CUT], undefined);
+  });
+
+  it('the table format carries hasMore and nextOffset', () => {
+    const cut = api.listResultAsTable(api.pageOfList(rows(5), 0, 2, 'tasks'), 'table');
+    assert.equal(cut.hasMore, true);
+    assert.equal(cut.nextOffset, 2);
+    assert.equal(cut.rows.length, 2);
+    const whole = api.listResultAsTable(api.pageOfList(rows(2), 0, 5, 'tasks'), 'table');
+    assert.equal('hasMore' in whole, false);
+    assert.equal('nextOffset' in whole, false);
+  });
+
+  it('refuses an offset that is not a non-negative integer', () => {
+    for (const ok of [undefined, null, 0, 7]) assert.equal(api.listOffsetError(ok), null);
+    for (const bad of [-1, 1.5, '2', NaN, {}]) assert.equal(api.listOffsetError(bad), 'offset must be a non-negative integer');
   });
 });

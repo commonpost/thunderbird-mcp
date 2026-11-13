@@ -107,3 +107,28 @@ describe("updateMessage with tags by name", () => {
     assert.match(r.warning, /^Not Thunderbird tags, added as keywords Thunderbird does not show: Urgent\. Known tags: /);
   });
 });
+
+describe("resolveTagKey: accents aside (neighbour of issue #214)", () => {
+  const { loadTagHelpers: load } = require("./support/message-tags.cjs");
+  const tags = [{ key: "$label1", tag: "Important" }, { key: "prive", tag: "Privé" }, { key: "a_faire", tag: "À faire" }];
+
+  it("finds a label written without its accents, and the other way round", () => {
+    const { resolveTagKey } = load(tags);
+    assert.equal(resolveTagKey("prive"), "prive");
+    assert.equal(resolveTagKey("PRIVE"), "prive");
+    assert.equal(resolveTagKey("a faire"), "a_faire");
+    assert.equal(resolveTagKey("Importánt"), "$label1");
+  });
+
+  it("an exact label still wins, and an unknown one is still refused", () => {
+    const { resolveTagKey } = load([...tags, { key: "cote2", tag: "Cote" }, { key: "cote1", tag: "Côté" }]);
+    assert.equal(resolveTagKey("Côté"), "cote1");
+    assert.equal(resolveTagKey("Cote"), "cote2");
+    assert.throws(() => resolveTagKey("nothing"), /Unknown tag 'nothing'/);
+  });
+
+  it("does not guess when two labels differ only by accents", () => {
+    const { resolveTagKey } = load([{ key: "k1", tag: "Côte" }, { key: "k2", tag: "Coté" }]);
+    assert.throws(() => resolveTagKey("cote"), /Unknown tag 'cote'/);
+  });
+});

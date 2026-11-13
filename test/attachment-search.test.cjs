@@ -21,7 +21,7 @@ function region(name) {
 const sandbox = { Uint8Array, TextDecoder, atob: globalThis.atob };
 vm.createContext(sandbox);
 vm.runInContext(`${[
-  "ENCRYPTED MESSAGE HELPERS", "RAW MIME PARSING HELPERS", "RAW MIME ATTACHMENT HELPERS", "ATTACHMENT SEARCH HELPERS",
+  "SEARCH TEXT FOLDING", "ENCRYPTED MESSAGE HELPERS", "RAW MIME PARSING HELPERS", "RAW MIME ATTACHMENT HELPERS", "ATTACHMENT SEARCH HELPERS",
 ].map(region).join("\n")}
 Object.assign(this, { parseAttachmentFilter, attachmentMatchesFilter, rawMimeParameter, listRawMimeAttachments,
   rawMimeDecodedSize, scanAttachmentCandidates, attachmentSearchSummary, attachmentSearchIncomplete,
@@ -73,6 +73,16 @@ describe("parseAttachmentFilter", () => {
 
 describe("attachmentMatchesFilter", () => {
   const pdf = { name: "Facture-Été.PDF", contentType: "application/pdf" };
+  it("ignores accents in the name, both ways (neighbour of issue #214)", () => {
+    const filter = parseAttachmentFilter({ attachmentName: "resume" });
+    assert.equal(attachmentMatchesFilter({ name: "R\u00e9sum\u00e9 2026.pdf", contentType: "application/pdf" }, filter), true);
+    assert.equal(attachmentMatchesFilter({ name: "Re\u0301sume\u0301.pdf", contentType: "application/pdf" }, filter), true);
+    const accented = parseAttachmentFilter({ attachmentName: "R\u00c9SUM\u00c9" });
+    assert.equal(accented.name, "resume");
+    assert.equal(attachmentMatchesFilter({ name: "resume.pdf", contentType: "application/pdf" }, accented), true);
+    assert.equal(attachmentMatchesFilter({ name: "invoice.pdf", contentType: "application/pdf" }, accented), false);
+  });
+
   it("matches name substrings in any case and Unicode form", () => {
     assert.equal(attachmentMatchesFilter(pdf, parseAttachmentFilter({ attachmentName: "été.pdf" })), true);
     assert.equal(attachmentMatchesFilter(pdf, parseAttachmentFilter({ attachmentName: "été" })), true);

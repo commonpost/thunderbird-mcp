@@ -58,9 +58,11 @@ const byName = Object.fromEntries(tools.map(t => [t.name, t]));
 // About 250 more characters (November 2026), from the same assistant's third report (issue #212): searchContacts
 // stopped at one page with no way to the next, and could not search one address book; it takes offset and
 // addressBookId; no new tool.
+// About 150 more characters (November 2026), from checking the neighbours of #212: listEvents and listTasks cut
+// their list at maxResults without saying so, and tasks with no due date had no way to the rest; both take offset.
 const MAX_TOOLS = 42;
 const MAX_TOOL_CHARS = 4100;
-const MAX_TOTAL_CHARS = 56050;
+const MAX_TOTAL_CHARS = 56210;
 const MIN_DESCRIPTION_CHARS = 30;
 const BOUNDED_RESULT_TOOLS = {
   searchMessages: 'maxResults', getRecentMessages: 'maxResults', searchContacts: 'maxResults',

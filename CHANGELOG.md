@@ -6,6 +6,17 @@ this repository.
 
 ## [Unreleased]
 
+### Added
+
+- `listEvents` and `listTasks` take `offset`, and a list cut at `maxResults` now says so: a second text block gives
+  the offset of the next page (`hasMore` and `nextOffset` in the table format). A cut list looked complete before,
+  and tasks with no due date had no way to the rest. The list itself keeps its shape.
+
+### Changed
+
+- `searchMessages` ignores accents in `attachmentName` too (`resume` finds `Résumé.pdf`), and a tag is found by
+  its label without its accents (`prive` for `Privé`) when only one label matches.
+
 ## [0.25.1] - 2026-11-13
 
 - Changed: the descriptions of `listAddressBooks` and `listCategories` start with what the tools do. No change in
