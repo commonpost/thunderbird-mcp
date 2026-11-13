@@ -7898,7 +7898,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "listCategories",
         group: "calendar", crud: "read",
         title: "List Categories",
-        description: "Calendar category names in Thunderbird's list. Use them exactly (case-sensitive) in events and tasks; other labels are accepted but not added to the list (no tool edits it).",
+        description: "List the calendar category names in Thunderbird's list. Use them exactly (case-sensitive) in events and tasks; other labels are accepted but not added to the list (no tool edits it).",
         inputSchema: { type: "object", properties: {} },
       },
       {

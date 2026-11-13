@@ -8,7 +8,7 @@ this repository.
 
 ### Changed
 
-- `listAddressBooks` says what it does and that it changes nothing.
+- `listAddressBooks` and `listCategories` start with what they do; `listAddressBooks` says it changes nothing.
 
 ## [0.25.0] - 2026-11-12
 
