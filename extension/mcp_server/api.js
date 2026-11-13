@@ -7961,7 +7961,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "listAddressBooks",
         group: "contacts", crud: "read",
         title: "List Address Books",
-        description: "Address books MCP clients may use, as { addressBookId (what createContact takes), name, readOnly, default (the book createContact uses without one) }. Lists empty books, which searchContacts cannot show; few per profile.",
+        description: "List the address books MCP clients may use, changing nothing: { addressBookId (what createContact takes), name, readOnly, default (the book createContact uses without one) }. Includes empty books, which searchContacts cannot show.",
         inputSchema: { type: "object", properties: {} },
       },
       {
