@@ -6,6 +6,13 @@ this repository.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-12
+
+- New: `searchContacts` pages through long results (`offset`, `nextOffset`) and can search one address book
+  (`addressBookId`).
+- Changed: header search (`searchMessages`) and `searchContacts` ignore accents: `quebec` finds `Québec`.
+- **Bridge 0.20.0, unchanged.** Updating is optional.
+
 ### Added
 
 - `searchContacts` takes `offset` and `addressBookId`: a cut list gives `nextOffset` to reach the next page,
