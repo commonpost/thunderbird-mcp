@@ -6,6 +6,13 @@ this repository.
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-11-14
+
+- Changed: clearer tool descriptions; `listCategories`, `listEvents`, `saveDraft`, `listFilters` and
+  `getAccountAccess` say which other tool to use instead or next. No behaviour change.
+- Documentation: LM Studio (Bionic) setup in the README.
+- **Bridge 0.20.0, unchanged.** Updating is optional.
+
 ### Changed
 
 - Tool descriptions: `listCategories` says where its list comes from (Thunderbird's calendar settings, not mail
