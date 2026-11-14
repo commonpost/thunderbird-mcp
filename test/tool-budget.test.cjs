@@ -60,9 +60,12 @@ const byName = Object.fromEntries(tools.map(t => [t.name, t]));
 // addressBookId; no new tool.
 // About 150 more characters (November 2026), from checking the neighbours of #212: listEvents and listTasks cut
 // their list at maxResults without saying so, and tasks with no due date had no way to the rest; both take offset.
+// About 300 more characters (November 2026), from Glama's per-tool reviews of listCategories (3.8) and listEvents
+// (3.9), the two weakest: listCategories says where its list comes from, that it is not mail tags, and which four
+// tools take the names; listEvents says when eventId or reviewId replaces a range and names listTasks and updateEvent.
 const MAX_TOOLS = 42;
 const MAX_TOOL_CHARS = 4100;
-const MAX_TOTAL_CHARS = 56210;
+const MAX_TOTAL_CHARS = 56480;
 const MIN_DESCRIPTION_CHARS = 30;
 const BOUNDED_RESULT_TOOLS = {
   searchMessages: 'maxResults', getRecentMessages: 'maxResults', searchContacts: 'maxResults',
