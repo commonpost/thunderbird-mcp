@@ -400,6 +400,14 @@ startup_timeout_sec = 30
 }
 ```
 
+**LM Studio (Bionic).** No file to edit: open Settings > Integrations > MCP and click "Add a custom MCP server" (checked with Bionic 1.2.0 on Windows on 2026-11-14; the exact wording of the labels may differ).
+
+- Name: `thunderbird`. Connection: "On this computer". Command: `node`.
+- Turn on "Show advanced options" and add one argument: the full path to `mcp-bridge.cjs`. Environment variables such as `COMMONPOST_MCP_READ_ONLY` go in the same place.
+- Fill in the Description, for example: "The user's email, contacts, calendar and mail filters in Thunderbird. Use this MCP for any question about emails, accounts, contacts or appointments."
+
+The description matters here. Bionic does not put the tools in the model's context: the model only sees the server's name and description, and has to ask for the tool list before it can call a tool. Without a description, a model answers that it has no access to your email. A small model may still not make these calls by itself (Qwen3 4B needed to be told which tool to call); prefer a model that handles tools well.
+
 The bridge normally finds Thunderbird's connection file by itself, so no environment variable is needed. Only if it cannot, set `COMMONPOST_MCP_CONNECTION_FILE` to the file's real path in the server's environment: an `"env": { ... }` object next to `args` in the JSON formats, a `[mcp_servers.thunderbird.env]` table for Codex (see [Sandbox-aware connection discovery](#sandbox-aware-connection-discovery); on Windows the file must be under the bridge's own `%TEMP%`). A path set there replaces the automatic discovery, so never leave a placeholder in it. Client formats change; if one of these no longer matches, follow the client's own MCP documentation and keep the same command and arguments.
 
 **Read-only mode.** Set `COMMONPOST_MCP_READ_ONLY` to `1` (or `true`) in the same `env` to give one MCP client reading tools only. The bridge then lists the tools that change nothing (`readOnlyHint`), plus `getMessage` and `getMessages` without `saveAttachments`, their only write, and it refuses any other tool before the call reaches Thunderbird. `0`, `false` or an empty value leave it off; any other value leaves it off too, with a line on the client's error output. It adds to the add-on's own settings and does not replace them: the accounts and tools you allow in the options page still apply, and only the person who edits the client's configuration can turn the mode off.

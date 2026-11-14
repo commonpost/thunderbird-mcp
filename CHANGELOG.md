@@ -6,6 +6,10 @@ this repository.
 
 ## [Unreleased]
 
+### Documentation
+
+- README: how to add the server in LM Studio (Bionic), and why its Description field must be filled in.
+
 ## [0.26.0] - 2026-11-14
 
 - Added: `listEvents` and `listTasks` say when the list is cut and take `offset` to read the next page.
