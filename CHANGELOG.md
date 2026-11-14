@@ -6,6 +6,12 @@ this repository.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-14
+
+- Added: `listEvents` and `listTasks` say when the list is cut and take `offset` to read the next page.
+- Changed: `searchMessages` ignores accents in `attachmentName`, and a tag is found by its label without accents.
+- **Bridge 0.20.0, unchanged.** Updating is optional.
+
 ### Added
 
 - `listEvents` and `listTasks` take `offset`, and a list cut at `maxResults` now says so: a second text block gives
