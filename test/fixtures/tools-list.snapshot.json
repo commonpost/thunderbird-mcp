@@ -479,7 +479,7 @@
     {
       "name": "saveDraft",
       "title": "Save Draft",
-      "description": "Save a new message to the identity's Drafts folder without sending or opening a compose window, as the compose window does; returns messageId + folderPath, for the user to review and send later (a reply or forward: their mode draft). With draftId, rewrite that draft instead: passed fields replace, omitted ones (body, recipients, attachments, reply headers) are kept, and the old version is removed.",
+      "description": "Save a new message to the identity's Drafts folder without sending or opening a compose window, as the compose window does; returns messageId + folderPath, for the user to review and send later (a reply or forward: replyToMessage or forwardMessage with mode draft; to send now: sendMail). With draftId, rewrite that draft instead: passed fields replace, omitted ones (body, recipients, attachments, reply headers) are kept, and the old version is removed.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2179,7 +2179,7 @@
     {
       "name": "listFilters",
       "title": "List Filters",
-      "description": "List the mail filters (rules) of one account or all: per account { accountId, accountName, filterCount, filters }, each with index (the filterIndex of other tools), name, enabled, typeNames (when it runs), terms and actions.\nconfirmation: true instead reads, changing nothing, filter changes awaiting or settled by the user's confirmation in Thunderbird: pending, accepted (written), refused, expired (10 min) or failed (nothing written); the pending request, recent ones and limits (one pending, five dialogs per hour), or one with confirmationId. MCP clients cannot answer them.",
+      "description": "List the mail filters (rules) of one account or all: per account { accountId, accountName, filterCount, filters }, each with index (the filterIndex of other tools), name, enabled, typeNames (when it runs), terms and actions. To change them: createFilter, updateFilter, deleteFilter; to run them: applyFilters.\nconfirmation: true instead reads, changing nothing, filter changes awaiting or settled by the user's confirmation in Thunderbird: pending, accepted (written), refused, expired (10 min) or failed (nothing written); the pending request, recent ones and limits (one pending, five dialogs per hour), or one with confirmationId. MCP clients cannot answer them.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2487,7 +2487,7 @@
     {
       "name": "getAccountAccess",
       "title": "Get Account Access",
-      "description": "Report the account access setting: mode (all or restricted) and the accounts MCP clients may use (id, name, type). Only the user changes it, in the add-on's Options page; no tool can.",
+      "description": "Report the account access setting: mode (all or restricted) and the accounts MCP clients may use (id, name, type): use it when an account seems missing from listAccounts, which gives the identities too. Only the user changes it, in the add-on's Options page; no tool can.",
       "inputSchema": {
         "type": "object",
         "properties": {}

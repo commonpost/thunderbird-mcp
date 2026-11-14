@@ -63,9 +63,15 @@ const byName = Object.fromEntries(tools.map(t => [t.name, t]));
 // About 300 more characters (November 2026), from Glama's per-tool reviews of listCategories (3.8) and listEvents
 // (3.9), the two weakest: listCategories says where its list comes from, that it is not mail tags, and which four
 // tools take the names; listEvents says when eventId or reviewId replaces a range and names listTasks and updateEvent.
+// About 280 more characters (November 2026): saveDraft, listFilters and getAccountAccess were the last three tools
+// whose description named no other tool; the test below now requires one. Glama's rubric (TDQS, published at
+// github.com/glama-ai/tool-definition-quality-score) gives usage guidelines 5 of 5 only with named alternatives, and
+// two studies of MCP servers (arXiv 2602.14878, 2602.18914) found missing usage guidance the most common defect and
+// functional clarity the largest effect on tool selection. The second also found conciseness the smallest effect,
+// and the first that longer descriptions cost steps: the size limits here stay.
 const MAX_TOOLS = 42;
 const MAX_TOOL_CHARS = 4100;
-const MAX_TOTAL_CHARS = 56480;
+const MAX_TOTAL_CHARS = 56710;
 const MIN_DESCRIPTION_CHARS = 30;
 const BOUNDED_RESULT_TOOLS = {
   searchMessages: 'maxResults', getRecentMessages: 'maxResults', searchContacts: 'maxResults',
@@ -92,6 +98,14 @@ describe('tools/list budget', () => {
       assert.ok(t.description.length >= MIN_DESCRIPTION_CHARS, `${t.name}: description too short`);
       assert.equal(t.group, undefined, `${t.name}: internal group leaked`);
       assert.equal(t.crud, undefined, `${t.name}: internal crud leaked`);
+    }
+  });
+
+  it('names at least one other tool in every description', () => {
+    // Which tool to use instead is what an assistant most often lacks when it picks the wrong one.
+    for (const t of tools) {
+      const others = tools.filter(o => o.name !== t.name && new RegExp(`\\b${o.name}\\b`).test(t.description));
+      assert.ok(others.length > 0, `${t.name}: its description names no other tool`);
     }
   });
 

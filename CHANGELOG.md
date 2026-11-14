@@ -11,6 +11,8 @@ this repository.
 - Tool descriptions: `listCategories` says where its list comes from (Thunderbird's calendar settings, not mail
   tags) and which tools take the names; `listEvents` says when `eventId` or `reviewId` replaces a date range and
   names `listTasks` and `updateEvent`.
+- Tool descriptions: `saveDraft`, `listFilters` and `getAccountAccess` name the tools to use instead or next; a test
+  now requires every description to name at least one other tool.
 
 ### Documentation
 
