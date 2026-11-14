@@ -6,6 +6,12 @@ this repository.
 
 ## [Unreleased]
 
+### Changed
+
+- Tool descriptions: `listCategories` says where its list comes from (Thunderbird's calendar settings, not mail
+  tags) and which tools take the names; `listEvents` says when `eventId` or `reviewId` replaces a date range and
+  names `listTasks` and `updateEvent`.
+
 ### Documentation
 
 - README: how to add the server in LM Studio (Bionic), and why its Description field must be filled in.

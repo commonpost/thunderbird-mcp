@@ -7845,7 +7845,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "listEvents",
         group: "calendar", crud: "read",
         title: "List Events",
-        description: "List events in a date range (default: next 30 days) from all calendars or one, by start time; recurring events come as occurrences sharing the series id, with a recurrenceId. A cut list says so: page with offset. Rows: id, calendarId, title, start, end (all-day: the last day), location, description, status, categories, showAs, reminders, onlineMeetingURL.",
+        description: "List events in a date range (default: next 30 days) from all calendars or one, by start time; recurring events come as occurrences sharing the series id, with a recurrenceId. A cut list says so: page with offset. Rows: id, calendarId, title, start, end (all-day: the last day), location, description, status, categories, showAs, reminders, onlineMeetingURL. One known event: eventId instead of a range; a createEvent dialog's outcome: reviewId. To-dos: listTasks; to change an event, updateEvent.",
         inputSchema: {
           type: "object",
           properties: {
@@ -7924,7 +7924,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "listCategories",
         group: "calendar", crud: "read",
         title: "List Categories",
-        description: "List the calendar category names in Thunderbird's list. Use them exactly (case-sensitive) in events and tasks; other labels are accepted but not added to the list (no tool edits it).",
+        description: "List the calendar category names of Thunderbird's settings (Calendar > Categories), sorted: the labels for events and tasks, not mail tags (updateMessage). Use them exactly (case-sensitive) in createEvent, updateEvent, createTask and updateTask; other labels are accepted but not added to the list (no tool edits it).",
         inputSchema: { type: "object", properties: {} },
       },
       {
