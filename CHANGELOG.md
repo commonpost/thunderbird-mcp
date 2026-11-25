@@ -6,6 +6,13 @@ this repository.
 
 ## [Unreleased]
 
+## [0.26.2] - 2026-11-25
+
+- Fixed: `listFolders` with `refresh: true` on a busy IMAP folder answers `done` in about a second instead of
+  `pending` after 20 s.
+- Fixed: a draft save that times out is cancelled, and the error names the folder (#233).
+- **Bridge 0.20.0, unchanged.** Updating is optional.
+
 ### Fixed
 
 - `listFolders` with `refresh: true` on an IMAP folder no longer waits its whole 20 s limit and answers `pending`
