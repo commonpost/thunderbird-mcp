@@ -43,7 +43,7 @@ function makeRefreshWorld({ offline = false } = {}) {
     Ci: {
       nsIMsgImapMailFolder: Symbol("nsIMsgImapMailFolder"),
       nsIFolderListener: { event: 0x80 },
-      nsITimer: { TYPE_ONE_SHOT: 0 },
+      nsITimer: { TYPE_ONE_SHOT: 0, TYPE_REPEATING_SLACK: 1 },
     },
     Components: { isSuccessCode: (status) => (status & 0x80000000) === 0 },
     ChromeUtils: { generateQI: () => function QueryInterface() { return this; } },
@@ -53,7 +53,7 @@ function makeRefreshWorld({ offline = false } = {}) {
         createInstance: () => {
           const timer = {
             cancelled: false,
-            initWithCallback(callback, ms) { timer.ms = ms; timer.fire = () => callback.notify(); },
+            initWithCallback(callback, ms, type) { timer.ms = ms; timer.type = type; timer.fire = () => callback.notify(); },
             cancel() { timer.cancelled = true; },
           };
           timers.push(timer);
@@ -74,7 +74,8 @@ function makeRefreshWorld({ offline = false } = {}) {
   vm.createContext(sandbox);
   vm.runInContext(`${slice("// BEGIN FOLDER REFRESH", "// END FOLDER REFRESH")}
 this.refreshFolderFromServer = refreshFolderFromServer;
-this.FOLDER_REFRESH_TIMEOUT_MS = FOLDER_REFRESH_TIMEOUT_MS;`, sandbox);
+this.FOLDER_REFRESH_TIMEOUT_MS = FOLDER_REFRESH_TIMEOUT_MS;
+this.FOLDER_REFRESH_RETRY_MS = FOLDER_REFRESH_RETRY_MS;`, sandbox);
 
   // A folder of the given server type. `imap` makes QueryInterface succeed for nsIMsgImapMailFolder.
   function makeFolder({ type = "imap", imap = type === "imap", totals = [4], totalFails = false, updateFails = null } = {}) {
@@ -179,6 +180,48 @@ describe("refreshFolderFromServer: IMAP", () => {
     assert.equal(w.listeners.size, 1, "still waiting");
     folder.imapUpdates[0].urlListener.OnStopRunningUrl(null, 0);
     assert.equal((await pending).status, "done");
+  });
+
+  // Measured in the lab on an IMAP Drafts folder right after saveDraft: Thunderbird starts no update while another
+  // command of the folder runs and never calls the listener, so the refresh waited 20 s and answered "pending".
+  it("asks again while the folder is busy, and is done when the update it finally starts ends", async () => {
+    const w = makeRefreshWorld();
+    const folder = w.makeFolder({ totals: [2, 3] });
+    const pending = w.refresh(folder);
+    const [limit, retry] = w.timers;
+    assert.equal(retry.ms, w.sandbox.FOLDER_REFRESH_RETRY_MS);
+    assert.equal(retry.type, 1, "repeating");
+    assert.ok(retry.ms * 2 < limit.ms, "several tries fit in the time limit");
+    retry.fire();
+    retry.fire();
+    assert.equal(folder.imapUpdates.length, 3);
+    assert.equal(folder.imapUpdates[2].urlListener, folder.imapUpdates[0].urlListener, "the same listener every time");
+    folder.imapUpdates[2].urlListener.OnStopRunningUrl(null, 0);
+    const result = plain(await pending);
+    assert.equal(result.status, "done");
+    assert.equal(result.newMessages, 1);
+    assert.equal(retry.cancelled, true, "no more tries once answered");
+    retry.fire();
+    assert.equal(folder.imapUpdates.length, 3, "a late tick asks nothing");
+  });
+
+  it("is failed when asking again throws", async () => {
+    const w = makeRefreshWorld();
+    const folder = w.makeFolder();
+    const pending = w.refresh(folder);
+    folder.updateFolderWithListener = () => { throw new Error("NS_ERROR_UNEXPECTED"); };
+    w.timers[1].fire();
+    const result = plain(await pending);
+    assert.equal(result.status, "failed");
+    assert.equal(result.error, "NS_ERROR_UNEXPECTED");
+  });
+
+  it("starts no retry when the update answered at once", async () => {
+    const w = makeRefreshWorld();
+    const folder = w.makeFolder();
+    folder.updateFolderWithListener = (_win, urlListener) => urlListener.OnStopRunningUrl(null, 0);
+    assert.equal((await w.refresh(folder)).status, "done");
+    assert.equal(w.timers[1].ms, undefined, "never started");
   });
 
   it("answers pending, not failed, when the time limit passes first; a late answer changes nothing", async () => {

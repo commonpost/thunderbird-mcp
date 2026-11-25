@@ -8,6 +8,9 @@ this repository.
 
 ### Fixed
 
+- `listFolders` with `refresh: true` on an IMAP folder no longer waits its whole 20 s limit and answers `pending`
+  when the folder is busy, as it is right after a draft was saved into it: it asks Thunderbird again every second
+  and answers `done` about a second later (measured in the lab on Thunderbird 140.17.0esr and 156.0.1).
 - A draft save that Thunderbird does not finish within 120 s (`saveDraft`, and `replyToMessage` or `forwardMessage`
   with `mode: "draft"`) is now cancelled instead of being left running, and the error names the folder Thunderbird
   was writing to. On an IMAP folder it also says what to do when later saves time out too (#233: reproduced in the

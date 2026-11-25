@@ -9245,6 +9245,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             // BEGIN FOLDER REFRESH
             // Below the bridge's 30 s request timeout, so that the client reads the outcome rather than the bridge's error
             const FOLDER_REFRESH_TIMEOUT_MS = 20000;
+            const FOLDER_REFRESH_RETRY_MS = 1000;
 
             /**
              * Asks Thunderbird to fetch new mail of `folder` from its server, as clicking the folder does, and waits
@@ -9275,6 +9276,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               return new Promise((resolve) => {
                 let settled = false;
                 const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+                const retry = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
                 const listener = {
                   QueryInterface: ChromeUtils.generateQI(["nsIFolderListener"]),
                   onFolderEvent(item, event) {
@@ -9286,6 +9288,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   if (settled) return;
                   settled = true;
                   timer.cancel();
+                  retry.cancel();
                   try {
                     MailServices.mailSession.RemoveFolderListener(listener);
                   } catch (e) {
@@ -9299,14 +9302,29 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   MailServices.mailSession.AddFolderListener(listener, Ci.nsIFolderListener.event);
                   timer.initWithCallback({ notify: () => settle("pending") }, FOLDER_REFRESH_TIMEOUT_MS, Ci.nsITimer.TYPE_ONE_SHOT);
                   if (imapFolder) {
-                    imapFolder.updateFolderWithListener(null, {
+                    const urlListener = {
                       QueryInterface: ChromeUtils.generateQI(["nsIUrlListener"]),
                       OnStartRunningUrl() {},
                       OnStopRunningUrl(_url, status) {
                         if (Components.isSuccessCode(status)) settle("done");
                         else settle("failed", `Thunderbird could not update the folder (status 0x${(status >>> 0).toString(16)})`);
                       },
-                    });
+                    };
+                    imapFolder.updateFolderWithListener(null, urlListener);
+                    // While another command of the folder runs (right after a draft was saved into it, measured in
+                    // the lab), Thunderbird starts no update and never calls the listener: the refresh waited its
+                    // whole time limit for nothing. Asking again is a no-op while a command runs, and starts the
+                    // update once the folder is free.
+                    if (!settled) retry.initWithCallback({
+                      notify() {
+                        if (settled) return;
+                        try {
+                          imapFolder.updateFolderWithListener(null, urlListener);
+                        } catch (e) {
+                          settle("failed", String(e && e.message || e));
+                        }
+                      },
+                    }, FOLDER_REFRESH_RETRY_MS, Ci.nsITimer.TYPE_REPEATING_SLACK);
                   } else {
                     folder.updateFolder(null);
                   }
