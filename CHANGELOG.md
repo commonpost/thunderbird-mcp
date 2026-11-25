@@ -6,6 +6,14 @@ this repository.
 
 ## [Unreleased]
 
+### Fixed
+
+- A draft save that Thunderbird does not finish within 120 s (`saveDraft`, and `replyToMessage` or `forwardMessage`
+  with `mode: "draft"`) is now cancelled instead of being left running, and the error names the folder Thunderbird
+  was writing to. On an IMAP folder it also says what to do when later saves time out too (#233: reproduced in the
+  lab only with a server that never answers a body fetch and a single connection allowed; the add-on cannot free
+  that connection).
+
 ## [0.26.1] - 2026-11-14
 
 - Changed: clearer tool descriptions; `listCategories`, `listEvents`, `saveDraft`, `listFilters` and

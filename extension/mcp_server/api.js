@@ -10765,11 +10765,25 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 // A rejected send promise produces no ComposeProcessDone
                 const failed = Promise.resolve(sent).then(() => done, e => (typeof e?.result === "number" ? e.result : 0x80004005));
                 const status = await Promise.race([done, failed, timeout]);
+                // The caller is told the save failed: stop it, so that no draft appears later behind its back. This
+                // does not free an IMAP connection that waits for an answer which never comes (measured in the lab,
+                // issue #233): Thunderbird keeps later commands of that server queued behind it.
+                if (status === null) {
+                  try { msgCompose.abort(); } catch (e) { console.warn("commonpost-mcp: could not cancel the draft save:", e); }
+                }
                 return { msgCompose, status };
               } finally {
                 timer.cancel();
                 msgCompose.UnregisterStateListener(stateListener);
               }
+            }
+
+            // Names the folder Thunderbird was writing to: with an IMAP Drafts folder, the usual cause is its server.
+            function draftSaveTimeoutError(identity) {
+              let where = "";
+              try { where = getDraftsFolder(identity)?.URI || ""; } catch { /* unknown folder */ }
+              return `Draft save timed out after ${DRAFT_SAVE_TIMEOUT_MS / 1000}s: Thunderbird did not finish writing to ${where || "the Drafts folder"}`
+                + `${/^imap:/.test(where) ? " (its mail server may not be answering; if later saves time out too, restart Thunderbird)" : ""}. The save was cancelled; check that folder before retrying, the draft may still appear.`;
             }
 
             /**
@@ -10805,7 +10819,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
 
               const { msgCompose, status } = saved;
-              if (status === null) return { error: `Draft save timed out after ${DRAFT_SAVE_TIMEOUT_MS / 1000}s` };
+              if (status === null) return { error: draftSaveTimeoutError(identity) };
               if (!Components.isSuccessCode(status)) return { error: `Draft save failed (status: 0x${(status >>> 0).toString(16)})` };
               // RemoveCurrentDraftMessage sets draftId to the new draft right after ComposeProcessDone
               await new Promise(resolve => { Services.tm.dispatchToMainThread(resolve); });
