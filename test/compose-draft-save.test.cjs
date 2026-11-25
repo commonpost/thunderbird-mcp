@@ -35,6 +35,8 @@ function load({ initThrows = false, sendMsg } = {}) {
       compFields: { draftId: "", messageId: "" },
       listeners: new Set(),
       calls: [],
+      aborted: 0,
+      abort() { compose.aborted += 1; },
       RegisterStateListener(l) { this.listeners.add(l); },
       UnregisterStateListener(l) { this.listeners.delete(l); },
       sendMsg(...args) {
@@ -140,8 +142,34 @@ describe("saveComposeFieldsAsDraft", () => {
     const pending = save(fields(), identity, [], false);
     await tick();
     timers[0].fire();
-    assert.match((await pending).error, /timed out after 120s/);
+    const { error } = await pending;
+    assert.match(error, /timed out after 120s/);
+    assert.match(error, /did not finish writing to mailbox:\/\/nobody@Local%20Folders\/Drafts\. The save was cancelled/);
     assert.equal(composes[0].listeners.size, 0);
+  });
+
+  // The caller was told the save failed: a draft must not appear later behind its back (issue #233).
+  it("cancels the save on timeout, and only then", async () => {
+    const stuck = load({ sendMsg: () => new Promise(() => {}) });
+    const pending = stuck.save(fields(), identity, [], false);
+    await tick();
+    assert.equal(stuck.composes[0].aborted, 0);
+    stuck.timers[0].fire();
+    await pending;
+    assert.equal(stuck.composes[0].aborted, 1);
+
+    const fine = load({ sendMsg: (compose) => { setImmediate(() => compose.done(0)); return Promise.resolve(); } });
+    await fine.save(fields(), identity, [], false);
+    assert.equal(fine.composes[0].aborted, 0);
+  });
+
+  it("still reports the timeout when the save cannot be cancelled", async () => {
+    const { save, composes, timers } = load({ sendMsg: () => new Promise(() => {}) });
+    const pending = save(fields(), identity, [], false);
+    await tick();
+    composes[0].abort = () => { throw new Error("no abort"); };
+    timers[0].fire();
+    assert.match((await pending).error, /timed out after 120s/);
   });
 
   it("passes the msgWindow argument that 140 ESR still takes", async () => {
