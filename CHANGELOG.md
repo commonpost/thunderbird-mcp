@@ -12,6 +12,13 @@ this repository.
   to the user in the conversation: the user opens it and submits it, without going through the options page. In the
   options page, a report opened as a GitHub issue leaves the list; it stays when the browser could not be opened.
 
+### Added
+
+- Options page, Reports from assistants: Send by email opens a compose window holding the report, addressed to the
+  project's mailbox (`commonpost.mcp@gmail.com`), for a user without a GitHub account. The user reads it and sends
+  it; it then comes from their own address and is read by the maintainers only. The report leaves the list once the
+  window is open.
+
 ## [0.27.0] - 2026-11-27
 
 - Added: `reportProblem`, a tool with which an assistant saves a report about a tool that misbehaved or a missing

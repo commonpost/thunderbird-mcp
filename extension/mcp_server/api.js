@@ -7485,6 +7485,9 @@ const PROBLEM_REPORT_DETAILS_MAX = 1500;
 const PROBLEM_REPORT_ERROR_MAX = 300;
 const PROBLEM_REPORT_ERROR_AGE_MS = 30 * 60 * 1000;
 const PROBLEM_REPORT_ISSUE_URL = "https://github.com/commonpost/thunderbird-mcp/issues/new";
+// The mailbox of the project, for a user without a GitHub account. The user sends the message themselves, from the
+// compose window Thunderbird opens: it then carries their own address, which an issue does not.
+const PROBLEM_REPORT_MAIL_TO = "commonpost.mcp@gmail.com";
 // GitHub refuses a longer address; the details are cut in the link, never in the stored report.
 const PROBLEM_REPORT_URL_MAX = 7000;
 const PROBLEM_REPORT_ADDRESS = /[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
@@ -7604,6 +7607,12 @@ function problemReportIssueUrl(report) {
     out = url(problemReportIssue(report, `${details}\n\n(Cut to fit a link: the whole text is in the add-on's Options page, under Copy.)`));
   }
   return out;
+}
+
+// The report as a message to the project: plain text, the same text as the issue.
+function problemReportMail(report) {
+  const issue = problemReportIssue(report);
+  return { to: PROBLEM_REPORT_MAIL_TO, subject: `[report] ${issue.title}`, body: issue.body };
 }
 
 // What the options page shows (getProblemReports), newest first. Plain JSON.
@@ -8761,6 +8770,20 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
       converter.init(ostream, "UTF-8");
       converter.writeString(JSON.stringify(reports, null, 1) + "\n");
       converter.close();
+    }
+
+    // Opens a compose window holding the report, for the user to read and send. Nothing is sent here.
+    function composeProblemReport(report) {
+      const mail = problemReportMail(report);
+      const params = Cc["@mozilla.org/messengercompose/composeparams;1"].createInstance(Ci.nsIMsgComposeParams);
+      const fields = Cc["@mozilla.org/messengercompose/composefields;1"].createInstance(Ci.nsIMsgCompFields);
+      fields.to = mail.to;
+      fields.subject = mail.subject;
+      fields.body = mail.body;
+      params.type = Ci.nsIMsgCompType.New;
+      params.format = Ci.nsIMsgCompFormat.PlainText;
+      params.composeFields = fields;
+      Cc["@mozilla.org/messengercompose;1"].getService(Ci.nsIMsgComposeService).OpenComposeWindowWithParams(null, params);
     }
 
     function reportProblem(args) {
@@ -20860,6 +20883,18 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
           const reports = readProblemReports();
           const kept = reports.filter((r) => r.id !== id);
           if (kept.length !== reports.length) writeProblemReports(kept);
+          return problemReportsView(kept);
+        },
+
+        mailProblemReport: async function(id) {
+          if (typeof id !== "string") return { error: "id must be a string" };
+          const reports = readProblemReports();
+          const report = reports.find((r) => r.id === id);
+          if (!report) return { error: "This report is no longer in the list." };
+          composeProblemReport(report);
+          // Only once the window is open: a report whose window could not be opened stays in the list.
+          const kept = reports.filter((r) => r.id !== id);
+          writeProblemReports(kept);
           return problemReportsView(kept);
         },
 

@@ -32,7 +32,7 @@ function load() {
   const sandbox = vm.createContext({});
   vm.runInContext(`${slice("// BEGIN PROBLEM REPORTS", "// END PROBLEM REPORTS")}
     this.api = { cleanReportText, rememberToolError, buildProblemReport, parseProblemReports, addProblemReport,
-      problemReportIssue, problemReportIssueUrl, problemReportsView, PROBLEM_REPORTS_MAX };
+      problemReportIssue, problemReportIssueUrl, problemReportsView, problemReportMail, PROBLEM_REPORTS_MAX };
     this.newErrors = () => new Map();`, sandbox);
   return sandbox;
 }
@@ -277,6 +277,32 @@ describe("reportProblem: what the options page receives", () => {
   });
 });
 
+describe("reportProblem: the report as a message to the project", () => {
+  it("is addressed to the project's mailbox and holds the text of the issue", () => {
+    const sandbox = load();
+    const report = plain(sandbox.api.buildProblemReport(ARGS, facts(sandbox), "pr-0000000000000001", NOW)).report;
+    const mail = plain(sandbox.api.problemReportMail(report));
+    assert.equal(mail.to, "commonpost.mcp@gmail.com");
+    assert.equal(mail.subject, "[report] Bug: saveDraft keeps the old draft listed");
+    assert.equal(mail.body, plain(sandbox.api.problemReportIssue(report)).body);
+  });
+
+  it("opens a plain text compose window and sends nothing itself", () => {
+    const compose = slice("    function composeProblemReport(report) {", "    function reportProblem(args) {");
+    assert.match(compose, /params\.type = Ci\.nsIMsgCompType\.New;/);
+    assert.match(compose, /params\.format = Ci\.nsIMsgCompFormat\.PlainText;/);
+    assert.match(compose, /OpenComposeWindowWithParams\(null, params\)/);
+    assert.ok(!/sendMsg|SendMsg|nsIMsgSend|deliverMode/.test(compose), "no send path");
+    assert.ok(!/addAttachment|\.cc =|\.bcc =/.test(compose), "one recipient, no attachment");
+  });
+
+  it("removes the report only after the window opened", () => {
+    const fn = slice("        mailProblemReport: async function(id) {", "        getCurrentAuthToken: async function() {");
+    assert.ok(fn.indexOf("composeProblemReport(report);") < fn.indexOf("writeProblemReports(kept);"));
+    assert.match(fn, /if \(!report\) return \{ error: "This report is no longer in the list\." \};/);
+  });
+});
+
 describe("reportProblem: the tool", () => {
   function tool({ stored = [], bridges = [], failWrite = false } = {}) {
     const state = { stored, written: null };
@@ -359,7 +385,7 @@ describe("reportProblem: wiring", () => {
 
   it("no code of the add-on sends a report", () => {
     const helpers = slice("// BEGIN PROBLEM REPORTS", "// END PROBLEM REPORTS") + slice("    // BEGIN PROBLEM REPORT STORE", "    // END PROBLEM REPORT STORE");
-    assert.ok(!/fetch\(|XMLHttpRequest|nsIHttpChannel|openDefaultBrowser|launch\(/.test(helpers));
+    assert.ok(!/fetch\(|XMLHttpRequest|nsIHttpChannel|openDefaultBrowser|launch\(|sendMsg|nsIMsgSend\b/.test(helpers));
   });
 
   it("the options page deletes through the add-on and shows what remains", () => {

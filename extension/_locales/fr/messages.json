@@ -1078,7 +1078,7 @@
     "description": "Heading of the section listing the reports saved by the reportProblem tool."
   },
   "reportIntro": {
-    "message": "Un assistant d'IA peut noter un outil qui s'est mal comporté ou une fonction manquante, avec l'outil reportProblem. Rien n'est envoyé : chaque signalement attend ici que vous l'envoyiez ou le supprimiez. Lisez-le d'abord : il ne doit rien contenir de votre courrier.",
+    "message": "Un assistant d'IA peut noter un outil qui s'est mal comporté ou une fonction manquante, avec l'outil reportProblem. Rien n'est envoyé : chaque signalement attend ici que vous l'envoyiez ou le supprimiez. Lisez-le d'abord : il ne doit rien contenir de votre courrier. En issue GitHub, il est public, sous votre compte GitHub ; par courriel, seuls les mainteneurs le reçoivent, depuis votre propre adresse.",
     "description": "Introduction of the Reports from assistants section. reportProblem is the name of a tool: do not translate it."
   },
   "reportEmpty": {
@@ -1108,5 +1108,13 @@
   "toolTitle_reportProblem": {
     "message": "Signaler un problème",
     "description": "Title of the tool reportProblem in the tool list (its name follows, as code)."
+  },
+  "reportMail": {
+    "message": "Envoyer par courriel",
+    "description": "Button that opens a message window holding the report, addressed to the project."
+  },
+  "reportMailed": {
+    "message": "Ouvert dans une fenêtre de rédaction et retiré de cette liste : rien n'est envoyé tant que vous n'envoyez pas ce message. Il partira de votre propre adresse.",
+    "description": "Status after a report was opened in a compose window."
   }
 }

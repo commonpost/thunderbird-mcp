@@ -1078,7 +1078,7 @@
     "description": "Heading of the section listing the reports saved by the reportProblem tool."
   },
   "reportIntro": {
-    "message": "An AI assistant can write down a tool that misbehaved or a missing feature, with the reportProblem tool. Nothing is sent: each report waits here until you send it or delete it. Read it first: it should hold nothing from your mail.",
+    "message": "An AI assistant can write down a tool that misbehaved or a missing feature, with the reportProblem tool. Nothing is sent: each report waits here until you send it or delete it. Read it first: it should hold nothing from your mail. As a GitHub issue it is public, under your GitHub account; by email it reaches only the maintainers, from your own address.",
     "description": "Introduction of the Reports from assistants section. reportProblem is the name of a tool: do not translate it."
   },
   "reportEmpty": {
@@ -1108,5 +1108,13 @@
   "toolTitle_reportProblem": {
     "message": "Report a Problem",
     "description": "Title of the tool reportProblem in the tool list (its name follows, as code)."
+  },
+  "reportMail": {
+    "message": "Send by email",
+    "description": "Button that opens a message window holding the report, addressed to the project."
+  },
+  "reportMailed": {
+    "message": "Opened in a message window and removed from this list: nothing is sent until you send that message. It will come from your own address.",
+    "description": "Status after a report was opened in a compose window."
   }
 }

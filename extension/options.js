@@ -1209,6 +1209,10 @@ function renderReport(report) {
       setReportStatus(t("reportOpened", null, "Opened in your browser and removed from this list: nothing is sent until you submit it there."));
     }));
   }
+  row.appendChild(reportButton(t("reportMail", null, "Send by email"), row.children.length > 0, async () => {
+    showReports(await browser.commonpostMcp.mailProblemReport(report.id));
+    setReportStatus(t("reportMailed", null, "Opened in a message window and removed from this list: nothing is sent until you send that message. It will come from your own address."));
+  }));
   row.appendChild(reportButton(t("copy", null, "Copy"), true, async () => {
     await navigator.clipboard.writeText(report.text);
     setReportStatus(t("copied", null, "Copied."));

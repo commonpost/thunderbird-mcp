@@ -15,7 +15,9 @@ collects no data and sends nothing to its developers or to any third party.
 - No telemetry, no analytics, no crash reports, no accounts, no cookies.
 - An assistant can save a report about a tool that misbehaved (`reportProblem`). The report stays in a file of your
   Thunderbird profile, readable by your user only, and is listed in the options page. It leaves your computer only
-  if you open it there as a GitHub issue and submit that issue yourself, under your own GitHub account.
+  if you send it yourself: as a GitHub issue that you submit under your own GitHub account (public), or as a message
+  that you send from Thunderbird to the maintainers' mailbox, `commonpost.mcp@gmail.com` (it then carries your own
+  address, and is read by the maintainers only).
 - The session token the add-on writes for the bridge lives in a file of your temporary directory, readable by your
   user only, and is replaced at each Thunderbird start.
 - The bridge keeps the last tool list Thunderbird gave it (tool names, descriptions and parameters; no mail and no
