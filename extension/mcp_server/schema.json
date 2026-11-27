@@ -66,6 +66,19 @@
         ]
       },
       {
+        "name": "mailProblemReport",
+        "type": "function",
+        "async": true,
+        "description": "Open a compose window holding one report saved by the reportProblem tool, addressed to the project, for the user to read and send; the report then leaves the list. Returns the remaining reports",
+        "parameters": [
+          {
+            "name": "id",
+            "type": "string",
+            "description": "id of the report"
+          }
+        ]
+      },
+      {
         "name": "getCurrentAuthToken",
         "type": "function",
         "async": true,

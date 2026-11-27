@@ -145,7 +145,8 @@ it (see "Versions" below).
   `commonpost-mcp-reports.json` in the profile, 20 at most, with the versions of the add-on, the bridge and
   Thunderbird, the system and the last error the named tool returned (kept in memory for 30 minutes). Mail addresses
   are replaced before anything is stored. The add-on sends nothing: the options page lists the reports, and the user
-  opens one as a prefilled issue of this repository in the browser, copies it or deletes it. A message that tells
+  opens one as a prefilled issue of this repository in the browser, or in a compose window addressed to the
+  project's mailbox, copies it or deletes it. A message that tells
   an assistant to report something can add to that list; it cannot publish.
 - **Limits set by the user** (options page, read on every call):
   - *account access*: an allow-list of accounts; an empty list means all accounts, an unreadable or malformed value

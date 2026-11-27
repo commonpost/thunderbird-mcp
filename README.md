@@ -262,7 +262,7 @@ OpenPGP and S/MIME messages are not decrypted for the assistant by default: `get
 
 | Tool | Description |
 |------|-------------|
-| `reportProblem` | Save a report (a bug or a suggestion) when a tool misbehaves or something is missing. Nothing is sent: the assistant gets a link to the report as a prefilled GitHub issue, which you open and submit yourself; the report also waits in the options page, where you read it, open it, copy it or delete it. The add-on adds its versions and the last error of the tool named, and replaces mail addresses. |
+| `reportProblem` | Save a report (a bug or a suggestion) when a tool misbehaves or something is missing. Nothing is sent: the assistant gets a link to the report as a prefilled GitHub issue, which you open and submit yourself; the report also waits in the options page, where you read it, open it, send it by email to the maintainers, copy it or delete it. The add-on adds its versions and the last error of the tool named, and replaces mail addresses. |
 
 Account and tool access are configured via the extension settings page (menu ≡ > Add-ons and Themes > Commonpost MCP for Thunderbird > wrench button (Options)). Access control is not MCP-exposed -- only the user can change it. Once you have disabled any tool, a tool added by a later update starts disabled too: the settings page marks it "new", and it stays off until you check it. If you have disabled nothing, new tools are enabled like the others.
 

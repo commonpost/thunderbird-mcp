@@ -281,6 +281,7 @@ const DEFAULT_RESULTS = {
   },
   getProblemReports: { max: 20, reports: [] },
   deleteProblemReport: { max: 20, reports: [] },
+  mailProblemReport: { max: 20, reports: [] },
 };
 
 // browser.i18n.getMessage on extension/_locales/en/messages.json, as Thunderbird resolves it: the $NAME$
@@ -2260,7 +2261,7 @@ describe("options page: reports from assistants", () => {
     assert.equal(text.tagName, "PRE");
     assert.equal(text.textContent, REPORT.text);
     assert.equal(text.children.length, 0, "the report is shown as text, never as markup");
-    assert.deepEqual(labels(bug), ["Open as a GitHub issue", "Copy", "Delete"]);
+    assert.deepEqual(labels(bug), ["Open as a GitHub issue", "Send by email", "Copy", "Delete"]);
   });
 
   it("opens the prefilled issue in the browser and says that nothing is sent yet", async () => {
@@ -2285,20 +2286,39 @@ describe("options page: reports from assistants", () => {
     for (const issueUrl of ["https://example.org/issues/new?title=a&body=b", "javascript:alert(1)", undefined,
       ISSUE + "&assignees=someone"]) {
       const page = await openPage({ getProblemReports: reports({ ...REPORT, issueUrl }) });
-      assert.deepEqual(labels(page.$("reportList").children[0]), ["Copy", "Delete"], String(issueUrl));
+      assert.deepEqual(labels(page.$("reportList").children[0]), ["Send by email", "Copy", "Delete"], String(issueUrl));
     }
+  });
+
+  it("opens the report in a message window through the add-on, and shows what remains", async () => {
+    const page = await openPage({ getProblemReports: reports(REPORT, SUGGESTION), mailProblemReport: reports(SUGGESTION) });
+    await page.fire(buttons(page.$("reportList").children[0])[1], "click");
+    assert.deepEqual(page.callsTo("mailProblemReport"), [[REPORT.id]]);
+    assert.equal(page.$("reportList").children.length, 1);
+    assert.match(page.$("reportStatus").textContent, /nothing is sent until you send that message\. It will come from your own address\./);
+    assert.deepEqual(page.opened, [], "no browser is involved");
+  });
+
+  it("keeps the list and shows the error when the message window could not be opened", async () => {
+    const page = await openPage({
+      getProblemReports: reports(REPORT),
+      mailProblemReport: { error: "This report is no longer in the list." },
+    });
+    await page.fire(buttons(page.$("reportList").children[0])[1], "click");
+    assert.match(page.$("reportStatus").textContent, /no longer in the list/);
+    assert.equal(page.$("reportList").children.length, 1);
   });
 
   it("copies the whole text", async () => {
     const page = await openPage({ getProblemReports: reports(REPORT) });
-    await page.fire(buttons(page.$("reportList").children[0])[1], "click");
+    await page.fire(buttons(page.$("reportList").children[0])[2], "click");
     assert.deepEqual(page.clipboardWrites, [REPORT.text]);
     assert.equal(page.$("reportStatus").textContent, "Copied.");
   });
 
   it("deletes one report and shows what remains", async () => {
     const page = await openPage({ getProblemReports: reports(REPORT, SUGGESTION), deleteProblemReport: reports(SUGGESTION) });
-    await page.fire(buttons(page.$("reportList").children[0])[2], "click");
+    await page.fire(buttons(page.$("reportList").children[0])[3], "click");
     assert.deepEqual(page.callsTo("deleteProblemReport"), [[REPORT.id]]);
     assert.equal(page.$("reportList").children.length, 1);
     assert.equal(page.$("reportList").children[0].children[1].textContent, "Suggestion: y");
@@ -2309,7 +2329,7 @@ describe("options page: reports from assistants", () => {
       getProblemReports: reports(REPORT),
       deleteProblemReport: () => { throw new Error("the file is not a regular file"); },
     });
-    await page.fire(buttons(page.$("reportList").children[0])[2], "click");
+    await page.fire(buttons(page.$("reportList").children[0])[3], "click");
     assert.match(page.$("reportStatus").textContent, /the file is not a regular file/);
     assert.equal(page.$("reportStatus").className, "save-status error");
     assert.equal(page.$("reportList").children.length, 1);
@@ -2325,6 +2345,6 @@ describe("options page: reports from assistants", () => {
     const page = await openPage({ getProblemReports: reports(REPORT) }, { messages: readMessages("fr") });
     const li = page.$("reportList").children[0];
     assert.ok(li.children[0].textContent.startsWith("Bogue \u2014 "));
-    assert.deepEqual(labels(li), ["Ouvrir comme issue GitHub", "Copier", "Supprimer"]);
+    assert.deepEqual(labels(li), ["Ouvrir comme issue GitHub", "Envoyer par courriel", "Copier", "Supprimer"]);
   });
 });
