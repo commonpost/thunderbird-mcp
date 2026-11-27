@@ -6,6 +6,12 @@ this repository.
 
 ## [Unreleased]
 
+### Changed
+
+- `reportProblem` also returns `issueUrl`, the address of the report as a new GitHub issue, for the assistant to give
+  to the user in the conversation: the user opens it and submits it, without going through the options page. In the
+  options page, a report opened as a GitHub issue leaves the list; it stays when the browser could not be opened.
+
 ## [0.27.0] - 2026-11-27
 
 - Added: `reportProblem`, a tool with which an assistant saves a report about a tool that misbehaved or a missing

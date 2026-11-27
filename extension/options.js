@@ -1205,7 +1205,8 @@ function renderReport(report) {
   if (REPORT_ISSUE_URL_PATTERN.test(report.issueUrl)) {
     row.appendChild(reportButton(t("reportOpen", null, "Open as a GitHub issue"), false, async () => {
       await browser.windows.openDefaultBrowser(report.issueUrl);
-      setReportStatus(t("reportOpened", null, "Opened in your browser: nothing is sent until you submit it there. Delete the report here afterwards."));
+      showReports(await browser.commonpostMcp.deleteProblemReport(report.id));
+      setReportStatus(t("reportOpened", null, "Opened in your browser and removed from this list: nothing is sent until you submit it there."));
     }));
   }
   row.appendChild(reportButton(t("copy", null, "Copy"), true, async () => {

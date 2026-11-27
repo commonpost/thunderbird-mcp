@@ -89,5 +89,5 @@ addresses unless the user asks.
   folder before retrying.
 - "Commonpost notice (please tell the user): ...": pass it on to the user; it says what to update.
 - A tool that answers wrongly, or lacks what the task needed, although your call was right: save a report with
-  `reportProblem` (in English, with nothing from the user's mail), and tell the user it waits in the add-on's options
-  page. It is not sent until they send it.
+  `reportProblem` (in English, with nothing from the user's mail), and give the user the issueUrl of the result as a
+  link, unchanged. It is not sent until they submit it; it also waits in the add-on's options page.

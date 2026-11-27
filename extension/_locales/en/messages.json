@@ -1098,7 +1098,7 @@
     "description": "Button that opens the report as a prefilled new issue on GitHub, in the browser."
   },
   "reportOpened": {
-    "message": "Opened in your browser: nothing is sent until you submit it there. Delete the report here afterwards.",
+    "message": "Opened in your browser and removed from this list: nothing is sent until you submit it there.",
     "description": "Status after a report was opened in the browser."
   },
   "reportDelete": {

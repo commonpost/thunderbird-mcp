@@ -1098,7 +1098,7 @@
     "description": "Button that opens the report as a prefilled new issue on GitHub, in the browser."
   },
   "reportOpened": {
-    "message": "Ouvert dans votre navigateur : rien n'est envoyé tant que vous ne le soumettez pas là-bas. Supprimez ensuite le signalement ici.",
+    "message": "Ouvert dans votre navigateur et retiré de cette liste : rien n'est envoyé tant que vous ne le soumettez pas là-bas.",
     "description": "Status after a report was opened in the browser."
   },
   "reportDelete": {

@@ -2267,8 +2267,18 @@ describe("options page: reports from assistants", () => {
     const page = await openPage({ getProblemReports: reports(REPORT) });
     await page.fire(buttons(page.$("reportList").children[0])[0], "click");
     assert.deepEqual(page.opened, [ISSUE]);
-    assert.match(page.$("reportStatus").textContent, /nothing is sent until you submit it there/);
-    assert.equal(page.callsTo("deleteProblemReport").length, 0, "opening does not delete the report");
+    assert.match(page.$("reportStatus").textContent, /removed from this list: nothing is sent until you submit it there/);
+    assert.deepEqual(page.callsTo("deleteProblemReport"), [[REPORT.id]], "an opened report leaves the list");
+    assert.equal(page.$("reportList").children.length, 0);
+  });
+
+  it("keeps the report when the browser could not be opened", async () => {
+    const page = await openPage({ getProblemReports: reports(REPORT) },
+      { openDefaultBrowser: async () => { throw new Error("no default browser"); } });
+    await page.fire(buttons(page.$("reportList").children[0])[0], "click");
+    assert.match(page.$("reportStatus").textContent, /no default browser/);
+    assert.equal(page.callsTo("deleteProblemReport").length, 0);
+    assert.equal(page.$("reportList").children.length, 1);
   });
 
   it("offers no way to open an address that is not a new issue of this repository", async () => {
