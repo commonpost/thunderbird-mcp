@@ -143,7 +143,9 @@ it (see "Versions" below).
 - **Dispatch.** `callTool(name, args)` is a `switch` on the tool name that calls one handler per tool.
 - **Reports.** `reportProblem` saves what an assistant writes about a tool (a bug or a suggestion) in
   `commonpost-mcp-reports.json` in the profile, 20 at most, with the versions of the add-on, the bridge and
-  Thunderbird, the system and the last error the named tool returned (kept in memory for 30 minutes). Mail addresses
+  Thunderbird, the system, the last error the named tool returned (kept in memory for 30 minutes) and the last five calls of that
+  tool since Thunderbird started (time, argument names without their values, kind of account, duration, outcome). A
+  bug is three answers (`called`, `got`, `expected`), a suggestion is `details`. Mail addresses
   are replaced before anything is stored. The add-on sends nothing: the options page lists the reports, and the user
   opens one as a prefilled issue of this repository in the browser, or in a compose window addressed to the
   project's mailbox, copies it or deletes it. A message that tells

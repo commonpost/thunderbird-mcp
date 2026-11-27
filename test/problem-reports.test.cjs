@@ -31,17 +31,21 @@ const TOOLS = ["saveDraft", "searchMessages", "reportProblem"];
 function load() {
   const sandbox = vm.createContext({});
   vm.runInContext(`${slice("// BEGIN PROBLEM REPORTS", "// END PROBLEM REPORTS")}
-    this.api = { cleanReportText, rememberToolError, buildProblemReport, parseProblemReports, addProblemReport,
+    this.api = { cleanReportText, rememberToolError, rememberToolCall, buildProblemReport, parseProblemReports, addProblemReport,
       problemReportIssue, problemReportIssueUrl, problemReportsView, problemReportMail, PROBLEM_REPORTS_MAX };
     this.newErrors = () => new Map();`, sandbox);
   return sandbox;
 }
 
 function facts(sandbox, errors = sandbox.newErrors()) {
-  return { toolNames: TOOLS, addon: "0.26.3", bridge: "0.20.0", thunderbird: "140.17.0", os: "WINNT", errors };
+  return { toolNames: TOOLS, addon: "0.26.3", addonUpdated: "2026-11-27", bridge: "0.20.0", thunderbird: "140.17.0", os: "WINNT", errors, calls: sandbox.newErrors() };
 }
 
-const ARGS = { kind: "bug", summary: "saveDraft keeps the old draft listed", details: "Called saveDraft with draftId on an IMAP account.\nThe old version stayed listed.", tool: "saveDraft" };
+const ARGS = {
+  kind: "bug", summary: "saveDraft keeps the old draft listed", called: "saveDraft with draftId on an IMAP account",
+  got: "success, and the old version stayed listed", expected: "the old version no longer listed", tool: "saveDraft",
+};
+const SUGGESTION_ARGS = { kind: "suggestion", summary: "name the reminder words", details: "saveDraft could list them." };
 
 describe("reportProblem: what a report holds", () => {
   it("keeps the arguments and adds the versions the add-on knows", () => {
@@ -53,13 +57,18 @@ describe("reportProblem: what a report holds", () => {
       at: "2026-11-27T15:00:00.000Z",
       kind: "bug",
       summary: ARGS.summary,
-      details: ARGS.details,
+      called: ARGS.called,
+      got: ARGS.got,
+      expected: ARGS.expected,
+      details: null,
       tool: "saveDraft",
       addon: "0.26.3",
+      addonUpdated: "2026-11-27",
       bridge: "0.20.0",
       thunderbird: "140.17.0",
       os: "WINNT",
       lastError: null,
+      calls: [],
     });
   });
 
@@ -75,6 +84,7 @@ describe("reportProblem: what a report holds", () => {
     ({ report } = plain(sandbox.api.buildProblemReport({ ...ARGS, tool: undefined }, facts(sandbox, errors), "pr-0011223344556677", NOW)));
     assert.equal(report.tool, null);
     assert.equal(report.lastError, null, "no tool named, no error attached");
+    assert.equal(report.calls, null, "no tool named, no record of calls");
   });
 
   it("remembers the message of an error result, not its JSON", () => {
@@ -94,17 +104,58 @@ describe("reportProblem: what a report holds", () => {
   });
 });
 
+describe("reportProblem: the add-on's record of calls", () => {
+  it("keeps the names of the arguments, never their values, and the last five calls of a tool", () => {
+    const sandbox = load();
+    const calls = sandbox.newErrors();
+    for (let n = 0; n < 7; n++) {
+      sandbox.api.rememberToolCall(calls, "saveDraft", { to: "jane@example.com", body: `text ${n}`, "bad name!": 1 }, "imap", n, n % 2 === 0, NOW + n);
+    }
+    sandbox.api.rememberToolCall(calls, "searchMessages", "not an object", undefined, -3, "yes", NOW);
+    const saved = plain(calls.get("saveDraft"));
+    assert.equal(saved.length, 5);
+    assert.deepEqual(saved[0], { atMs: NOW + 2, args: ["body", "to"], account: "imap", ms: 2, ok: true });
+    assert.deepEqual(saved[4], { atMs: NOW + 6, args: ["body", "to"], account: "imap", ms: 6, ok: true });
+    assert.ok(!JSON.stringify(saved).includes("jane"));
+    assert.deepEqual(plain(calls.get("searchMessages")), [{ atMs: NOW, args: [], account: null, ms: 0, ok: false }]);
+  });
+
+  it("a report that names a tool never called since Thunderbird started says so", () => {
+    const sandbox = load();
+    const { report } = plain(sandbox.api.buildProblemReport(ARGS, facts(sandbox), "pr-0011223344556677", NOW));
+    assert.deepEqual(report.calls, []);
+    const text = plain(sandbox.api.problemReportIssue(report)).body;
+    assert.ok(text.includes("None: this version of the add-on has not seen this tool called. What is described above was not observed since Thunderbird last started."));
+  });
+
+  it("the dispatch records every call but those of reportProblem, with its duration and outcome", () => {
+    assert.match(apiSource, /if \(method === "tools\/call" && params\.name !== "reportProblem"\) \{/);
+    assert.match(apiSource, /rememberToolCall\(globalThis\.__cpMcpToolCalls \?\?= new Map\(\), params\.name, params\.arguments,\s+reportAccountKind\(params\.arguments\), nowMs - requestStartMs, !result\?\.isError, nowMs\);/);
+  });
+
+  it("the kind of account comes from the account or the folder, and a failure to tell is not an error", () => {
+    const fn = slice("            function reportAccountKind(args) {", "            const server = new HttpServer();");
+    assert.match(fn, /isGMailServer \? "imap \(gmail\)" : "imap"/);
+    assert.match(fn, /\} catch \{\s+return null;/);
+  });
+});
+
 describe("reportProblem: mail addresses never reach the report", () => {
   it("replaces them in the summary, the details and the remembered error", () => {
     const sandbox = load();
     const errors = sandbox.newErrors();
     sandbox.api.rememberToolError(errors, "saveDraft", "Folder not found: imap://jane.doe%40example.com@imap.example.com/INBOX", NOW);
     const { report } = plain(sandbox.api.buildProblemReport({
-      kind: "bug",
+      ...ARGS,
       summary: "reply to jane.doe@example.com fails",
       details: "The message from Jane <jane.doe+list@mail.example.co.uk> was not found.",
-      tool: "saveDraft",
+      called: "replyToMessage to jane.doe@example.com",
+      got: "an error for jane.doe@example.com",
+      expected: "a draft to jane.doe@example.com",
     }, facts(sandbox, errors), "pr-0011223344556677", NOW));
+    assert.equal(report.called, "replyToMessage to <address>");
+    assert.equal(report.got, "an error for <address>");
+    assert.equal(report.expected, "a draft to <address>");
     const stored = JSON.stringify(report);
     assert.ok(!/example\.co|jane\.doe/.test(stored), stored);
     assert.equal(report.summary, "reply to <address> fails");
@@ -128,7 +179,10 @@ describe("reportProblem: what is refused", () => {
   const cases = [
     ["an unknown kind", { ...ARGS, kind: "praise" }, /^kind must be one of: bug, suggestion$/],
     ["an empty summary", { ...ARGS, summary: "   " }, /^summary is empty$/],
-    ["empty details", { ...ARGS, details: "\n" }, /^details is empty$/],
+    ["a bug without what was called", { ...ARGS, called: " " }, /^A bug report needs called, got, expected: missing called$/],
+    ["a bug with details only, as 0.27.0 took it", { kind: "bug", summary: "x", details: "all in one" }, /^A bug report needs called, got, expected: missing called, got, expected$/],
+    ["a bug answer over 500 characters", { ...ARGS, got: "g".repeat(501) }, /^got is too long \(501 characters, limit 500\)$/],
+    ["a suggestion without details", { kind: "suggestion", summary: "x", called: "y" }, /^A suggestion needs details: what you needed/],
     ["a summary over 120 characters", { ...ARGS, summary: "s".repeat(121) }, /^summary is too long \(121 characters, limit 120\)$/],
     ["details over 1500 characters", { ...ARGS, details: "d".repeat(1501) }, /^details is too long \(1501 characters, limit 1500\)$/],
     ["a tool this server does not have", { ...ARGS, tool: "sendEverything" }, /^tool is not the name of a tool of this server: sendEverything$/],
@@ -145,8 +199,9 @@ describe("reportProblem: what is refused", () => {
 
   it("accepts the limits themselves", () => {
     const sandbox = load();
-    const out = plain(sandbox.api.buildProblemReport({ ...ARGS, summary: "s".repeat(120), details: "d".repeat(1500) }, facts(sandbox), "pr-0011223344556677", NOW));
+    const out = plain(sandbox.api.buildProblemReport({ ...ARGS, summary: "s".repeat(120), details: "d".repeat(1500), called: "c".repeat(500), got: "g".repeat(500), expected: "e".repeat(500) }, facts(sandbox), "pr-0011223344556677", NOW));
     assert.equal(out.error, undefined);
+    assert.equal(plain(sandbox.api.buildProblemReport(SUGGESTION_ARGS, facts(sandbox), "pr-0011223344556677", NOW)).error, undefined);
   });
 });
 
@@ -182,6 +237,9 @@ describe("reportProblem: the list of waiting reports", () => {
       { ...good, id: "pr-0000000000000003", details: "d".repeat(1501) },
       { ...good, id: "pr-0000000000000004", lastError: { text: 5, at: "x" } },
       { ...good, id: "pr-0000000000000005", tool: { name: "x" } },
+      { ...good, id: "pr-0000000000000006", got: null },
+      { ...good, id: "pr-0000000000000007", calls: [{ at: "x", args: ["a"], account: null, ms: "fast", ok: true }] },
+      { ...good, id: "pr-0000000000000008", calls: Array.from({ length: 6 }, () => ({ at: "x", args: [], account: null, ms: 1, ok: true })) },
       "text",
       null,
     ]);
@@ -189,6 +247,18 @@ describe("reportProblem: the list of waiting reports", () => {
     for (const broken of ["", "{", "{}", "null", "\"x\""]) {
       assert.deepEqual(plain(sandbox.api.parseProblemReports(broken)), [], JSON.stringify(broken));
     }
+  });
+
+  it("keeps a report saved by 0.27.0: details only, no record of calls", () => {
+    const sandbox = load();
+    const old = {
+      id: "pr-79f391772df3d02f", at: "2026-11-27T21:51:47.513Z", kind: "bug", summary: "old shape", details: "all in one",
+      tool: "saveDraft", addon: "0.27.0", bridge: "0.20.0", thunderbird: "161.0", os: "WINNT", lastError: null,
+    };
+    assert.deepEqual(plain(sandbox.api.parseProblemReports(JSON.stringify([old]))), [old]);
+    const [entry] = plain(sandbox.api.problemReportsView([old])).reports;
+    assert.ok(entry.text.includes("### Details\n\nall in one"));
+    assert.ok(!entry.text.includes("### Calls of this tool"));
   });
 
   it("reads at most 20 reports from a file that holds more", () => {
@@ -203,9 +273,12 @@ describe("reportProblem: what the options page receives", () => {
     const sandbox = load();
     const errors = sandbox.newErrors();
     sandbox.api.rememberToolError(errors, "saveDraft", "Draft ```not``` found", NOW);
-    const first = plain(sandbox.api.buildProblemReport(ARGS, facts(sandbox, errors), "pr-0000000000000001", NOW)).report;
-    const second = plain(sandbox.api.buildProblemReport({ kind: "suggestion", summary: "name the reminder words", details: "saveDraft could list them." },
-      { ...facts(sandbox), bridge: null }, "pr-0000000000000002", NOW + 1)).report;
+    const withCalls = facts(sandbox, errors);
+    sandbox.api.rememberToolCall(withCalls.calls, "saveDraft", { draftId: "<x@y.example>", body: "secret text", isHtml: true }, "imap (gmail)", 512.4, true, NOW - 60000);
+    sandbox.api.rememberToolCall(withCalls.calls, "saveDraft", { draftId: "x" }, null, 8, false, NOW - 1000);
+    const first = plain(sandbox.api.buildProblemReport(ARGS, withCalls, "pr-0000000000000001", NOW)).report;
+    const second = plain(sandbox.api.buildProblemReport(SUGGESTION_ARGS,
+      { ...facts(sandbox), bridge: null, addonUpdated: null }, "pr-0000000000000002", NOW + 1)).report;
     const view = plain(sandbox.api.problemReportsView([first, second]));
     assert.equal(view.max, 20);
     assert.deepEqual(view.reports.map((r) => r.id), ["pr-0000000000000002", "pr-0000000000000001"]);
@@ -218,10 +291,17 @@ describe("reportProblem: what the options page receives", () => {
       "**Kind:** bug",
       "**Tool:** `saveDraft`",
       "",
-      "### Details",
+      "### Call",
       "",
-      "Called saveDraft with draftId on an IMAP account.",
-      "The old version stayed listed.",
+      "saveDraft with draftId on an IMAP account",
+      "",
+      "### Result",
+      "",
+      "success, and the old version stayed listed",
+      "",
+      "### Expected",
+      "",
+      "the old version no longer listed",
       "",
       "### Last error of this tool (recorded by the add-on, 2026-11-27T15:00:00.000Z)",
       "",
@@ -229,15 +309,23 @@ describe("reportProblem: what the options page receives", () => {
       "Draft ~~~not~~~ found",
       "```",
       "",
+      "### Calls of this tool since Thunderbird started (recorded by the add-on, argument names only)",
+      "",
+      "- 2026-11-27T14:59:00.000Z: saveDraft(body, draftId, isHtml) on imap (gmail): ok, 512 ms",
+      "- 2026-11-27T14:59:59.000Z: saveDraft(draftId): error, 8 ms",
+      "",
       "### Versions",
       "",
-      "- Add-on: 0.26.3",
+      "- Add-on: 0.26.3 (installed or updated 2026-11-27)",
       "- Bridge: 0.20.0",
       "- Thunderbird: 140.17.0",
       "- System: WINNT",
     ].join("\n"));
     assert.ok(suggestion.text.startsWith("Suggestion: name the reminder words\n"));
     assert.ok(suggestion.text.includes("- Bridge: not reported"));
+    assert.ok(suggestion.text.includes("- Add-on: 0.26.3\n"));
+    assert.ok(suggestion.text.includes("### Details\n\nsaveDraft could list them."));
+    assert.ok(!bug.text.includes("secret text"), "the values of the arguments are never recorded");
     assert.ok(!suggestion.text.includes("**Tool:**"));
     const url = new URL(bug.issueUrl);
     assert.equal(url.origin + url.pathname, "https://github.com/commonpost/thunderbird-mcp/issues/new");
@@ -248,11 +336,12 @@ describe("reportProblem: what the options page receives", () => {
 
   it("cuts the details in a link that GitHub would refuse, never in the text", () => {
     const sandbox = load();
-    const long = plain(sandbox.api.buildProblemReport({ ...ARGS, details: "é ".repeat(750).trim() }, facts(sandbox), "pr-0000000000000001", NOW)).report;
+    const long = plain(sandbox.api.buildProblemReport({ ...ARGS, details: "é ".repeat(750).trim(), got: "è".repeat(500) }, facts(sandbox), "pr-0000000000000001", NOW)).report;
     const [entry] = plain(sandbox.api.problemReportsView([long])).reports;
     assert.ok(entry.issueUrl.length <= 7000, `${entry.issueUrl.length} characters`);
     assert.ok(new URL(entry.issueUrl).searchParams.get("body").includes("Cut to fit a link"));
     assert.ok(entry.text.includes(long.details), "the text to copy keeps the whole details");
+    assert.ok(entry.text.includes(long.got));
   });
 
   it("the options page opens nothing but a new issue of this repository", () => {
@@ -288,7 +377,7 @@ describe("reportProblem: the report as a message to the project", () => {
   });
 
   it("opens a plain text compose window and sends nothing itself", () => {
-    const compose = slice("    function composeProblemReport(report) {", "    function reportProblem(args) {");
+    const compose = slice("    function composeProblemReport(report) {", "    // When this add-on was installed or last updated");
     assert.match(compose, /params\.type = Ci\.nsIMsgCompType\.New;/);
     assert.match(compose, /params\.format = Ci\.nsIMsgCompFormat\.PlainText;/);
     assert.match(compose, /OpenComposeWindowWithParams\(null, params\)/);
@@ -321,17 +410,19 @@ describe("reportProblem: the tool", () => {
     });
     vm.runInContext(`${slice("// BEGIN PROBLEM REPORTS", "// END PROBLEM REPORTS")}
       Date.now = () => ${NOW};
-      ${slice("    function reportProblem(args) {", "    // END PROBLEM REPORT STORE")}
+      const addonUpdateDate = async () => "2026-11-27";
+      ${slice("    async function reportProblem(args) {", "    // END PROBLEM REPORT STORE")}
       globalThis.__cpMcpBridgesSeen = new Map(${JSON.stringify(bridges)});
       this.reportProblem = reportProblem; this.rememberToolError = rememberToolError;
       this.errors = () => (globalThis.__cpMcpToolErrors ??= new Map());`, sandbox);
     return { sandbox, state };
   }
 
-  it("saves the report, says it was not sent and tells the assistant what to tell the user", () => {
+  it("saves the report, says it was not sent and tells the assistant what to tell the user", async () => {
     const { sandbox, state } = tool({ bridges: [["a", { version: "0.19.0", lastSeenMs: 5 }], ["b", { version: "0.20.0", lastSeenMs: 9 }]] });
-    const out = plain(sandbox.reportProblem({ ...ARGS }));
+    const out = plain(await sandbox.reportProblem({ ...ARGS }));
     assert.equal(out.saved, true);
+    assert.equal(state.written[0].addonUpdated, "2026-11-27");
     assert.equal(out.sent, false);
     assert.equal(out.waiting, 1);
     assert.match(out.next, /Options page/);
@@ -349,30 +440,30 @@ describe("reportProblem: the tool", () => {
     assert.equal(state.written[0].os, "Linux");
   });
 
-  it("attaches the error the named tool returned earlier", () => {
+  it("attaches the error the named tool returned earlier", async () => {
     const { sandbox, state } = tool();
     sandbox.rememberToolError(sandbox.errors(), "saveDraft", "Draft not found", NOW - 5000);
-    sandbox.reportProblem({ ...ARGS });
+    await sandbox.reportProblem({ ...ARGS });
     assert.equal(state.written[0].lastError.text, "Draft not found");
     assert.equal(state.written[0].bridge, null, "no bridge header, no bridge version");
   });
 
-  it("writes nothing when the report is refused", () => {
+  it("writes nothing when the report is refused", async () => {
     const { sandbox, state } = tool();
-    assert.deepEqual(plain(sandbox.reportProblem({ ...ARGS, kind: "x" })), { error: "kind must be one of: bug, suggestion" });
+    assert.deepEqual(plain(await sandbox.reportProblem({ ...ARGS, kind: "x" })), { error: "kind must be one of: bug, suggestion" });
     assert.equal(state.written, null);
   });
 
-  it("lets a failed write reach the assistant as an error", () => {
+  it("lets a failed write reach the assistant as an error", async () => {
     const { sandbox } = tool({ failWrite: true });
-    assert.throws(() => sandbox.reportProblem({ ...ARGS }), /disk full/);
+    await assert.rejects(() => sandbox.reportProblem({ ...ARGS }), /disk full/);
   });
 });
 
 describe("reportProblem: wiring", () => {
   it("is dispatched, and its own errors are not remembered as the error of a tool", () => {
     assert.match(apiSource, /case "reportProblem":\s+return reportProblem\(args\);/);
-    assert.match(apiSource, /if \(method === "tools\/call" && result\?\.isError && params\.name !== "reportProblem"\) \{/);
+    assert.match(apiSource, /if \(result\?\.isError\) \{\s+rememberToolError\(/);
   });
 
   it("the file is in the profile, created for the user only, and removed when the last report is deleted", () => {

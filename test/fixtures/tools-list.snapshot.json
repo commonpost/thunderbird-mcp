@@ -2502,7 +2502,7 @@
     {
       "name": "reportProblem",
       "title": "Report a Problem",
-      "description": "Save a report for the maintainers when a tool of this server answers wrongly, fails without a usable reason or lacks something you needed; not for a mistake in your own call. Nothing is sent: give the user the link of the result to read and submit; it also waits in the Options page. The add-on adds its versions and the last error of `tool`. Put no mail content, name, address or folder name in it: describe the call, like \"saveDraft with draftId on an IMAP account\".",
+      "description": "Save a report for the maintainers when a tool of this server answers wrongly, fails without a usable reason or lacks something you needed; not for a mistake in your own call. Nothing is sent: give the user the link of the result to read and submit; it also waits in the Options page. A bug needs called, got and expected; a suggestion needs details. The add-on adds its versions, the last error and the last calls of `tool`. Put no mail content, name, address or folder name in it: describe the call, like \"saveDraft with draftId on an IMAP account\". In English.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2516,11 +2516,23 @@
           },
           "summary": {
             "type": "string",
-            "description": "One line, in English, 120 characters at most"
+            "description": "One line, 120 characters at most"
+          },
+          "called": {
+            "type": "string",
+            "description": "Bug: the tool and the options of the call, 500 characters at most"
+          },
+          "got": {
+            "type": "string",
+            "description": "Bug: what came back, 500 characters at most"
+          },
+          "expected": {
+            "type": "string",
+            "description": "Bug: what should have come back, 500 characters at most"
           },
           "details": {
             "type": "string",
-            "description": "In English, 1500 characters at most: the call, what came back, what you expected"
+            "description": "Suggestion: what you needed and what the tool could return or accept; optional for a bug. 1500 characters at most"
           },
           "tool": {
             "type": "string",
@@ -2529,8 +2541,7 @@
         },
         "required": [
           "kind",
-          "summary",
-          "details"
+          "summary"
         ]
       },
       "annotations": {

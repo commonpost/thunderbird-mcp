@@ -73,9 +73,13 @@ const byName = Object.fromEntries(tools.map(t => [t.name, t]));
 // defects of the tools, and two reports of one in a week (a stale draft in Gmail's All Mail, fixed in 0.26.3) only
 // reached the maintainers because that assistant could message another session. The tool saves a report for the
 // user to send; it publishes nothing.
+// About 400 more characters (November 2026): the first reports made with reportProblem were clear but one could
+// not be told from a memory of the version before, and each mixed the call, the result and the expectation in one
+// text. A bug is now three answers (called, got, expected), which the schema names; the add-on's record of the
+// last calls of the tool costs nothing here.
 const MAX_TOOLS = 43;
 const MAX_TOOL_CHARS = 4100;
-const MAX_TOTAL_CHARS = 57860;
+const MAX_TOTAL_CHARS = 58260;
 const MIN_DESCRIPTION_CHARS = 30;
 const BOUNDED_RESULT_TOOLS = {
   searchMessages: 'maxResults', getRecentMessages: 'maxResults', searchContacts: 'maxResults',

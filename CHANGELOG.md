@@ -11,6 +11,15 @@ this repository.
 - `reportProblem` also returns `issueUrl`, the address of the report as a new GitHub issue, for the assistant to give
   to the user in the conversation: the user opens it and submits it, without going through the options page. In the
   options page, a report opened as a GitHub issue leaves the list; it stays when the browser could not be opened.
+- `reportProblem`: a bug is now three short answers, `called`, `got` and `expected` (500 characters each), so that
+  none is missing; `details` stays for a suggestion and is optional for a bug. A bug sent with `details` only, as
+  0.27.0 took it, is refused with the names of the missing answers. Reports saved by 0.27.0 stay listed.
+- A report that names a tool carries the add-on's own record of the last five calls of that tool since Thunderbird
+  started: the time, the names of the arguments (never their values), the kind of account (`imap`, `imap (gmail)`,
+  `pop3`, `none`), the duration and the outcome. The record is kept in memory only. An update of the add-on restarts
+  Thunderbird, so a call listed in a report was made with the version the report gives; a report without any says
+  that the tool was not called since Thunderbird started. The report also gives the date the add-on was installed or
+  last updated.
 
 ### Added
 
