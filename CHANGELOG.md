@@ -6,6 +6,15 @@ this repository.
 
 ## [Unreleased]
 
+### Added
+
+- `reportProblem`: an assistant saves a report when a tool misbehaves or something is missing (`kind` bug or
+  suggestion, a one-line `summary`, `details`, and the `tool` concerned). The add-on adds its version, the bridge,
+  Thunderbird, the system and the last error that tool returned, and replaces mail addresses. Nothing is sent: the
+  options page has a new section, Reports from assistants, where the user reads each report and opens it as a
+  prefilled GitHub issue, copies it or deletes it. 20 reports can wait. A user who turned some tools off gets this one
+  off, like any new tool.
+
 ## [0.26.3] - 2026-11-27
 
 - Fixed: on a Gmail account, the old version of a draft replaced by `saveDraft`, or a message just deleted or

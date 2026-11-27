@@ -88,3 +88,6 @@ addresses unless the user asks.
   and the Outbox before any new attempt, or it may be sent twice. A timeout while saving a draft: check the Drafts
   folder before retrying.
 - "Commonpost notice (please tell the user): ...": pass it on to the user; it says what to update.
+- A tool that answers wrongly, or lacks what the task needed, although your call was right: save a report with
+  `reportProblem` (in English, with nothing from the user's mail), and tell the user it waits in the add-on's options
+  page. It is not sent until they send it.

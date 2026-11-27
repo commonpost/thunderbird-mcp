@@ -1068,5 +1068,45 @@
   "toolTitle_getAccountAccess": {
     "message": "Lire l'accès aux comptes",
     "description": "Title of the tool getAccountAccess in the tool list (its name follows, as code)."
+  },
+  "navReports": {
+    "message": "Signalements",
+    "description": "Link of the page navigation to the Reports from assistants section."
+  },
+  "reportHeading": {
+    "message": "Signalements des assistants",
+    "description": "Heading of the section listing the reports saved by the reportProblem tool."
+  },
+  "reportIntro": {
+    "message": "Un assistant d'IA peut noter un outil qui s'est mal comporté ou une fonction manquante, avec l'outil reportProblem. Rien n'est envoyé : chaque signalement attend ici que vous l'envoyiez ou le supprimiez. Lisez-le d'abord : il ne doit rien contenir de votre courrier.",
+    "description": "Introduction of the Reports from assistants section. reportProblem is the name of a tool: do not translate it."
+  },
+  "reportEmpty": {
+    "message": "Aucun signalement en attente.",
+    "description": "Shown when the list of reports is empty."
+  },
+  "reportKindBug": {
+    "message": "Bogue",
+    "description": "Kind of a report: a tool misbehaved."
+  },
+  "reportKindSuggestion": {
+    "message": "Suggestion",
+    "description": "Kind of a report: a missing feature."
+  },
+  "reportOpen": {
+    "message": "Ouvrir comme issue GitHub",
+    "description": "Button that opens the report as a prefilled new issue on GitHub, in the browser."
+  },
+  "reportOpened": {
+    "message": "Ouvert dans votre navigateur : rien n'est envoyé tant que vous ne le soumettez pas là-bas. Supprimez ensuite le signalement ici.",
+    "description": "Status after a report was opened in the browser."
+  },
+  "reportDelete": {
+    "message": "Supprimer",
+    "description": "Button that deletes a report."
+  },
+  "toolTitle_reportProblem": {
+    "message": "Signaler un problème",
+    "description": "Title of the tool reportProblem in the tool list (its name follows, as code)."
   }
 }

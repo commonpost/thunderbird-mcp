@@ -2498,6 +2498,47 @@
         "idempotentHint": true,
         "openWorldHint": false
       }
+    },
+    {
+      "name": "reportProblem",
+      "title": "Report a Problem",
+      "description": "Save a report for the maintainers when a tool of this server answers wrongly, fails without a usable reason or lacks something you needed; not for a mistake in your own call. Nothing is sent: the user reads the report in the add-on's Options page and chooses to send it, so tell them. The add-on adds its versions and the last error of `tool`. Put no mail content, name, address or folder name in it: describe the call, like \"saveDraft with draftId on an IMAP account\".",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "bug",
+              "suggestion"
+            ],
+            "description": "bug: a tool misbehaved; suggestion: something is missing"
+          },
+          "summary": {
+            "type": "string",
+            "description": "One line, in English, 120 characters at most"
+          },
+          "details": {
+            "type": "string",
+            "description": "In English, 1500 characters at most: the call, what came back, what you expected"
+          },
+          "tool": {
+            "type": "string",
+            "description": "Name of the tool concerned, if one"
+          }
+        },
+        "required": [
+          "kind",
+          "summary",
+          "details"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
     }
   ]
 }

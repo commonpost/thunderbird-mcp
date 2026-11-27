@@ -46,6 +46,26 @@
         "parameters": []
       },
       {
+        "name": "getProblemReports",
+        "type": "function",
+        "async": true,
+        "description": "Reports saved by the reportProblem tool and not yet deleted, newest first (id, date, kind, summary, tool, text, the address of the prefilled GitHub issue), and how many can wait",
+        "parameters": []
+      },
+      {
+        "name": "deleteProblemReport",
+        "type": "function",
+        "async": true,
+        "description": "Delete one report saved by the reportProblem tool; returns the remaining reports",
+        "parameters": [
+          {
+            "name": "id",
+            "type": "string",
+            "description": "id of the report"
+          }
+        ]
+      },
+      {
         "name": "getCurrentAuthToken",
         "type": "function",
         "async": true,
