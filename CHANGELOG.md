@@ -6,6 +6,13 @@ this repository.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-27
+
+- Added: `reportProblem`, a tool with which an assistant saves a report about a tool that misbehaved or a missing
+  feature. Nothing is sent: the user reads it in the options page and opens it as a prefilled GitHub issue, copies
+  it or deletes it.
+- **Bridge 0.20.0, unchanged.** Updating is optional.
+
 ### Added
 
 - `reportProblem`: an assistant saves a report when a tool misbehaves or something is missing (`kind` bug or
