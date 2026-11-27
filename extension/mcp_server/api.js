@@ -9249,13 +9249,13 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
             /**
              * Asks Thunderbird to fetch new mail of `folder` from its server, as clicking the folder does, and waits
-             * up to FOLDER_REFRESH_TIMEOUT_MS. IMAP reports the end of its update; other mail servers (Exchange,
+             * up to timeoutMs (FOLDER_REFRESH_TIMEOUT_MS unless given). IMAP reports the end of its update; other mail servers (Exchange,
              * Graph, add-on providers) end with FolderLoaded, which may not come when nothing changed. News and
              * feeds are not refreshed: a newsgroup with many new articles opens a dialog in Thunderbird.
              * Resolves { status, newMessages, ms }: "done", "pending" (started, not confirmed: counts may still
              * change), "failed" (with error), "offline", "local" or "unsupported".
              */
-            function refreshFolderFromServer(folder) {
+            function refreshFolderFromServer(folder, timeoutMs = FOLDER_REFRESH_TIMEOUT_MS) {
               const started = Date.now();
               const type = folder.server?.type || "";
               if (type === "none" || type === "pop3") return Promise.resolve({ status: "local", newMessages: 0, ms: 0 });
@@ -9300,7 +9300,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 };
                 try {
                   MailServices.mailSession.AddFolderListener(listener, Ci.nsIFolderListener.event);
-                  timer.initWithCallback({ notify: () => settle("pending") }, FOLDER_REFRESH_TIMEOUT_MS, Ci.nsITimer.TYPE_ONE_SHOT);
+                  timer.initWithCallback({ notify: () => settle("pending") }, timeoutMs, Ci.nsITimer.TYPE_ONE_SHOT);
                   if (imapFolder) {
                     const urlListener = {
                       QueryInterface: ChromeUtils.generateQI(["nsIUrlListener"]),
@@ -9334,6 +9334,94 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               });
             }
             // END FOLDER REFRESH
+
+            // BEGIN ALL MAIL VIEW
+            // kImapAllMail (nsImapCore.h): the server lists the folder as \All, a view of the messages of the other
+            // folders (Gmail's "All Mail"). Thunderbird learns that a message left it only when it updates that folder:
+            // until then a draft that was replaced, or a deleted message, stays listed there.
+            const IMAP_BOX_ALL_MAIL = 0x8000;
+            const ALL_MAIL_SYNC_TIMEOUT_MS = 8000;
+            const ALL_MAIL_SYNC_PAUSE_MS = 500;
+            // Thunderbird calls a copy listener for a move to Trash, not for every kind of deletion
+            const ALL_MAIL_CHANGE_WAIT_MS = 3000;
+            // A timer nothing else refers to may be collected before it fires: the calls below would never answer
+            const allMailTimers = new Set();
+
+            /** Calls `callback` once after `ms`, unless the returned function is called first. */
+            function allMailTimer(ms, callback) {
+              const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+              const stop = () => { timer.cancel(); allMailTimers.delete(timer); };
+              allMailTimers.add(timer);
+              timer.initWithCallback({ notify() { stop(); callback(); } }, ms, Ci.nsITimer.TYPE_ONE_SHOT);
+              return stop;
+            }
+
+            /** The \All folder of the IMAP server of `folder`, or null (other servers, none, unreadable). */
+            function allMailFolderOf(folder) {
+              try {
+                const server = folder?.server;
+                if (server?.type !== "imap") return null;
+                for (const candidate of server.rootFolder.descendants) {
+                  try {
+                    if (candidate.QueryInterface(Ci.nsIMsgImapMailFolder).boxFlags & IMAP_BOX_ALL_MAIL) return candidate;
+                  } catch { /* not an IMAP folder */ }
+                }
+              } catch (e) {
+                console.warn("commonpost-mcp: could not look for the All Mail folder:", e);
+              }
+              return null;
+            }
+
+            /** A copy listener and the promise it settles: when Thunderbird reports the end, or after `ms`. */
+            function changeDone(ms = ALL_MAIL_CHANGE_WAIT_MS) {
+              let resolve;
+              const promise = new Promise((resolveDone) => { resolve = resolveDone; });
+              const stop = allMailTimer(ms, () => resolve());
+              const end = () => { stop(); resolve(); };
+              const listener = {
+                QueryInterface: ChromeUtils.generateQI(["nsIMsgCopyServiceListener"]),
+                onStartCopy() {},
+                onProgress() {},
+                setMessageKey() {},
+                getMessageId() { return null; },
+                onStopCopy: end,
+              };
+              return { listener, promise };
+            }
+
+            /**
+             * Updates `allMail` from its server, up to `attempts` times within ALL_MAIL_SYNC_TIMEOUT_MS, until it lists
+             * none of `messageIds` any more. Never throws: the change itself is already made.
+             */
+            async function syncAllMailView(allMail, messageIds, attempts = 1) {
+              const deadline = Date.now() + ALL_MAIL_SYNC_TIMEOUT_MS;
+              const listed = () => {
+                try {
+                  const db = allMail.msgDatabase;
+                  return messageIds.some((id) => db.getMsgHdrForMessageID(id));
+                } catch {
+                  return false;
+                }
+              };
+              try {
+                for (let attempt = 1; attempt <= attempts; attempt++) {
+                  const left = deadline - Date.now();
+                  if (left <= 0) break;
+                  await refreshFolderFromServer(allMail, left);
+                  if (attempt === attempts || !listed() || deadline - Date.now() <= ALL_MAIL_SYNC_PAUSE_MS) break;
+                  await new Promise((resolve) => { allMailTimer(ALL_MAIL_SYNC_PAUSE_MS, resolve); });
+                }
+              } catch (e) {
+                console.warn("commonpost-mcp: could not update the All Mail folder:", e);
+              }
+            }
+
+            /** After messages left `folder`: updates the All Mail view of its server, when it has one. */
+            async function updateAllMailViewOf(folder, messageIds, attempts) {
+              const allMail = allMailFolderOf(folder);
+              if (allMail) await syncAllMailView(allMail, messageIds, attempts);
+            }
+            // END ALL MAIL VIEW
 
             async function listFolders(accountId, folderPath, format, favoritesOnly, savedSearches, refresh) {
               const results = [];
@@ -17247,6 +17335,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (result.success) {
                   result.message = "Draft updated";
                   result.replacedDraftId = replacedDraftId;
+                  // The old version is gone from Drafts; the server's All Mail view must not keep listing it
+                  await updateAllMailViewOf(folder, [replacedDraftId], 3);
                 }
                 return result;
               } catch (e) {
@@ -17722,6 +17812,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 // Drafts get moved to Trash instead of hard-deleted
                 const isDrafts = typeof folder.getFlag === "function" && folder.getFlag(Ci.nsMsgFolderFlags.Drafts);
                 let trashFolder = null;
+                // Only a server with an All Mail view makes the call wait: for the change, then for that view
+                const allMail = allMailFolderOf(folder);
+                let done = null;
+                const doneListener = () => (allMail ? (done = changeDone()).listener : null);
 
                 let arrivalWarning = null;
                 if (isDrafts) {
@@ -17731,10 +17825,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     const check = arrivalResendCheck(trashFolder, "Moving messages into", { unread: someUnread(found) });
                     if (check?.error) return { error: check.error };
                     arrivalWarning = check?.warning || null;
-                    MailServices.copy.copyMessages(folder, found, trashFolder, true, null, null, false);
+                    MailServices.copy.copyMessages(folder, found, trashFolder, true, doneListener(), null, false);
                   } else {
                     // No trash found, fall back to regular delete
-                    folder.deleteMessages(found, null, false, true, null, false);
+                    folder.deleteMessages(found, null, false, true, doneListener(), false);
                   }
                 } else {
                   // Thunderbird permanently deletes from Trash (including its
@@ -17753,13 +17847,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                     if (check?.error) return { error: check.error };
                     arrivalWarning = check?.warning || null;
                   }
-                  folder.deleteMessages(found, null, false, true, null, false);
+                  folder.deleteMessages(found, null, false, true, doneListener(), false);
                 }
 
                 const result = { success: true, deleted: found.length };
                 if (arrivalWarning) result.warning = arrivalWarning;
                 if (isDrafts && trashFolder) result.movedToTrash = true;
                 if (notFound.length > 0) result.notFound = notFound;
+                if (done) {
+                  const ids = found.map((hdr) => hdr.messageId);
+                  return done.promise.then(() => syncAllMailView(allMail, ids)).then(() => result);
+                }
                 return result;
               } catch (e) {
                 return { error: e.toString() };
@@ -17910,11 +18008,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                   }
                 }
 
+                // A message moved to Trash leaves the server's All Mail view: the call waits for the move, then for
+                // that view (a move between other folders leaves the message in the view)
+                let allMail = null;
+                let done = null;
                 if (targetFolder) {
+                  if (trash === true) allMail = allMailFolderOf(folder);
+                  if (allMail) done = changeDone();
                   // Note: on IMAP, tags/flags set above may not transfer to the
                   // moved copy. If both tags and move are needed, consider making
                   // two separate updateMessage calls (tags first, then move).
-                  MailServices.copy.copyMessages(folder, foundHdrs, targetFolder, true, null, null, false);
+                  MailServices.copy.copyMessages(folder, foundHdrs, targetFolder, true, done ? done.listener : null, null, false);
                   actions.push({ type: "move", to: targetFolder.URI });
                 }
 
@@ -17927,6 +18031,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 if (arrivalWarning) warnings.push(arrivalWarning);
                 if (warnings.length) result.warning = warnings.join(" ");
                 if (notFound.length > 0) result.notFound = notFound;
+                if (done) {
+                  const ids = foundHdrs.map((hdr) => hdr.messageId);
+                  return done.promise.then(() => syncAllMailView(allMail, ids)).then(() => result);
+                }
                 return result;
               } catch (e) {
                 return { error: e.toString() };

@@ -35,6 +35,8 @@ function loadDeleteMessages(dependencies) {
   const sandbox = {
     arrivalResendCheck: () => null, folderArrivalInfo: () => null, someUnread: () => true, folderHasUnread: () => true, // arrival guard: arrival-resend-guard.test.cjs
     openFolder: dependencies.openFolder,
+    // No All Mail view on the server: all-mail-view.test.cjs covers the other case
+    allMailFolderOf: () => null,
     findTrashFolder: dependencies.findTrashFolder,
     MailServices: dependencies.MailServices,
     Ci,

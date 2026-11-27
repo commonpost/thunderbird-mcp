@@ -222,6 +222,7 @@ function loadHandlers(byUri, { restricted = [], hdrs = [], source = IMAP_ARCHIVE
     Components: { isSuccessCode: () => true },
     descsToMsgAttachments: () => [],
     composeDraftSave: async () => { calls.push(["composeDraftSave"]); return { msgCompose: { compFields: { draftId: "", messageId: "<d1@example.test>" } }, status: 0 }; },
+    allMailFolderOf: () => null, // all-mail-view.test.cjs
     saveDraftViaSend: async () => { calls.push(["saveDraftViaSend"]); return { success: true, messageId: "d1@example.test" }; },
   };
   vm.createContext(sandbox);
