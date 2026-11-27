@@ -13,6 +13,9 @@ collects no data and sends nothing to its developers or to any third party.
   background page. That frame loads nothing from the network: the add-on's content security policy allows no remote
   resource, and remote content stays blocked as in Thunderbird.
 - No telemetry, no analytics, no crash reports, no accounts, no cookies.
+- An assistant can save a report about a tool that misbehaved (`reportProblem`). The report stays in a file of your
+  Thunderbird profile, readable by your user only, and is listed in the options page. It leaves your computer only
+  if you open it there as a GitHub issue and submit that issue yourself, under your own GitHub account.
 - The session token the add-on writes for the bridge lives in a file of your temporary directory, readable by your
   user only, and is replaced at each Thunderbird start.
 - The bridge keeps the last tool list Thunderbird gave it (tool names, descriptions and parameters; no mail and no

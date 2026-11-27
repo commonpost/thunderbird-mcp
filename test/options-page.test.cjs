@@ -279,6 +279,8 @@ const DEFAULT_RESULTS = {
     currentBridgeVersion: "0.18.0",
     bridges: [],
   },
+  getProblemReports: { max: 20, reports: [] },
+  deleteProblemReport: { max: 20, reports: [] },
 };
 
 // browser.i18n.getMessage on extension/_locales/en/messages.json, as Thunderbird resolves it: the $NAME$
@@ -480,7 +482,7 @@ describe("options page: markup and script stay in sync", () => {
     for (const name of [
       "getServerInfo", "getCurrentAuthToken", "getStableAuthToken", "getAccountAccessConfig", "getToolAccessConfig",
       "getBlockSkipReview", "getBlockCalendarSkipReview", "getBlockFilterForwardReply", "getAllowEncryptedContent",
-      "getListenAll", "getBridgeStatus",
+      "getListenAll", "getBridgeStatus", "getProblemReports",
     ]) {
       assert.equal(page.callsTo(name).length, 1, name);
     }
@@ -2227,5 +2229,92 @@ describe("options page: in French", () => {
     ]);
     assert.equal(li.children[1].textContent, "Installée sous forme de\u00a0: fichier mcp-bridge.cjs");
     assert.equal(li.children[3].textContent, "État\u00a0: Mise à jour recommandée.");
+  });
+});
+
+describe("options page: reports from assistants", () => {
+  const ISSUE = "https://github.com/commonpost/thunderbird-mcp/issues/new?title=Bug%3A%20x&body=text%0Aof%20the%20report";
+  const REPORT = {
+    id: "pr-0011223344556677", at: "2026-11-27T15:00:00.000Z", kind: "bug", summary: "x", tool: "saveDraft",
+    text: "Bug: x\n\ntext of the report", issueUrl: ISSUE,
+  };
+  const SUGGESTION = { ...REPORT, id: "pr-8899aabbccddeeff", kind: "suggestion", text: "Suggestion: y" };
+  const reports = (...list) => ({ max: 20, reports: list });
+  const buttons = (li) => descendants(li).filter((el) => el.tagName === "BUTTON");
+  const labels = (li) => buttons(li).map((button) => button.textContent);
+
+  it("says that no report is waiting", async () => {
+    const page = await openPage();
+    assert.equal(page.$("reportEmpty").hidden, false);
+    assert.equal(page.$("reportList").children.length, 0);
+    assert.deepEqual(page.consoleErrors, []);
+  });
+
+  it("shows each report as text, with its kind and date, and three actions", async () => {
+    const page = await openPage({ getProblemReports: reports(REPORT, SUGGESTION) });
+    assert.equal(page.$("reportEmpty").hidden, true);
+    const [bug, suggestion] = page.$("reportList").children;
+    assert.equal(bug.children[0].textContent, `Bug \u2014 ${new Date(REPORT.at).toLocaleString()}`);
+    assert.equal(suggestion.children[0].textContent, `Suggestion \u2014 ${new Date(REPORT.at).toLocaleString()}`);
+    const text = bug.children[1];
+    assert.equal(text.tagName, "PRE");
+    assert.equal(text.textContent, REPORT.text);
+    assert.equal(text.children.length, 0, "the report is shown as text, never as markup");
+    assert.deepEqual(labels(bug), ["Open as a GitHub issue", "Copy", "Delete"]);
+  });
+
+  it("opens the prefilled issue in the browser and says that nothing is sent yet", async () => {
+    const page = await openPage({ getProblemReports: reports(REPORT) });
+    await page.fire(buttons(page.$("reportList").children[0])[0], "click");
+    assert.deepEqual(page.opened, [ISSUE]);
+    assert.match(page.$("reportStatus").textContent, /nothing is sent until you submit it there/);
+    assert.equal(page.callsTo("deleteProblemReport").length, 0, "opening does not delete the report");
+  });
+
+  it("offers no way to open an address that is not a new issue of this repository", async () => {
+    for (const issueUrl of ["https://example.org/issues/new?title=a&body=b", "javascript:alert(1)", undefined,
+      ISSUE + "&assignees=someone"]) {
+      const page = await openPage({ getProblemReports: reports({ ...REPORT, issueUrl }) });
+      assert.deepEqual(labels(page.$("reportList").children[0]), ["Copy", "Delete"], String(issueUrl));
+    }
+  });
+
+  it("copies the whole text", async () => {
+    const page = await openPage({ getProblemReports: reports(REPORT) });
+    await page.fire(buttons(page.$("reportList").children[0])[1], "click");
+    assert.deepEqual(page.clipboardWrites, [REPORT.text]);
+    assert.equal(page.$("reportStatus").textContent, "Copied.");
+  });
+
+  it("deletes one report and shows what remains", async () => {
+    const page = await openPage({ getProblemReports: reports(REPORT, SUGGESTION), deleteProblemReport: reports(SUGGESTION) });
+    await page.fire(buttons(page.$("reportList").children[0])[2], "click");
+    assert.deepEqual(page.callsTo("deleteProblemReport"), [[REPORT.id]]);
+    assert.equal(page.$("reportList").children.length, 1);
+    assert.equal(page.$("reportList").children[0].children[1].textContent, "Suggestion: y");
+  });
+
+  it("shows the error when a report cannot be deleted, and keeps the list", async () => {
+    const page = await openPage({
+      getProblemReports: reports(REPORT),
+      deleteProblemReport: () => { throw new Error("the file is not a regular file"); },
+    });
+    await page.fire(buttons(page.$("reportList").children[0])[2], "click");
+    assert.match(page.$("reportStatus").textContent, /the file is not a regular file/);
+    assert.equal(page.$("reportStatus").className, "save-status error");
+    assert.equal(page.$("reportList").children.length, 1);
+  });
+
+  it("reads the list again with Refresh", async () => {
+    const page = await openPage();
+    await page.click("reportRefreshBtn");
+    assert.equal(page.callsTo("getProblemReports").length, 2);
+  });
+
+  it("is in French when Thunderbird is", async () => {
+    const page = await openPage({ getProblemReports: reports(REPORT) }, { messages: readMessages("fr") });
+    const li = page.$("reportList").children[0];
+    assert.ok(li.children[0].textContent.startsWith("Bogue \u2014 "));
+    assert.deepEqual(labels(li), ["Ouvrir comme issue GitHub", "Copier", "Supprimer"]);
   });
 });

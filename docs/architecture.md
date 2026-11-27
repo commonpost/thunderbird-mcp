@@ -25,7 +25,7 @@ Everything runs on the user's computer. The add-on talks to the bridge only; the
 +-----------+   stdio    +------------------+   HTTP POST /     |  background.js -> commonpostMcp.start()  |
 | assistant | <--------> | JSON-RPC relay   | <---------------> |  Experiment API "commonpostMcp":         |
 +-----------+  JSON-RPC  | attachment paths |  127.0.0.1:8780-  |   httpd.sys.mjs (HTTP server)            |
-                         | version header   |  8789, Bearer     |   api.js: auth, dispatch, 42 tools       |
+                         | version header   |  8789, Bearer     |   api.js: auth, dispatch, 43 tools       |
                          +------------------+  token            |  options.html / options.js (settings)    |
                                  ^                              +------------------------------------------+
                                  |  reads port + token                       |  writes (0600, folder 0700)
@@ -136,11 +136,17 @@ it (see "Versions" below).
 
 ## How tools are declared, dispatched and limited
 
-- **Declaration.** `buildTools()` in `api.js` returns the 42 tools, each with a name, title, description, group,
+- **Declaration.** `buildTools()` in `api.js` returns the 43 tools, each with a name, title, description, group,
   `crud` kind and JSON input schema. `tools/list` returns the enabled ones through `toolListEntry`, which derives the
-  MCP annotations (`readOnlyHint`, `destructiveHint`, ...). `test/tool-budget.test.cjs` keeps the list at 42 tools or
+  MCP annotations (`readOnlyHint`, `destructiveHint`, ...). `test/tool-budget.test.cjs` keeps the list at 43 tools or
   fewer and within size limits; `test/fixtures/tools-list.snapshot.json` records it.
 - **Dispatch.** `callTool(name, args)` is a `switch` on the tool name that calls one handler per tool.
+- **Reports.** `reportProblem` saves what an assistant writes about a tool (a bug or a suggestion) in
+  `commonpost-mcp-reports.json` in the profile, 20 at most, with the versions of the add-on, the bridge and
+  Thunderbird, the system and the last error the named tool returned (kept in memory for 30 minutes). Mail addresses
+  are replaced before anything is stored. The add-on sends nothing: the options page lists the reports, and the user
+  opens one as a prefilled issue of this repository in the browser, copies it or deletes it. A message that tells
+  an assistant to report something can add to that list; it cannot publish.
 - **Limits set by the user** (options page, read on every call):
   - *account access*: an allow-list of accounts; an empty list means all accounts, an unreadable or malformed value
     blocks all of them;

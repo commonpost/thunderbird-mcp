@@ -69,9 +69,13 @@ const byName = Object.fromEntries(tools.map(t => [t.name, t]));
 // two studies of MCP servers (arXiv 2602.14878, 2602.18914) found missing usage guidance the most common defect and
 // functional clarity the largest effect on tool selection. The second also found conciseness the smallest effect,
 // and the first that longer descriptions cost steps: the size limits here stay.
-const MAX_TOOLS = 42;
+// reportProblem (43rd tool, about 1,150 characters, November 2026): the assistants are the ones that meet the
+// defects of the tools, and two reports of one in a week (a stale draft in Gmail's All Mail, fixed in 0.26.3) only
+// reached the maintainers because that assistant could message another session. The tool saves a report for the
+// user to send; it publishes nothing.
+const MAX_TOOLS = 43;
 const MAX_TOOL_CHARS = 4100;
-const MAX_TOTAL_CHARS = 56710;
+const MAX_TOTAL_CHARS = 57860;
 const MIN_DESCRIPTION_CHARS = 30;
 const BOUNDED_RESULT_TOOLS = {
   searchMessages: 'maxResults', getRecentMessages: 'maxResults', searchContacts: 'maxResults',

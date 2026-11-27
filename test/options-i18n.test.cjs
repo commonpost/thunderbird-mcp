@@ -23,7 +23,7 @@ const api = read("extension/mcp_server/api.js");
 const manifest = JSON.parse(read("extension/manifest.json"));
 
 // French messages that are rightly the same as the English.
-const SAME_IN_FRENCH = new Set(["navAriaLabel", "accountTypeLocal", "toolGroup_contacts"]);
+const SAME_IN_FRENCH = new Set(["navAriaLabel", "accountTypeLocal", "toolGroup_contacts", "reportKindSuggestion"]);
 
 const PLACEHOLDER = /\$([A-Za-z0-9_@]+)\$/g;
 const MARK = "\u0000";

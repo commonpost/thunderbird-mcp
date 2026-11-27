@@ -1068,5 +1068,45 @@
   "toolTitle_getAccountAccess": {
     "message": "Get Account Access",
     "description": "Title of the tool getAccountAccess in the tool list (its name follows, as code)."
+  },
+  "navReports": {
+    "message": "Reports",
+    "description": "Link of the page navigation to the Reports from assistants section."
+  },
+  "reportHeading": {
+    "message": "Reports from assistants",
+    "description": "Heading of the section listing the reports saved by the reportProblem tool."
+  },
+  "reportIntro": {
+    "message": "An AI assistant can write down a tool that misbehaved or a missing feature, with the reportProblem tool. Nothing is sent: each report waits here until you send it or delete it. Read it first: it should hold nothing from your mail.",
+    "description": "Introduction of the Reports from assistants section. reportProblem is the name of a tool: do not translate it."
+  },
+  "reportEmpty": {
+    "message": "No report is waiting.",
+    "description": "Shown when the list of reports is empty."
+  },
+  "reportKindBug": {
+    "message": "Bug",
+    "description": "Kind of a report: a tool misbehaved."
+  },
+  "reportKindSuggestion": {
+    "message": "Suggestion",
+    "description": "Kind of a report: a missing feature."
+  },
+  "reportOpen": {
+    "message": "Open as a GitHub issue",
+    "description": "Button that opens the report as a prefilled new issue on GitHub, in the browser."
+  },
+  "reportOpened": {
+    "message": "Opened in your browser: nothing is sent until you submit it there. Delete the report here afterwards.",
+    "description": "Status after a report was opened in the browser."
+  },
+  "reportDelete": {
+    "message": "Delete",
+    "description": "Button that deletes a report."
+  },
+  "toolTitle_reportProblem": {
+    "message": "Report a Problem",
+    "description": "Title of the tool reportProblem in the tool list (its name follows, as code)."
   }
 }

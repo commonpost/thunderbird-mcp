@@ -1165,6 +1165,80 @@ bridgeRefreshBtn.addEventListener("click", () => {
 });
 loadBridgeStatus().catch(e => console.error("commonpost-mcp options:", "loadBridgeStatus failed:", e));
 
+// --- Reports from assistants (saved by the reportProblem tool; nothing leaves before the user sends it) ---
+const reportEmpty = document.getElementById("reportEmpty");
+const reportList = document.getElementById("reportList");
+const reportRefreshBtn = document.getElementById("reportRefreshBtn");
+const reportStatus = document.getElementById("reportStatus");
+
+// Checked again here: only a new issue of this repository is ever opened.
+const REPORT_ISSUE_URL_PATTERN = /^https:\/\/github\.com\/commonpost\/thunderbird-mcp\/issues\/new\?title=[^&#\s]*&body=[^&#\s]*$/;
+
+function setReportStatus(text, error = false) {
+  reportStatus.textContent = text;
+  reportStatus.className = error ? "save-status error" : "save-status";
+}
+
+function reportButton(text, secondary, onClick) {
+  const button = document.createElement("button");
+  button.textContent = text;
+  if (secondary) button.className = "secondary";
+  button.addEventListener("click", () => {
+    setReportStatus("");
+    onClick().catch((e) => setReportStatus(errorText(e), true));
+  });
+  return button;
+}
+
+function renderReport(report) {
+  const li = document.createElement("li");
+  li.className = "bridge-entry";
+  const kind = report.kind === "bug" ? t("reportKindBug", null, "Bug") : t("reportKindSuggestion", null, "Suggestion");
+  const head = bridgeLine(`${kind} \u2014 ${new Date(report.at).toLocaleString()}`);
+  li.appendChild(head);
+  const text = document.createElement("pre");
+  text.className = "report-text";
+  text.textContent = report.text;
+  li.appendChild(text);
+  const row = document.createElement("div");
+  row.className = "save-row";
+  if (REPORT_ISSUE_URL_PATTERN.test(report.issueUrl)) {
+    row.appendChild(reportButton(t("reportOpen", null, "Open as a GitHub issue"), false, async () => {
+      await browser.windows.openDefaultBrowser(report.issueUrl);
+      setReportStatus(t("reportOpened", null, "Opened in your browser: nothing is sent until you submit it there. Delete the report here afterwards."));
+    }));
+  }
+  row.appendChild(reportButton(t("copy", null, "Copy"), true, async () => {
+    await navigator.clipboard.writeText(report.text);
+    setReportStatus(t("copied", null, "Copied."));
+  }));
+  row.appendChild(reportButton(t("reportDelete", null, "Delete"), true, async () => {
+    showReports(await browser.commonpostMcp.deleteProblemReport(report.id));
+  }));
+  li.appendChild(row);
+  return li;
+}
+
+function showReports(data) {
+  if (data.error) throw new Error(data.error);
+  reportList.replaceChildren(...data.reports.map(renderReport));
+  reportEmpty.hidden = data.reports.length > 0;
+}
+
+async function loadReports() {
+  try {
+    showReports(await browser.commonpostMcp.getProblemReports());
+    setReportStatus("");
+  } catch (e) {
+    setReportStatus(errorText(e), true);
+  }
+}
+
+reportRefreshBtn.addEventListener("click", () => {
+  loadReports().catch(e => console.error("commonpost-mcp options:", "loadReports failed:", e));
+});
+loadReports().catch(e => console.error("commonpost-mcp options:", "loadReports failed:", e));
+
 // Links to the README (the note on Thunderbird's "full, unrestricted access" line, the SSH section) open in the
 // default browser.
 for (const link of document.querySelectorAll("[data-external]")) {

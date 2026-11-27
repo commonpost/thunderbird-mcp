@@ -287,6 +287,12 @@
       margin: 0 auto;
       align-items: flex-start;
     }
+    .report-text {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 0.85em;
+      margin: 6px 0;
+    }
     .page-nav {
       position: sticky;
       top: 16px;
@@ -382,6 +388,7 @@
   <a href="#toolSection" data-i18n="navTools">Tools</a>
   <a href="#safetySection" data-i18n="navSafety">Send Safety</a>
   <a href="#encryptedSection" data-i18n="navEncrypted">Encrypted messages</a>
+  <a href="#reportSection" data-i18n="navReports">Reports</a>
   <a href="#advancedSection" data-i18n="navAdvanced">Advanced</a>
 </nav>
 
@@ -558,6 +565,17 @@
     </li>
   </ul>
   <p class="save-row"><span id="saveEncryptedContentStatus" class="save-status" role="status" aria-live="polite"></span></p>
+</div>
+
+<div class="section" id="reportSection">
+  <h2 data-i18n="reportHeading">Reports from assistants</h2>
+  <p class="mode-note" data-i18n="reportIntro">An AI assistant can write down a tool that misbehaved or a missing feature, with the reportProblem tool. Nothing is sent: each report waits here until you send it or delete it. Read it first: it should hold nothing from your mail.</p>
+  <p class="mode-note" data-i18n="reportEmpty" id="reportEmpty" hidden>No report is waiting.</p>
+  <ul class="account-list" id="reportList"></ul>
+  <div class="save-row">
+    <button id="reportRefreshBtn" class="secondary" data-i18n="refresh">Refresh</button>
+    <span id="reportStatus" class="save-status" role="status" aria-live="polite"></span>
+  </div>
 </div>
 
 <div class="section" id="advancedSection">

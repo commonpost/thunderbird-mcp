@@ -152,7 +152,7 @@ Snap, Flatpak and macOS need no extra step in most cases; see [Sandbox-aware con
 
 ## Why?
 
-Thunderbird has no official API for AI tools. Your AI assistant can't read your email, can't help you draft replies, can't organize your inbox. This extension fixes that -- it exposes 42 tools over MCP so any compatible AI (Claude, GPT, local models) can work with your mail the way you'd expect. The list is kept short so that assistants choose among them reliably; older Cursor versions also sent an agent only the first 40 tools of all servers combined (since January 2026 Cursor loads tool descriptions only when needed), and VS Code allows 128 tools per request.
+Thunderbird has no official API for AI tools. Your AI assistant can't read your email, can't help you draft replies, can't organize your inbox. This extension fixes that -- it exposes 43 tools over MCP so any compatible AI (Claude, GPT, local models) can work with your mail the way you'd expect. The list is kept short so that assistants choose among them reliably; older Cursor versions also sent an agent only the first 40 tools of all servers combined (since January 2026 Cursor loads tool descriptions only when needed), and VS Code allows 128 tools per request.
 
 Mail sends require review by default because **Block `skipReview`** for mail starts enabled: `skipReview: true` is honored only after you explicitly disable it. **By default, nothing is sent without your review.** Events and tasks are added at once on a new install, as `updateEvent` and `deleteEvent` change them: they send no invitation, and asking for six appointments means nothing to save by hand. Enable **Block `skipReview`** for events and tasks to review each one in Thunderbird's dialog.
 
@@ -257,6 +257,12 @@ OpenPGP and S/MIME messages are not decrypted for the assistant by default: `get
 | Tool | Description |
 |------|-------------|
 | `getAccountAccess` | View which accounts the MCP server can access |
+
+### Reports from assistants
+
+| Tool | Description |
+|------|-------------|
+| `reportProblem` | Save a report (a bug or a suggestion) when a tool misbehaves or something is missing. Nothing is sent: the report waits in the options page, where you read it, then open it as a prefilled GitHub issue, copy it or delete it. The add-on adds its versions and the last error of the tool named, and replaces mail addresses. |
 
 Account and tool access are configured via the extension settings page (menu ≡ > Add-ons and Themes > Commonpost MCP for Thunderbird > wrench button (Options)). Access control is not MCP-exposed -- only the user can change it. Once you have disabled any tool, a tool added by a later update starts disabled too: the settings page marks it "new", and it stays off until you check it. If you have disabled nothing, new tools are enabled like the others.
 
