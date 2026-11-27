@@ -6,6 +6,14 @@ this repository.
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-11-27
+
+- Changed: `reportProblem` returns the link of the report as a prefilled GitHub issue, for the assistant to give to
+  the user; a bug is three short answers (`called`, `got`, `expected`); a report carries the add-on's record of the
+  last calls of its tool (argument names only).
+- Added: Send by email, in the options page, opens a message to the project holding the report.
+- **Bridge 0.20.0, unchanged.** Updating is optional.
+
 ### Changed
 
 - `reportProblem` also returns `issueUrl`, the address of the report as a new GitHub issue, for the assistant to give
