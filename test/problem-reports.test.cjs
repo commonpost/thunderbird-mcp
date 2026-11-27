@@ -309,6 +309,11 @@ describe("reportProblem: the tool", () => {
     assert.equal(out.sent, false);
     assert.equal(out.waiting, 1);
     assert.match(out.next, /Options page/);
+    assert.match(out.next, /Give the user issueUrl as a link, unchanged/);
+    const url = new URL(out.issueUrl);
+    assert.equal(url.origin + url.pathname, "https://github.com/commonpost/thunderbird-mcp/issues/new");
+    assert.equal(url.searchParams.get("title"), `Bug: ${ARGS.summary}`);
+    assert.ok(url.searchParams.get("body").includes("- Add-on: 0.26.3"));
     assert.match(out.next, /Do not say it was sent/);
     assert.equal(state.written.length, 1);
     assert.equal(state.written[0].id, "pr-0102030405060708");

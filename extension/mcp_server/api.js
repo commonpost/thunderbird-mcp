@@ -8630,7 +8630,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "reportProblem",
         group: "system", crud: "create",
         title: "Report a Problem",
-        description: "Save a report for the maintainers when a tool of this server answers wrongly, fails without a usable reason or lacks something you needed; not for a mistake in your own call. Nothing is sent: the user reads the report in the add-on's Options page and chooses to send it, so tell them. The add-on adds its versions and the last error of `tool`. Put no mail content, name, address or folder name in it: describe the call, like \"saveDraft with draftId on an IMAP account\".",
+        description: "Save a report for the maintainers when a tool of this server answers wrongly, fails without a usable reason or lacks something you needed; not for a mistake in your own call. Nothing is sent: give the user the link of the result to read and submit; it also waits in the Options page. The add-on adds its versions and the last error of `tool`. Put no mail content, name, address or folder name in it: describe the call, like \"saveDraft with draftId on an IMAP account\".",
         inputSchema: {
           type: "object",
           properties: {
@@ -8785,7 +8785,8 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         saved: true,
         sent: false,
         waiting: added.reports.length,
-        next: "Tell the user that a report waits in the add-on's Options page (Reports from assistants), where they can read it and send it. Do not say it was sent.",
+        issueUrl: problemReportIssueUrl(built.report),
+        next: "Give the user issueUrl as a link, unchanged: it opens the report as a new GitHub issue that they read and submit themselves. It also waits in the add-on's Options page (Reports from assistants). Do not say it was sent.",
       };
     }
     // END PROBLEM REPORT STORE
