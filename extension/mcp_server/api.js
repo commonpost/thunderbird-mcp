@@ -7482,6 +7482,14 @@ const PROBLEM_REPORTS_MAX = 20;
 const PROBLEM_REPORT_KINDS = ["bug", "suggestion"];
 const PROBLEM_REPORT_SUMMARY_MAX = 120;
 const PROBLEM_REPORT_DETAILS_MAX = 1500;
+// A bug is three short answers, so that none is missing: the call, what came back, what was expected.
+const PROBLEM_REPORT_BUG_FIELDS = ["called", "got", "expected"];
+const PROBLEM_REPORT_FIELD_MAX = 500;
+// The add-on's own record of the last calls of each tool, attached to a report that names the tool. Kept in memory
+// until Thunderbird closes, and an update of the add-on restarts Thunderbird: a call listed in a report was made
+// with the version the report gives.
+const PROBLEM_REPORT_CALLS_MAX = 5;
+const PROBLEM_REPORT_CALL_ARGS_MAX = 30;
 const PROBLEM_REPORT_ERROR_MAX = 300;
 const PROBLEM_REPORT_ERROR_AGE_MS = 30 * 60 * 1000;
 const PROBLEM_REPORT_ISSUE_URL = "https://github.com/commonpost/thunderbird-mcp/issues/new";
@@ -7512,19 +7520,50 @@ function rememberToolError(errors, name, text, nowMs) {
   errors.set(name, { text: cleanReportText(message, false).slice(0, PROBLEM_REPORT_ERROR_MAX), atMs: nowMs });
 }
 
-// { report } from the arguments of reportProblem, or { error }. facts: { toolNames, addon, bridge, thunderbird,
-// os, errors (see rememberToolError) }.
+// One call of a tool, for a later report: when, the names of its arguments (never their values), the kind of account
+// it worked on when the add-on could tell, how long it took and whether it failed.
+function rememberToolCall(calls, name, args, account, ms, ok, nowMs) {
+  const names = args && typeof args === "object" && !Array.isArray(args) ? Object.keys(args) : [];
+  const list = calls.get(name) || [];
+  list.push({
+    atMs: nowMs,
+    args: names.filter((n) => /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(n)).sort().slice(0, PROBLEM_REPORT_CALL_ARGS_MAX),
+    account: typeof account === "string" ? account.slice(0, 40) : null,
+    ms: Math.max(0, Math.round(ms)),
+    ok: ok === true,
+  });
+  calls.set(name, list.slice(-PROBLEM_REPORT_CALLS_MAX));
+}
+
+// { report } from the arguments of reportProblem, or { error }. facts: { toolNames, addon, addonUpdated, bridge,
+// thunderbird, os, errors (see rememberToolError), calls (see rememberToolCall) }.
 function buildProblemReport(args, facts, id, nowMs) {
   if (!PROBLEM_REPORT_KINDS.includes(args.kind)) return { error: `kind must be one of: ${PROBLEM_REPORT_KINDS.join(", ")}` };
-  const summary = typeof args.summary === "string" ? cleanReportText(args.summary, true) : "";
-  const details = typeof args.details === "string" ? cleanReportText(args.details, false) : "";
+  const text = (key, oneLine) => (typeof args[key] === "string" ? cleanReportText(args[key], oneLine) : "");
+  const summary = text("summary", true);
   if (!summary) return { error: "summary is empty" };
-  if (!details) return { error: "details is empty" };
   if (summary.length > PROBLEM_REPORT_SUMMARY_MAX) {
     return { error: `summary is too long (${summary.length} characters, limit ${PROBLEM_REPORT_SUMMARY_MAX})` };
   }
+  const details = text("details", false);
   if (details.length > PROBLEM_REPORT_DETAILS_MAX) {
     return { error: `details is too long (${details.length} characters, limit ${PROBLEM_REPORT_DETAILS_MAX})` };
+  }
+  const fields = {};
+  for (const key of PROBLEM_REPORT_BUG_FIELDS) {
+    const value = text(key, false);
+    if (value.length > PROBLEM_REPORT_FIELD_MAX) {
+      return { error: `${key} is too long (${value.length} characters, limit ${PROBLEM_REPORT_FIELD_MAX})` };
+    }
+    fields[key] = value || null;
+  }
+  if (args.kind === "bug") {
+    const missing = PROBLEM_REPORT_BUG_FIELDS.filter((key) => !fields[key]);
+    if (missing.length) {
+      return { error: `A bug report needs ${PROBLEM_REPORT_BUG_FIELDS.join(", ")}: missing ${missing.join(", ")}` };
+    }
+  } else if (!details) {
+    return { error: "A suggestion needs details: what you needed, and what the tool could return or accept" };
   }
   const tool = args.tool === undefined || args.tool === null || args.tool === "" ? null : args.tool;
   if (tool !== null && !facts.toolNames.includes(tool)) return { error: `tool is not the name of a tool of this server: ${tool}` };
@@ -7535,19 +7574,27 @@ function buildProblemReport(args, facts, id, nowMs) {
       at: new Date(nowMs).toISOString(),
       kind: args.kind,
       summary,
-      details,
+      called: fields.called,
+      got: fields.got,
+      expected: fields.expected,
+      details: details || null,
       tool,
       addon: facts.addon,
+      addonUpdated: facts.addonUpdated || null,
       bridge: facts.bridge,
       thunderbird: facts.thunderbird,
       os: facts.os,
       lastError: last && nowMs - last.atMs <= PROBLEM_REPORT_ERROR_AGE_MS
         ? { text: last.text, at: new Date(last.atMs).toISOString() } : null,
+      calls: tool === null ? null : (facts.calls.get(tool) || []).map((call) => ({
+        at: new Date(call.atMs).toISOString(), args: call.args, account: call.account, ms: call.ms, ok: call.ok,
+      })),
     },
   };
 }
 
-// The reports of the file, or [] when it does not hold a list of them. A report that lost its shape is dropped.
+// The reports of the file, or [] when it does not hold a list of them. A report that lost its shape is dropped; one
+// saved by 0.27.0 (details only, no record of calls) is kept.
 function parseProblemReports(text) {
   let parsed;
   try {
@@ -7557,18 +7604,28 @@ function parseProblemReports(text) {
   }
   if (!Array.isArray(parsed)) return [];
   const str = (v, max) => typeof v === "string" && v.length <= max;
-  const optional = (v) => v === null || str(v, 100);
+  const absent = (v) => v === null || v === undefined;
+  const optional = (v, max = 100) => absent(v) || str(v, max);
+  const call = (c) => c && typeof c === "object" && str(c.at, 40) && Array.isArray(c.args)
+    && c.args.length <= PROBLEM_REPORT_CALL_ARGS_MAX && c.args.every((a) => str(a, 40)) && optional(c.account, 40)
+    && Number.isFinite(c.ms) && typeof c.ok === "boolean";
   return parsed.filter((r) => r && typeof r === "object" && !Array.isArray(r)
     && str(r.id, 40) && /^pr-[0-9a-f]{8,32}$/.test(r.id) && str(r.at, 40) && PROBLEM_REPORT_KINDS.includes(r.kind)
-    && str(r.summary, PROBLEM_REPORT_SUMMARY_MAX) && str(r.details, PROBLEM_REPORT_DETAILS_MAX)
-    && optional(r.tool) && optional(r.addon) && optional(r.bridge) && optional(r.thunderbird) && optional(r.os)
-    && (r.lastError === null || (r.lastError && str(r.lastError.text, PROBLEM_REPORT_ERROR_MAX) && str(r.lastError.at, 40)))
+    && str(r.summary, PROBLEM_REPORT_SUMMARY_MAX) && optional(r.details, PROBLEM_REPORT_DETAILS_MAX)
+    && PROBLEM_REPORT_BUG_FIELDS.every((key) => optional(r[key], PROBLEM_REPORT_FIELD_MAX))
+    && (str(r.details, PROBLEM_REPORT_DETAILS_MAX) || PROBLEM_REPORT_BUG_FIELDS.every((key) => str(r[key], PROBLEM_REPORT_FIELD_MAX)))
+    && optional(r.tool) && optional(r.addon) && optional(r.addonUpdated) && optional(r.bridge) && optional(r.thunderbird)
+    && optional(r.os)
+    && (absent(r.lastError) || (typeof r.lastError === "object" && str(r.lastError.text, PROBLEM_REPORT_ERROR_MAX) && str(r.lastError.at, 40)))
+    && (absent(r.calls) || (Array.isArray(r.calls) && r.calls.length <= PROBLEM_REPORT_CALLS_MAX && r.calls.every(call)))
   ).slice(0, PROBLEM_REPORTS_MAX);
 }
 
 // { reports } with the report added, or { error }: the list is full, or holds the same report already.
 function addProblemReport(reports, report) {
-  if (reports.some((r) => r.kind === report.kind && r.summary === report.summary && r.details === report.details)) {
+  const same = (a, b) => (a ?? null) === (b ?? null);
+  if (reports.some((r) => r.kind === report.kind && r.summary === report.summary
+    && ["details", ...PROBLEM_REPORT_BUG_FIELDS].every((key) => same(r[key], report[key])))) {
     return { error: "This report is already saved." };
   }
   if (reports.length >= PROBLEM_REPORTS_MAX) {
@@ -7577,21 +7634,34 @@ function addProblemReport(reports, report) {
   return { reports: [...reports, report] };
 }
 
-// The report as the issue the user may open: English, like the repository.
-function problemReportIssue(report, details = report.details) {
+// The report as the issue the user may open: English, like the repository. cut: the most characters kept of each
+// answer of the assistant (for a link that must stay short).
+function problemReportIssue(report, cut = PROBLEM_REPORT_DETAILS_MAX) {
+  const part = (value) => (value.length > cut ? `${value.slice(0, cut)} [...]` : value);
   const lines = [
     "_Written by an AI assistant with the `reportProblem` tool, then read and sent by the user._",
     "",
     `**Kind:** ${report.kind}`,
   ];
   if (report.tool) lines.push(`**Tool:** \`${report.tool}\``);
-  lines.push("", "### Details", "", details);
+  for (const [key, title] of [["called", "Call"], ["got", "Result"], ["expected", "Expected"], ["details", "Details"]]) {
+    if (report[key]) lines.push("", `### ${title}`, "", part(report[key]));
+  }
   if (report.lastError) {
     lines.push("", `### Last error of this tool (recorded by the add-on, ${report.lastError.at})`, "",
       "```", report.lastError.text.replace(/```/g, "~~~"), "```");
   }
+  if (Array.isArray(report.calls)) {
+    lines.push("", "### Calls of this tool since Thunderbird started (recorded by the add-on, argument names only)", "");
+    if (report.calls.length === 0) {
+      lines.push("None: this version of the add-on has not seen this tool called. What is described above was not observed since Thunderbird last started.");
+    }
+    for (const call of report.calls) {
+      lines.push(`- ${call.at}: ${report.tool}(${call.args.join(", ")})${call.account ? ` on ${call.account}` : ""}: ${call.ok ? "ok" : "error"}, ${call.ms} ms`);
+    }
+  }
   lines.push("", "### Versions", "",
-    `- Add-on: ${report.addon || "unknown"}`,
+    `- Add-on: ${report.addon || "unknown"}${report.addonUpdated ? ` (installed or updated ${report.addonUpdated})` : ""}`,
     `- Bridge: ${report.bridge || "not reported"}`,
     `- Thunderbird: ${report.thunderbird || "unknown"}`,
     `- System: ${report.os || "unknown"}`);
@@ -7600,11 +7670,13 @@ function problemReportIssue(report, details = report.details) {
 
 function problemReportIssueUrl(report) {
   const url = (issue) => `${PROBLEM_REPORT_ISSUE_URL}?title=${encodeURIComponent(issue.title)}&body=${encodeURIComponent(issue.body)}`;
-  let details = report.details;
-  let out = url(problemReportIssue(report, details));
-  while (out.length > PROBLEM_REPORT_URL_MAX && details.length > 50) {
-    details = details.slice(0, Math.floor(details.length * 0.8));
-    out = url(problemReportIssue(report, `${details}\n\n(Cut to fit a link: the whole text is in the add-on's Options page, under Copy.)`));
+  let cut = PROBLEM_REPORT_DETAILS_MAX;
+  let out = url(problemReportIssue(report, cut));
+  while (out.length > PROBLEM_REPORT_URL_MAX && cut > 50) {
+    cut = Math.floor(cut * 0.8);
+    const issue = problemReportIssue(report, cut);
+    issue.body += "\n\n(Cut to fit a link: the whole text is in the add-on's Options page, under Copy.)";
+    out = url(issue);
   }
   return out;
 }
@@ -8639,16 +8711,19 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "reportProblem",
         group: "system", crud: "create",
         title: "Report a Problem",
-        description: "Save a report for the maintainers when a tool of this server answers wrongly, fails without a usable reason or lacks something you needed; not for a mistake in your own call. Nothing is sent: give the user the link of the result to read and submit; it also waits in the Options page. The add-on adds its versions and the last error of `tool`. Put no mail content, name, address or folder name in it: describe the call, like \"saveDraft with draftId on an IMAP account\".",
+        description: "Save a report for the maintainers when a tool of this server answers wrongly, fails without a usable reason or lacks something you needed; not for a mistake in your own call. Nothing is sent: give the user the link of the result to read and submit; it also waits in the Options page. A bug needs called, got and expected; a suggestion needs details. The add-on adds its versions, the last error and the last calls of `tool`. Put no mail content, name, address or folder name in it: describe the call, like \"saveDraft with draftId on an IMAP account\". In English.",
         inputSchema: {
           type: "object",
           properties: {
             kind: { type: "string", enum: ["bug", "suggestion"], description: "bug: a tool misbehaved; suggestion: something is missing" },
-            summary: { type: "string", description: "One line, in English, 120 characters at most" },
-            details: { type: "string", description: "In English, 1500 characters at most: the call, what came back, what you expected" },
+            summary: { type: "string", description: "One line, 120 characters at most" },
+            called: { type: "string", description: "Bug: the tool and the options of the call, 500 characters at most" },
+            got: { type: "string", description: "Bug: what came back, 500 characters at most" },
+            expected: { type: "string", description: "Bug: what should have come back, 500 characters at most" },
+            details: { type: "string", description: "Suggestion: what you needed and what the tool could return or accept; optional for a bug. 1500 characters at most" },
             tool: { type: "string", description: "Name of the tool concerned, if one" },
           },
-          required: ["kind", "summary", "details"],
+          required: ["kind", "summary"],
         },
       },
       ];
@@ -8786,7 +8861,18 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
       Cc["@mozilla.org/messengercompose;1"].getService(Ci.nsIMsgComposeService).OpenComposeWindowWithParams(null, params);
     }
 
-    function reportProblem(args) {
+    // When this add-on was installed or last updated (a date, no time), or null.
+    async function addonUpdateDate() {
+      try {
+        const { AddonManager } = ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");
+        const addon = await AddonManager.getAddonByID(context.extension.id);
+        return addon?.updateDate ? new Date(addon.updateDate).toISOString().slice(0, 10) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    async function reportProblem(args) {
       // The bridge of this request: rememberBridge has just dated it, so it is the last one seen.
       const bridges = [...(globalThis.__cpMcpBridgesSeen?.values() ?? [])].sort((x, y) => y.lastSeenMs - x.lastSeenMs);
       const bridgeVersion = bridges[0]?.version;
@@ -8795,10 +8881,12 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
       const built = buildProblemReport(args, {
         toolNames: buildTools().map(t => t.name),
         addon: getExtVersion(),
+        addonUpdated: await addonUpdateDate(),
         bridge: bridgeVersion || null,
         thunderbird: Services.appinfo.version,
         os: Services.appinfo.OS,
         errors: globalThis.__cpMcpToolErrors ??= new Map(),
+        calls: globalThis.__cpMcpToolCalls ??= new Map(),
       }, id, Date.now());
       if (built.error) return { error: built.error };
       const added = addProblemReport(readProblemReports(), built.report);
@@ -20474,6 +20562,24 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
               }
             }
 
+            // The kind of account a call worked on, for the record of calls: "imap", "imap (gmail)", "pop3", "none"
+            // (Local Folders)..., from its accountId or folderPath; null when it has neither or it names nothing.
+            function reportAccountKind(args) {
+              try {
+                let server = null;
+                if (args && typeof args.folderPath === "string") {
+                  server = MailServices.folderLookup.getFolderForURL(args.folderPath)?.server ?? null;
+                } else if (args && typeof args.accountId === "string") {
+                  server = MailServices.accounts.getAccount(args.accountId)?.incomingServer ?? null;
+                }
+                if (!server) return null;
+                if (server.type !== "imap") return String(server.type);
+                return server.QueryInterface(Ci.nsIImapIncomingServer).isGMailServer ? "imap (gmail)" : "imap";
+              } catch {
+                return null;
+              }
+            }
+
             const server = new HttpServer();
 
             server.registerPathHandler("/", (req, res) => {
@@ -20569,6 +20675,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 // Missing (a bridge 0.11 or older, or another HTTP client): getHeader throws
               }
               const bridgeInfo = parseBridgeHeader(rawBridgeHeader);
+              const requestStartMs = Date.now();
               const bridgeEntry = rememberBridge(globalThis.__cpMcpBridgesSeen ??= new Map(), bridgeInfo, Date.now());
               const bridgeExtCore = versionCoreOf(getExtVersion());
               const bridgeAlert = bridgeAlertContent(bridgeInfo, bridgeExtCore, BRIDGE_THRESHOLDS);
@@ -20687,10 +20794,15 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                       res.finish();
                       return;
                   }
-                  if (method === "tools/call" && result?.isError && params.name !== "reportProblem") {
+                  if (method === "tools/call" && params.name !== "reportProblem") {
                     // For a later reportProblem that names this tool
-                    rememberToolError(globalThis.__cpMcpToolErrors ??= new Map(), params.name,
-                      result.content?.find?.(c => c.type === "text")?.text ?? "", Date.now());
+                    const nowMs = Date.now();
+                    rememberToolCall(globalThis.__cpMcpToolCalls ??= new Map(), params.name, params.arguments,
+                      reportAccountKind(params.arguments), nowMs - requestStartMs, !result?.isError, nowMs);
+                    if (result?.isError) {
+                      rememberToolError(globalThis.__cpMcpToolErrors ??= new Map(), params.name,
+                        result.content?.find?.(c => c.type === "text")?.text ?? "", nowMs);
+                    }
                   }
                   if (method === "tools/call" && !bridgeNoticeBlocked) {
                     const bridgeNotice = appendBridgeNotice(result, params.name, params.arguments, bridgeInfo, bridgeEntry,
