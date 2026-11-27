@@ -6,6 +6,16 @@ this repository.
 
 ## [Unreleased]
 
+### Fixed
+
+- On an IMAP account whose server has an All Mail folder (Gmail: a view of the messages of the other folders, listed
+  as `\All`), a search no longer lists a message that has just left that view. Thunderbird only learns it when it
+  updates the folder, so the old version of a draft replaced by `saveDraft` with `draftId` stayed listed in All
+  Mail, looking like a second draft, and so did a message that `deleteMessages` or `updateMessage` with `trash`
+  had moved to Trash. These three calls now update the All Mail folder before they answer: on such an account they
+  wait for the change, then for the folder (about 0.5 s in the lab on Thunderbird 140.17.0esr and 156.0.1, a few
+  seconds on a large Gmail mailbox, 11 s at most). Other accounts answer as before.
+
 ## [0.26.2] - 2026-11-25
 
 - Fixed: `listFolders` with `refresh: true` on a busy IMAP folder answers `done` in about a second instead of
