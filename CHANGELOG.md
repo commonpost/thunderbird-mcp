@@ -6,6 +6,12 @@ this repository.
 
 ## [Unreleased]
 
+## [0.26.3] - 2026-11-27
+
+- Fixed: on a Gmail account, the old version of a draft replaced by `saveDraft`, or a message just deleted or
+  trashed, no longer stays listed in All Mail.
+- **Bridge 0.20.0, unchanged.** Updating is optional.
+
 ### Fixed
 
 - On an IMAP account whose server has an All Mail folder (Gmail: a view of the messages of the other folders, listed
