@@ -77,9 +77,12 @@ const byName = Object.fromEntries(tools.map(t => [t.name, t]));
 // not be told from a memory of the version before, and each mixed the call, the result and the expectation in one
 // text. A bug is now three answers (called, got, expected), which the schema names; the add-on's record of the
 // last calls of the tool costs nothing here.
+// About 230 more characters (November 2026): a report becomes a draft, because the link the tool returned could
+// not be opened from a terminal and the options page was one more place to go; `send` lets the assistant send it
+// once the user said yes, where they allowed that. No new tool.
 const MAX_TOOLS = 43;
 const MAX_TOOL_CHARS = 4100;
-const MAX_TOTAL_CHARS = 58260;
+const MAX_TOTAL_CHARS = 58490;
 const MIN_DESCRIPTION_CHARS = 30;
 const BOUNDED_RESULT_TOOLS = {
   searchMessages: 'maxResults', getRecentMessages: 'maxResults', searchContacts: 'maxResults',

@@ -14,10 +14,15 @@ collects no data and sends nothing to its developers or to any third party.
   resource, and remote content stays blocked as in Thunderbird.
 - No telemetry, no analytics, no crash reports, no accounts, no cookies.
 - An assistant can save a report about a tool that misbehaved (`reportProblem`). The report stays in a file of your
-  Thunderbird profile, readable by your user only, and is listed in the options page. It leaves your computer only
-  if you send it yourself: as a GitHub issue that you submit under your own GitHub account (public), or as a message
-  that you send from Thunderbird to the maintainers' mailbox, `commonpost.mcp@gmail.com` (it then carries your own
-  address, and is read by the maintainers only).
+  Thunderbird profile, readable by your user only, and is listed in the options page. The add-on also saves it as a
+  draft addressed to the maintainers' mailbox, `commonpost.mcp@gmail.com`, in the Drafts folder of your default
+  account: on an IMAP account that draft is stored by your own mail provider, like any draft. The report reaches the
+  maintainers only if you send it yourself: that draft (it then carries your own address, and is read by the
+  maintainers only), or a GitHub issue that you submit under your own GitHub account (public). One exception, off
+  unless you turn it on in the options page: you can let an assistant send a report once it has asked you. The
+  add-on cannot see your answer, so it then sends when the assistant says you agreed: to that mailbox only, from
+  your default address, three times in 24 hours at most, with a copy in your Sent folder, and the message says that
+  you may not have read it. You can also choose that no draft is made.
 - The session token the add-on writes for the bridge lives in a file of your temporary directory, readable by your
   user only, and is replaced at each Thunderbird start.
 - The bridge keeps the last tool list Thunderbird gave it (tool names, descriptions and parameters; no mail and no

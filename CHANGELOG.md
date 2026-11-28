@@ -6,6 +6,22 @@ this repository.
 
 ## [Unreleased]
 
+### Changed
+
+- `reportProblem` saves the report as a draft addressed to the maintainers, in the Drafts folder of the default
+  account: the user reads it and sends it, with no link to open and no visit to the options page. The result gives
+  the draft (`messageId`, `folderPath`) and still gives `issueUrl`.
+- The list of reports rolls: when it holds 20, the oldest one that became a message makes room for a new one.
+
+### Added
+
+- Options page, Reports from assistants: what becomes of a new report. A draft (the default), no message at all,
+  or "Let the assistant send it once it has asked me". With that last choice, `reportProblem` called with
+  `send: true` sends the report without review, to the maintainers only, three times in 24 hours at most, with a
+  copy in the Sent folder; the message says the user may not have read it. Without that choice, `send: true` makes
+  a draft and the result says why. The add-on cannot see the conversation: the choice in the options page is the
+  consent.
+
 ## [0.27.1] - 2026-11-27
 
 - Changed: `reportProblem` returns the link of the report as a prefilled GitHub issue, for the assistant to give to

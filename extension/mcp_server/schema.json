@@ -79,6 +79,26 @@
         ]
       },
       {
+        "name": "getReportDelivery",
+        "type": "function",
+        "async": true,
+        "description": "Get what the add-on does with a new report of the reportProblem tool: draft (a draft to the project, the default), send (sent when the assistant says the user agreed, a draft otherwise) or list (no message)",
+        "parameters": []
+      },
+      {
+        "name": "setReportDelivery",
+        "type": "function",
+        "async": true,
+        "description": "Set what the add-on does with a new report of the reportProblem tool",
+        "parameters": [
+          {
+            "name": "reportDelivery",
+            "type": "string",
+            "description": "draft, send or list"
+          }
+        ]
+      },
+      {
         "name": "getCurrentAuthToken",
         "type": "function",
         "async": true,
