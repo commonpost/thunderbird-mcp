@@ -6,6 +6,13 @@ this repository.
 
 ## [Unreleased]
 
+## [0.27.2] - 2026-11-27
+
+- Changed: `reportProblem` saves the report as a draft addressed to the maintainers, for the user to read and send.
+- Added: a choice in the options page lets an assistant send a report once it has asked the user (`send: true`),
+  to the maintainers only and three times a day at most; off by default.
+- **Bridge 0.20.0, unchanged.** Updating is optional.
+
 ### Changed
 
 - `reportProblem` saves the report as a draft addressed to the maintainers, in the Drafts folder of the default
