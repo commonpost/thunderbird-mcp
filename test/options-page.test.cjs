@@ -282,6 +282,8 @@ const DEFAULT_RESULTS = {
   getProblemReports: { max: 20, reports: [] },
   deleteProblemReport: { max: 20, reports: [] },
   mailProblemReport: { max: 20, reports: [] },
+  getReportDelivery: { reportDelivery: "draft" },
+  setReportDelivery: { success: true },
 };
 
 // browser.i18n.getMessage on extension/_locales/en/messages.json, as Thunderbird resolves it: the $NAME$
@@ -483,7 +485,7 @@ describe("options page: markup and script stay in sync", () => {
     for (const name of [
       "getServerInfo", "getCurrentAuthToken", "getStableAuthToken", "getAccountAccessConfig", "getToolAccessConfig",
       "getBlockSkipReview", "getBlockCalendarSkipReview", "getBlockFilterForwardReply", "getAllowEncryptedContent",
-      "getListenAll", "getBridgeStatus", "getProblemReports",
+      "getListenAll", "getBridgeStatus", "getProblemReports", "getReportDelivery",
     ]) {
       assert.equal(page.callsTo(name).length, 1, name);
     }
@@ -2346,5 +2348,62 @@ describe("options page: reports from assistants", () => {
     const li = page.$("reportList").children[0];
     assert.ok(li.children[0].textContent.startsWith("Bogue \u2014 "));
     assert.deepEqual(labels(li), ["Ouvrir comme issue GitHub", "Envoyer par courriel", "Copier", "Supprimer"]);
+  });
+});
+
+describe("options page: what becomes of a new report", () => {
+  const radios = (page) => ["reportDeliveryDraft", "reportDeliverySend", "reportDeliveryList"].map((id) => page.$(id));
+
+  async function choose(page, radio) {
+    for (const other of radios(page)) other.checked = false;
+    await page.setChecked(radio, true);
+  }
+
+  it("has the three choices, disabled until the setting is loaded", async () => {
+    const page = await openPage({ getReportDelivery: () => new Promise(() => {}) });
+    assert.deepEqual(radios(page).map((r) => [r.type, r.value, r.disabled]),
+      [["radio", "draft", true], ["radio", "send", true], ["radio", "list", true]]);
+  });
+
+  for (const value of ["draft", "send", "list"]) {
+    it(`shows the choice ${value}`, async () => {
+      const page = await openPage({ getReportDelivery: { reportDelivery: value } });
+      assert.deepEqual(radios(page).map((r) => r.checked), ["draft", "send", "list"].map((v) => v === value));
+      assert.ok(radios(page).every((r) => !r.disabled));
+    });
+  }
+
+  it("keeps the choices disabled and shows the error when the setting cannot be read", async () => {
+    const page = await openPage({ getReportDelivery: () => { throw new Error("pref unreadable"); } });
+    assert.ok(radios(page).every((r) => r.disabled));
+    assert.equal(page.$("saveReportDeliveryStatus").textContent, "Error loading setting: pref unreadable");
+  });
+
+  it("saves the choice the user makes", async () => {
+    const page = await openPage();
+    await choose(page, page.$("reportDeliverySend"));
+    assert.deepEqual(page.callsTo("setReportDelivery"), [["send"]]);
+    assert.equal(markOf(page.$("reportDeliverySend")).textContent, "✓ Saved.");
+  });
+
+  it("shows the stored choice again when saving fails", async () => {
+    const page = await openPage({ setReportDelivery: { error: "reportDelivery must be one of draft, send, list" } });
+    await choose(page, page.$("reportDeliverySend"));
+    assert.equal(page.$("reportDeliveryDraft").checked, true);
+    assert.equal(page.$("reportDeliverySend").checked, false);
+    assert.equal(page.callsTo("getReportDelivery").length, 2);
+  });
+
+  it("says of a report whether a draft was saved or it was sent", async () => {
+    const at = "2026-11-27T15:00:00.000Z";
+    const base = { id: "pr-0011223344556677", at, kind: "bug", summary: "x", tool: null, text: "Bug: x", issueUrl: "" };
+    const page = await openPage({ getProblemReports: { max: 20, reports: [
+      { ...base, mail: { mode: "draft", at } }, { ...base, id: "pr-8899aabbccddeeff", mail: { mode: "sent", at } }, { ...base, id: "pr-0000000000000001", mail: null },
+    ] } });
+    const [draft, sent, none] = page.$("reportList").children;
+    const when = new Date(at).toLocaleString();
+    assert.equal(draft.children[2].textContent, `A draft was saved on ${when}.`);
+    assert.equal(sent.children[2].textContent, `Sent to the maintainers on ${when}.`);
+    assert.equal(none.children.length, 3, "kind and date, text, buttons");
   });
 });

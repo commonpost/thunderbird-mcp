@@ -1200,6 +1200,12 @@ function renderReport(report) {
   text.className = "report-text";
   text.textContent = report.text;
   li.appendChild(text);
+  if (report.mail) {
+    const when = new Date(report.mail.at).toLocaleString();
+    li.appendChild(bridgeLine(report.mail.mode === "sent"
+      ? t("reportMailSent", [when], `Sent to the maintainers on ${when}.`)
+      : t("reportMailDraft", [when], `A draft was saved on ${when}.`)));
+  }
   const row = document.createElement("div");
   row.className = "save-row";
   if (REPORT_ISSUE_URL_PATTERN.test(report.issueUrl)) {
@@ -1238,6 +1244,42 @@ async function loadReports() {
     setReportStatus(errorText(e), true);
   }
 }
+
+const reportDeliveryRadios = document.querySelectorAll('input[name="reportDelivery"]');
+const saveReportDeliveryStatus = document.getElementById("saveReportDeliveryStatus");
+
+async function loadReportDelivery() {
+  try {
+    const { reportDelivery } = await browser.commonpostMcp.getReportDelivery();
+    for (const radio of reportDeliveryRadios) {
+      radio.checked = radio.value === reportDelivery;
+      radio.disabled = false;
+    }
+    saveReportDeliveryStatus.textContent = "";
+  } catch (e) {
+    saveReportDeliveryStatus.textContent = t("errorLoadingSetting", [e.message], `Error loading setting: ${e.message}`);
+    saveReportDeliveryStatus.className = "save-status error";
+  }
+}
+
+const queueReportDeliverySave = serialQueue();
+
+for (const radio of reportDeliveryRadios) {
+  radio.addEventListener("change", () => {
+    if (!radio.checked) return;
+    queueReportDeliverySave(async () => {
+      try {
+        const result = await browser.commonpostMcp.setReportDelivery(radio.value);
+        if (result.error) throw new Error(result.error);
+        markSaved(radio);
+      } catch (e) {
+        await loadReportDelivery();
+        markControl(radio, errorText(e), true);
+      }
+    });
+  });
+}
+loadReportDelivery().catch(e => console.error("commonpost-mcp options:", "loadReportDelivery failed:", e));
 
 reportRefreshBtn.addEventListener("click", () => {
   loadReports().catch(e => console.error("commonpost-mcp options:", "loadReports failed:", e));

@@ -1078,7 +1078,7 @@
     "description": "Heading of the section listing the reports saved by the reportProblem tool."
   },
   "reportIntro": {
-    "message": "Un assistant d'IA peut noter un outil qui s'est mal comporté ou une fonction manquante, avec l'outil reportProblem. Rien n'est envoyé : chaque signalement attend ici que vous l'envoyiez ou le supprimiez. Lisez-le d'abord : il ne doit rien contenir de votre courrier. En issue GitHub, il est public, sous votre compte GitHub ; par courriel, seuls les mainteneurs le reçoivent, depuis votre propre adresse.",
+    "message": "Un assistant d'IA peut noter un outil qui s'est mal comporté ou une fonction manquante, avec l'outil reportProblem. Chaque signalement est listé ici. Lisez-le avant qu'il parte : il ne doit rien contenir de votre courrier. En issue GitHub, il est public, sous votre compte GitHub ; par courriel, seuls les mainteneurs le reçoivent, depuis votre propre adresse.",
     "description": "Introduction of the Reports from assistants section. reportProblem is the name of a tool: do not translate it."
   },
   "reportEmpty": {
@@ -1116,5 +1116,57 @@
   "reportMailed": {
     "message": "Ouvert dans une fenêtre de rédaction et retiré de cette liste : rien n'est envoyé tant que vous n'envoyez pas ce message. Il partira de votre propre adresse.",
     "description": "Status after a report was opened in a compose window."
+  },
+  "reportDeliveryHeading": {
+    "message": "Quand un assistant écrit un signalement",
+    "description": "Heading of the choice of what happens to a new report."
+  },
+  "reportDeliveryDraftTitle": {
+    "message": "Enregistrer un brouillon pour les mainteneurs",
+    "description": "Choice: a draft is saved."
+  },
+  "reportDeliveryDraftDefault": {
+    "message": "(par défaut)",
+    "description": "Marks the default choice, after its title."
+  },
+  "reportDeliveryDraftHelp": {
+    "message": "Le brouillon attend dans votre dossier Brouillons. Rien n'est envoyé tant que vous ne l'envoyez pas.",
+    "description": "Help of the draft choice."
+  },
+  "reportDeliverySendTitle": {
+    "message": "Laisser l'assistant l'envoyer après m'avoir demandé",
+    "description": "Choice: the assistant may send the report after asking the user."
+  },
+  "reportDeliverySendHelp": {
+    "message": "L'assistant a pour consigne de vous montrer le signalement et de ne l'envoyer que si vous dites oui. L'extension ne voit pas votre réponse : avec ce choix, elle envoie quand l'assistant dit que vous avez accepté. Seulement aux mainteneurs, depuis votre adresse par défaut, trois fois par jour au plus, avec une copie dans votre dossier Envoyés.",
+    "description": "Help of the send choice: what the consent means and its limits."
+  },
+  "reportDeliveryListTitle": {
+    "message": "Seulement le lister ici",
+    "description": "Choice: the report is only listed."
+  },
+  "reportDeliveryListHelp": {
+    "message": "Ni brouillon ni message.",
+    "description": "Help of the list choice."
+  },
+  "reportMailDraft": {
+    "message": "Un brouillon a été enregistré le $DATE$.",
+    "description": "Line of a report in the list: a draft was saved. $DATE$ is a date and time.",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "11/27/2026, 10:12 PM"
+      }
+    }
+  },
+  "reportMailSent": {
+    "message": "Envoyé aux mainteneurs le $DATE$.",
+    "description": "Line of a report in the list: it was sent. $DATE$ is a date and time.",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "11/27/2026, 10:12 PM"
+      }
+    }
   }
 }

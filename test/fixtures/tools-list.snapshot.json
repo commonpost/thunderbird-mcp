@@ -2502,7 +2502,7 @@
     {
       "name": "reportProblem",
       "title": "Report a Problem",
-      "description": "Save a report for the maintainers when a tool of this server answers wrongly, fails without a usable reason or lacks something you needed; not for a mistake in your own call. Nothing is sent: give the user the link of the result to read and submit; it also waits in the Options page. A bug needs called, got and expected; a suggestion needs details. The add-on adds its versions, the last error and the last calls of `tool`. Put no mail content, name, address or folder name in it: describe the call, like \"saveDraft with draftId on an IMAP account\". In English.",
+      "description": "Save a report for the maintainers when a tool of this server answers wrongly, fails without a usable reason or lacks something you needed; not for a mistake in your own call. It becomes a draft addressed to them (as saveDraft makes one) that the user reads and sends: tell them, never say it was sent unless the result says so. A bug needs called, got and expected; a suggestion needs details. The add-on adds its versions, the last error and the last calls of `tool`. Put no mail content, name, address or folder name in it: describe the call, like \"saveDraft with draftId on an IMAP account\". In English.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2537,6 +2537,10 @@
           "tool": {
             "type": "string",
             "description": "Name of the tool concerned, if one"
+          },
+          "send": {
+            "type": "boolean",
+            "description": "true only after the user, shown the report in this conversation, said yes to sending it. Sent only if they allowed it in Options; a draft otherwise"
           }
         },
         "required": [

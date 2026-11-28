@@ -1078,7 +1078,7 @@
     "description": "Heading of the section listing the reports saved by the reportProblem tool."
   },
   "reportIntro": {
-    "message": "An AI assistant can write down a tool that misbehaved or a missing feature, with the reportProblem tool. Nothing is sent: each report waits here until you send it or delete it. Read it first: it should hold nothing from your mail. As a GitHub issue it is public, under your GitHub account; by email it reaches only the maintainers, from your own address.",
+    "message": "An AI assistant can write down a tool that misbehaved or a missing feature, with the reportProblem tool. Each report is listed here. Read it before it leaves: it should hold nothing from your mail. As a GitHub issue it is public, under your GitHub account; by email it reaches only the maintainers, from your own address.",
     "description": "Introduction of the Reports from assistants section. reportProblem is the name of a tool: do not translate it."
   },
   "reportEmpty": {
@@ -1116,5 +1116,57 @@
   "reportMailed": {
     "message": "Opened in a message window and removed from this list: nothing is sent until you send that message. It will come from your own address.",
     "description": "Status after a report was opened in a compose window."
+  },
+  "reportDeliveryHeading": {
+    "message": "When an assistant writes a report",
+    "description": "Heading of the choice of what happens to a new report."
+  },
+  "reportDeliveryDraftTitle": {
+    "message": "Save a draft to the maintainers",
+    "description": "Choice: a draft is saved."
+  },
+  "reportDeliveryDraftDefault": {
+    "message": "(the default)",
+    "description": "Marks the default choice, after its title."
+  },
+  "reportDeliveryDraftHelp": {
+    "message": "The draft waits in your Drafts folder. Nothing is sent until you send it.",
+    "description": "Help of the draft choice."
+  },
+  "reportDeliverySendTitle": {
+    "message": "Let the assistant send it once it has asked me",
+    "description": "Choice: the assistant may send the report after asking the user."
+  },
+  "reportDeliverySendHelp": {
+    "message": "The assistant is told to show you the report and to send it only if you say yes. The add-on cannot see your answer: with this choice it sends when the assistant says you agreed. Only to the maintainers, from your default address, three times a day at most, with a copy in your Sent folder.",
+    "description": "Help of the send choice: what the consent means and its limits."
+  },
+  "reportDeliveryListTitle": {
+    "message": "Only list it here",
+    "description": "Choice: the report is only listed."
+  },
+  "reportDeliveryListHelp": {
+    "message": "No draft, no message.",
+    "description": "Help of the list choice."
+  },
+  "reportMailDraft": {
+    "message": "A draft was saved on $DATE$.",
+    "description": "Line of a report in the list: a draft was saved. $DATE$ is a date and time.",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "11/27/2026, 10:12 PM"
+      }
+    }
+  },
+  "reportMailSent": {
+    "message": "Sent to the maintainers on $DATE$.",
+    "description": "Line of a report in the list: it was sent. $DATE$ is a date and time.",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "11/27/2026, 10:12 PM"
+      }
+    }
   }
 }

@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: The thunderbird-mcp and Commonpost contributors (see LICENSE)
 "use strict";
 
-// reportProblem: an assistant saves a report about a tool; the user sends it, or not, from the options page.
+// reportProblem: an assistant saves a report about a tool; it becomes a draft that the user sends, or not. It is
+// sent without them only when they chose so in the options page, to the project alone, a few times a day.
 // The real functions of api.js run here: what a report holds, what is refused, that mail addresses never reach
 // the file, that the list is bounded, and that the only address the options page may open is a new issue of
 // this repository.
@@ -32,7 +33,8 @@ function load() {
   const sandbox = vm.createContext({});
   vm.runInContext(`${slice("// BEGIN PROBLEM REPORTS", "// END PROBLEM REPORTS")}
     this.api = { cleanReportText, rememberToolError, rememberToolCall, buildProblemReport, parseProblemReports, addProblemReport,
-      problemReportIssue, problemReportIssueUrl, problemReportsView, problemReportMail, PROBLEM_REPORTS_MAX };
+      problemReportIssue, problemReportIssueUrl, problemReportsView, problemReportMail, PROBLEM_REPORTS_MAX,
+      problemReportDelivery, problemReportMailPlan, problemReportNext, PROBLEM_REPORT_MAIL_TO };
     this.newErrors = () => new Map();`, sandbox);
   return sandbox;
 }
@@ -393,12 +395,23 @@ describe("reportProblem: the report as a message to the project", () => {
 });
 
 describe("reportProblem: the tool", () => {
-  function tool({ stored = [], bridges = [], failWrite = false } = {}) {
-    const state = { stored, written: null };
+  function tool({ stored = [], bridges = [], failWrite = false, delivery, draft, send } = {}) {
+    const state = { stored, written: null, drafts: [], sends: [] };
+    const mailer = {
+      draft: async (mail) => { state.drafts.push(mail); return draft ? draft() : { success: true, messageId: "d1@x", folderPath: "imap://u@h/Drafts" }; },
+      send: async (mail) => { state.sends.push(mail); return send ? send() : { success: true }; },
+    };
     const sandbox = vm.createContext({
       Cc: { "@mozilla.org/security/random-generator;1": { createInstance: () => ({ generateRandomBytes: (n) => Array.from({ length: n }, (_, i) => i + 1) }) } },
       Ci: { nsIRandomGenerator: {} },
-      Services: { appinfo: { version: "156.0.1", OS: "Linux" } },
+      Services: {
+        appinfo: { version: "156.0.1", OS: "Linux" },
+        prefs: { getCharPref: (name, fallback) => {
+          assert.equal(name, "extensions.commonpost-mcp.reportDelivery");
+          if (delivery === "throws") throw new Error("pref unreadable");
+          return delivery ?? fallback;
+        } },
+      },
       buildTools: () => TOOLS.map((name) => ({ name })),
       getExtVersion: () => "0.26.3",
       readProblemReports: () => state.stored,
@@ -411,27 +424,32 @@ describe("reportProblem: the tool", () => {
     vm.runInContext(`${slice("// BEGIN PROBLEM REPORTS", "// END PROBLEM REPORTS")}
       Date.now = () => ${NOW};
       const addonUpdateDate = async () => "2026-11-27";
-      ${slice("    async function reportProblem(args) {", "    // END PROBLEM REPORT STORE")}
+      ${slice("    function reportDeliveryPref() {", "    // END PROBLEM REPORT STORE")}
       globalThis.__cpMcpBridgesSeen = new Map(${JSON.stringify(bridges)});
-      this.reportProblem = reportProblem; this.rememberToolError = rememberToolError;
+      this.rawReportProblem = reportProblem; this.rememberToolError = rememberToolError;
       this.errors = () => (globalThis.__cpMcpToolErrors ??= new Map());`, sandbox);
+    sandbox.reportProblem = (args) => sandbox.rawReportProblem(args, mailer);
     return { sandbox, state };
   }
 
-  it("saves the report, says it was not sent and tells the assistant what to tell the user", async () => {
+  it("saves the report, makes a draft of it, says it was not sent and tells the assistant what to tell the user", async () => {
     const { sandbox, state } = tool({ bridges: [["a", { version: "0.19.0", lastSeenMs: 5 }], ["b", { version: "0.20.0", lastSeenMs: 9 }]] });
     const out = plain(await sandbox.reportProblem({ ...ARGS }));
     assert.equal(out.saved, true);
     assert.equal(state.written[0].addonUpdated, "2026-11-27");
     assert.equal(out.sent, false);
     assert.equal(out.waiting, 1);
-    assert.match(out.next, /Options page/);
-    assert.match(out.next, /Give the user issueUrl as a link, unchanged/);
+    assert.deepEqual(out.draft, { messageId: "d1@x", folderPath: "imap://u@h/Drafts" });
+    assert.match(out.next, /^Nothing was sent\. A draft addressed to the maintainers is in the user's Drafts folder: tell them to read it and send it\./);
+    assert.equal(state.sends.length, 0);
+    assert.equal(state.drafts.length, 1);
+    assert.equal(state.drafts[0].to, "commonpost.mcp@gmail.com");
+    assert.match(state.drafts[0].body, /^_Written by an AI assistant with the `reportProblem` tool, then read and sent by the user\._/);
+    assert.equal(state.written[0].mail.mode, "draft");
     const url = new URL(out.issueUrl);
     assert.equal(url.origin + url.pathname, "https://github.com/commonpost/thunderbird-mcp/issues/new");
     assert.equal(url.searchParams.get("title"), `Bug: ${ARGS.summary}`);
     assert.ok(url.searchParams.get("body").includes("- Add-on: 0.26.3"));
-    assert.match(out.next, /Do not say it was sent/);
     assert.equal(state.written.length, 1);
     assert.equal(state.written[0].id, "pr-0102030405060708");
     assert.equal(state.written[0].addon, "0.26.3");
@@ -454,6 +472,100 @@ describe("reportProblem: the tool", () => {
     assert.equal(state.written, null);
   });
 
+  it("send: true without the user's choice in the options page sends nothing: a draft, and the reason", async () => {
+    for (const delivery of [undefined, "draft", "anything", "throws"]) {
+      const { sandbox, state } = tool({ delivery });
+      const out = plain(await sandbox.reportProblem({ ...ARGS, send: true }));
+      assert.equal(out.sent, false, String(delivery));
+      assert.equal(state.sends.length, 0, String(delivery));
+      assert.equal(state.drafts.length, 1, String(delivery));
+      assert.match(out.next, /It was not sent: the user has not allowed assistants to send reports/);
+    }
+  });
+
+  it("sends when the user chose so and the assistant passes send: true, and says who sent it", async () => {
+    const { sandbox, state } = tool({ delivery: "send" });
+    const out = plain(await sandbox.reportProblem({ ...ARGS, send: true }));
+    assert.equal(out.sent, true);
+    assert.equal(out.draft, undefined);
+    assert.equal(state.drafts.length, 0);
+    assert.equal(state.sends.length, 1);
+    assert.equal(state.sends[0].to, "commonpost.mcp@gmail.com");
+    assert.match(state.sends[0].body, /^_Written by an AI assistant with the `reportProblem` tool and sent by the add-on: .*They may not have read this text\._/);
+    assert.match(out.next, /^Sent to the maintainers/);
+    assert.equal(state.written[0].mail.mode, "sent");
+  });
+
+  it("the user's choice alone sends nothing: without send: true the report is a draft", async () => {
+    for (const send of [undefined, false, null]) {
+      const { sandbox, state } = tool({ delivery: "send" });
+      const out = plain(await sandbox.reportProblem({ ...ARGS, send }));
+      assert.equal(out.sent, false);
+      assert.equal(state.sends.length, 0);
+      assert.equal(state.drafts.length, 1);
+      assert.doesNotMatch(out.next, /not allowed/);
+    }
+  });
+
+  it("refuses a send that is not true or false", async () => {
+    const { sandbox, state } = tool({ delivery: "send" });
+    assert.deepEqual(plain(await sandbox.reportProblem({ ...ARGS, send: "yes" })), { error: "send must be true or false" });
+    assert.equal(state.written, null);
+    assert.equal(state.sends.length, 0);
+  });
+
+  it("a send that fails leaves a draft and says so", async () => {
+    const { sandbox, state } = tool({ delivery: "send", send: () => ({ error: "SMTP down" }) });
+    const out = plain(await sandbox.reportProblem({ ...ARGS, send: true }));
+    assert.equal(out.sent, false);
+    assert.equal(state.drafts.length, 1);
+    assert.match(state.drafts[0].body, /then read and sent by the user/);
+    assert.match(out.next, /Sending failed \(SMTP down\)/);
+    assert.equal(state.written[0].mail.mode, "draft");
+  });
+
+  it("a draft that cannot be made leaves the report in the list, saved", async () => {
+    for (const draft of [() => ({ error: "No accessible identity found" }), () => { throw new Error("No accessible identity found"); }]) {
+      const { sandbox, state } = tool({ draft });
+      const out = plain(await sandbox.reportProblem({ ...ARGS }));
+      assert.equal(out.saved, true);
+      assert.equal(out.sent, false);
+      assert.equal(out.draft, undefined);
+      assert.match(out.next, /No draft could be made \(.*No accessible identity found\)\. The report waits in the add-on's Options page/);
+      assert.equal(state.written.length, 1);
+      assert.equal(state.written[0].mail, undefined);
+    }
+  });
+
+  it("with the choice to only list, no message is made, whatever the assistant asks", async () => {
+    const { sandbox, state } = tool({ delivery: "list" });
+    const out = plain(await sandbox.reportProblem({ ...ARGS, send: true }));
+    assert.equal(out.sent, false);
+    assert.equal(state.drafts.length + state.sends.length, 0);
+    assert.match(out.next, /^Nothing was sent\. The report waits in the add-on's Options page/);
+  });
+
+  it("past three sends in 24 hours a report is a draft, past six messages it only waits in the list", async () => {
+    const at = (hoursAgo) => new Date(NOW - hoursAgo * 3600 * 1000).toISOString();
+    const old = (n, mode, hoursAgo) => Array.from({ length: n }, (_, i) => ({ id: `pr-${mode}${hoursAgo}${i}`, mail: { mode, at: at(hoursAgo) } }));
+    let run = tool({ delivery: "send", stored: [...old(3, "sent", 23), ...old(2, "sent", 25)] });
+    let out = plain(await run.sandbox.reportProblem({ ...ARGS, send: true }));
+    assert.equal(out.sent, false);
+    assert.equal(run.state.sends.length, 0);
+    assert.equal(run.state.drafts.length, 1);
+    assert.match(out.next, /It was not sent: 3 reports were sent in the last 24 hours/);
+
+    run = tool({ delivery: "send", stored: [...old(2, "sent", 23), ...old(5, "sent", 25)] });
+    out = plain(await run.sandbox.reportProblem({ ...ARGS, send: true }));
+    assert.equal(out.sent, true, "a send older than a day does not count");
+
+    run = tool({ delivery: "send", stored: [...old(2, "sent", 1), ...old(4, "draft", 2)] });
+    out = plain(await run.sandbox.reportProblem({ ...ARGS, send: true }));
+    assert.equal(out.sent, false);
+    assert.equal(run.state.sends.length + run.state.drafts.length, 0);
+    assert.match(out.next, /No draft was made: 6 reports became messages in the last 24 hours/);
+  });
+
   it("lets a failed write reach the assistant as an error", async () => {
     const { sandbox } = tool({ failWrite: true });
     await assert.rejects(() => sandbox.reportProblem({ ...ARGS }), /disk full/);
@@ -462,7 +574,7 @@ describe("reportProblem: the tool", () => {
 
 describe("reportProblem: wiring", () => {
   it("is dispatched, and its own errors are not remembered as the error of a tool", () => {
-    assert.match(apiSource, /case "reportProblem":\s+return reportProblem\(args\);/);
+    assert.match(apiSource, /case "reportProblem":\s+return reportProblem\(args, \{\s+draft: \(mail\) => saveDraft\(mail\.to, mail\.subject, mail\.body, "", "", false\),\s+send: \(mail\) => sendProblemReportMail\(mail\),\s+\}\);/);
     assert.match(apiSource, /if \(result\?\.isError\) \{\s+rememberToolError\(/);
   });
 
@@ -474,13 +586,62 @@ describe("reportProblem: wiring", () => {
     assert.equal((store.match(/file\.isSymlink\(\) \|\| !file\.isFile\(\)/g) || []).length, 2, "read and write both refuse a link");
   });
 
-  it("no code of the add-on sends a report", () => {
+  it("the report code reaches no network itself: a message goes through the mailer it is given", () => {
     const helpers = slice("// BEGIN PROBLEM REPORTS", "// END PROBLEM REPORTS") + slice("    // BEGIN PROBLEM REPORT STORE", "    // END PROBLEM REPORT STORE");
-    assert.ok(!/fetch\(|XMLHttpRequest|nsIHttpChannel|openDefaultBrowser|launch\(|sendMsg|nsIMsgSend\b/.test(helpers));
+    assert.ok(!/fetch\(|XMLHttpRequest|nsIHttpChannel|openDefaultBrowser|launch\(|sendMsg|nsIMsgSend\b|sendMessageDirectly/.test(helpers));
+    assert.equal((helpers.match(/mailer\.send\(/g) || []).length, 1);
+    assert.match(helpers, /if \(plan\.mode === "send"\) \{\s+const sent = await mailer\.send\(problemReportMail\(built\.report, true\)\);/);
+  });
+
+  it("a report is only ever addressed to the project, with no copy to anyone", () => {
+    const sandbox = load();
+    const report = plain(sandbox.api.buildProblemReport(ARGS, facts(sandbox), "pr-0000000000000001", NOW)).report;
+    for (const unread of [false, true]) assert.equal(sandbox.api.problemReportMail(report, unread).to, "commonpost.mcp@gmail.com");
+    const send = slice("            function sendProblemReportMail(mail) {", "             * Saves a composed message to the identity's Drafts folder");
+    assert.match(send, /fields\.to = mail\.to;/);
+    assert.ok(!/\.cc\b|\.bcc\b|addAttachment|setDirectSendRecipients/.test(send), "no Cc, Bcc or attachment");
+    assert.match(send, /setComposeIdentity\(params, null, null\)/, "the default identity, among the accounts the user allows");
+  });
+
+  it("the options page can only set one of the three choices", () => {
+    const fn = slice("        setReportDelivery: async function(reportDelivery) {", "        deleteProblemReport: async function(id) {");
+    assert.match(fn, /if \(!PROBLEM_REPORT_DELIVERIES\.includes\(reportDelivery\)\) \{\s+return \{ error:/);
+    const sandbox = load();
+    for (const [value, expected] of [["draft", "draft"], ["send", "send"], ["list", "list"], ["", "draft"], [undefined, "draft"], ["SEND", "draft"], [true, "draft"]]) {
+      assert.equal(sandbox.api.problemReportDelivery(value), expected, String(value));
+    }
   });
 
   it("the options page deletes through the add-on and shows what remains", () => {
     assert.match(optionsSource, /showReports\(await browser\.commonpostMcp\.deleteProblemReport\(report\.id\)\);/);
     assert.match(optionsSource, /showReports\(await browser\.commonpostMcp\.getProblemReports\(\)\);/);
+  });
+});
+
+describe("reportProblem: a list that rolls", () => {
+  const report = (i, mail) => ({ id: `pr-${String(i).padStart(16, "0")}`, at: "2026-11-27T15:00:00.000Z", kind: "suggestion", summary: `s${i}`, details: "d", ...(mail ? { mail } : {}) });
+
+  it("when the list is full, the oldest report that became a message makes room", () => {
+    const sandbox = load();
+    const full = Array.from({ length: sandbox.api.PROBLEM_REPORTS_MAX }, (_, i) => report(i, i === 3 || i === 7 ? { mode: "draft", at: "2026-11-27T15:00:00.000Z" } : null));
+    const out = plain(sandbox.api.addProblemReport(full, report(99)));
+    assert.equal(out.reports.length, sandbox.api.PROBLEM_REPORTS_MAX);
+    assert.ok(!out.reports.some((r) => r.summary === "s3"));
+    assert.ok(out.reports.some((r) => r.summary === "s7"));
+    assert.equal(out.reports.at(-1).summary, "s99");
+  });
+
+  it("a full list of reports nobody has seen as a message still refuses", () => {
+    const sandbox = load();
+    const full = Array.from({ length: sandbox.api.PROBLEM_REPORTS_MAX }, (_, i) => report(i));
+    assert.match(plain(sandbox.api.addProblemReport(full, report(99))).error, /^20 reports are waiting/);
+  });
+
+  it("the file keeps what became of a report, and drops one whose record lost its shape", () => {
+    const sandbox = load();
+    const good = report(1, { mode: "sent", at: "2026-11-27T15:00:00.000Z" });
+    const parsed = plain(sandbox.api.parseProblemReports(JSON.stringify([good, report(2, { mode: "posted", at: "x" }), report(3, "draft"), report(4)])));
+    assert.deepEqual(parsed.map((r) => r.summary), ["s1", "s4"]);
+    assert.deepEqual(plain(sandbox.api.problemReportsView(parsed)).reports.map((r) => r.mail), [null, good.mail]);
   });
 });

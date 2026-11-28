@@ -146,10 +146,16 @@ it (see "Versions" below).
   Thunderbird, the system, the last error the named tool returned (kept in memory for 30 minutes) and the last five calls of that
   tool since Thunderbird started (time, argument names without their values, kind of account, duration, outcome). A
   bug is three answers (`called`, `got`, `expected`), a suggestion is `details`. Mail addresses
-  are replaced before anything is stored. The add-on sends nothing: the options page lists the reports, and the user
-  opens one as a prefilled issue of this repository in the browser, or in a compose window addressed to the
-  project's mailbox, copies it or deletes it. A message that tells
-  an assistant to report something can add to that list; it cannot publish.
+  are replaced before anything is stored. The report is then saved as a draft addressed to the
+  project's mailbox, through the code of `saveDraft`, for the user to read and send; the options page lists the
+  reports, and the user opens one as a prefilled issue of this repository in the browser or in a compose window,
+  copies it or deletes it. A preference set in the options page (`reportDelivery`: `draft`, `send` or `list`)
+  decides this. With `send`, a call that passes `send: true` sends the message without review, to that mailbox
+  only and with no Cc, Bcc or attachment: the server cannot check that the user agreed, so the preference is the
+  consent, and the block of `skipReview` does not apply to it. Three reports are sent in 24 hours at most, and six
+  become messages (drafts included); past that a report is a draft, then only listed. A message that tells an
+  assistant to report something can add to the list and to the Drafts folder within those limits; it cannot
+  publish, and it cannot choose the recipient.
 - **Limits set by the user** (options page, read on every call):
   - *account access*: an allow-list of accounts; an empty list means all accounts, an unreadable or malformed value
     blocks all of them;

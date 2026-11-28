@@ -569,7 +569,32 @@
 
 <div class="section" id="reportSection">
   <h2 data-i18n="reportHeading">Reports from assistants</h2>
-  <p class="mode-note" data-i18n="reportIntro">An AI assistant can write down a tool that misbehaved or a missing feature, with the reportProblem tool. Nothing is sent: each report waits here until you send it or delete it. Read it first: it should hold nothing from your mail. As a GitHub issue it is public, under your GitHub account; by email it reaches only the maintainers, from your own address.</p>
+  <p class="mode-note" data-i18n="reportIntro">An AI assistant can write down a tool that misbehaved or a missing feature, with the reportProblem tool. Each report is listed here. Read it before it leaves: it should hold nothing from your mail. As a GitHub issue it is public, under your GitHub account; by email it reaches only the maintainers, from your own address.</p>
+  <h3 id="reportDeliveryHeading" data-i18n="reportDeliveryHeading">When an assistant writes a report</h3>
+  <ul class="account-list setting-list" role="radiogroup" aria-labelledby="reportDeliveryHeading">
+    <li>
+      <label>
+        <input type="radio" name="reportDelivery" id="reportDeliveryDraft" value="draft" disabled>
+        <span><strong data-i18n="reportDeliveryDraftTitle">Save a draft to the maintainers</strong> <span data-i18n="reportDeliveryDraftDefault">(the default)</span>
+          <span class="setting-help" data-i18n="reportDeliveryDraftHelp">The draft waits in your Drafts folder. Nothing is sent until you send it.</span></span>
+      </label>
+    </li>
+    <li>
+      <label>
+        <input type="radio" name="reportDelivery" id="reportDeliverySend" value="send" disabled>
+        <span><strong data-i18n="reportDeliverySendTitle">Let the assistant send it once it has asked me</strong>
+          <span class="setting-help" data-i18n="reportDeliverySendHelp">The assistant is told to show you the report and to send it only if you say yes. The add-on cannot see your answer: with this choice it sends when the assistant says you agreed. Only to the maintainers, from your default address, three times a day at most, with a copy in your Sent folder.</span></span>
+      </label>
+    </li>
+    <li>
+      <label>
+        <input type="radio" name="reportDelivery" id="reportDeliveryList" value="list" disabled>
+        <span><strong data-i18n="reportDeliveryListTitle">Only list it here</strong>
+          <span class="setting-help" data-i18n="reportDeliveryListHelp">No draft, no message.</span></span>
+      </label>
+    </li>
+  </ul>
+  <p class="save-row"><span id="saveReportDeliveryStatus" class="save-status" role="status" aria-live="polite"></span></p>
   <p class="mode-note" data-i18n="reportEmpty" id="reportEmpty" hidden>No report is waiting.</p>
   <ul class="account-list" id="reportList"></ul>
   <div class="save-row">

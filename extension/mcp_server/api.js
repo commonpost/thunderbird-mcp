@@ -7472,9 +7472,12 @@ function bridgeStatusView(seen, extCore, thresholds) {
 
 // BEGIN PROBLEM REPORTS
 // reportProblem: an assistant writes down a tool that misbehaved or a feature it missed. The report is kept in
-// <profile>/commonpost-mcp-reports.json and listed in the options page. Nothing is sent: the user reads it there,
-// then opens it as a prefilled GitHub issue (which they submit themselves), copies it or deletes it. A message
-// that tells an assistant to report something can therefore fill this list, not publish anything.
+// <profile>/commonpost-mcp-reports.json and listed in the options page, and a draft addressed to the project is
+// saved for the user to read and send (they may also open the report as a prefilled GitHub issue, copy it or
+// delete it). Nothing is sent unless the user chose, in the options page, to let an assistant send a report once
+// it has asked them: the add-on cannot see that question, so that choice is the consent, and it only ever sends
+// to the address of the project, a few times a day. A message that tells an assistant to report something can
+// therefore fill the list and the Drafts folder up to the limits below, not publish anything.
 // The add-on adds what it knows itself: its version, the bridge, Thunderbird, the system and, when the report names
 // a tool, the last error that tool returned. Mail addresses are replaced in everything that is stored.
 const PROBLEM_REPORTS_FILE_NAME = "commonpost-mcp-reports.json";
@@ -7496,6 +7499,15 @@ const PROBLEM_REPORT_ISSUE_URL = "https://github.com/commonpost/thunderbird-mcp/
 // The mailbox of the project, for a user without a GitHub account. The user sends the message themselves, from the
 // compose window Thunderbird opens: it then carries their own address, which an issue does not.
 const PROBLEM_REPORT_MAIL_TO = "commonpost.mcp@gmail.com";
+// What the add-on does with a new report (the preference, set in the options page): a draft to the project
+// (the default), "send" (sent when the assistant passes send: true, a draft otherwise) or "list" (no message).
+const PREF_REPORT_DELIVERY = "extensions.commonpost-mcp.reportDelivery";
+const PROBLEM_REPORT_DELIVERIES = ["draft", "send", "list"];
+// In 24 hours: the messages sent without review, and the messages made in all (drafts and sent). Past the first
+// a report becomes a draft, past the second it only waits in the list.
+const PROBLEM_REPORT_SENDS_PER_DAY = 3;
+const PROBLEM_REPORT_MAILS_PER_DAY = 6;
+const PROBLEM_REPORT_DAY_MS = 24 * 60 * 60 * 1000;
 // GitHub refuses a longer address; the details are cut in the link, never in the stored report.
 const PROBLEM_REPORT_URL_MAX = 7000;
 const PROBLEM_REPORT_ADDRESS = /[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
@@ -7618,6 +7630,7 @@ function parseProblemReports(text) {
     && optional(r.os)
     && (absent(r.lastError) || (typeof r.lastError === "object" && str(r.lastError.text, PROBLEM_REPORT_ERROR_MAX) && str(r.lastError.at, 40)))
     && (absent(r.calls) || (Array.isArray(r.calls) && r.calls.length <= PROBLEM_REPORT_CALLS_MAX && r.calls.every(call)))
+    && (absent(r.mail) || (typeof r.mail === "object" && ["draft", "sent"].includes(r.mail.mode) && str(r.mail.at, 40)))
   ).slice(0, PROBLEM_REPORTS_MAX);
 }
 
@@ -7629,17 +7642,59 @@ function addProblemReport(reports, report) {
     return { error: "This report is already saved." };
   }
   if (reports.length >= PROBLEM_REPORTS_MAX) {
-    return { error: `${PROBLEM_REPORTS_MAX} reports are waiting for the user in the add-on's Options page: none can be added until some are sent or deleted there.` };
+    // A report that became a message has left for the Drafts or the Sent folder: the oldest one makes room.
+    const oldest = reports.findIndex((r) => r.mail);
+    if (oldest === -1) {
+      return { error: `${PROBLEM_REPORTS_MAX} reports are waiting for the user in the add-on's Options page: none can be added until some are sent or deleted there.` };
+    }
+    reports = reports.filter((_, i) => i !== oldest);
   }
   return { reports: [...reports, report] };
 }
 
+function problemReportDelivery(value) {
+  return PROBLEM_REPORT_DELIVERIES.includes(value) ? value : "draft";
+}
+
+// What to make of a new report: { mode: "send" | "draft" | "list", reason }. reason says why it is less than the
+// assistant asked for: "consent" (send asked, the user did not allow it), "sendLimit", "mailLimit", or null.
+function problemReportMailPlan(delivery, wantsSend, reports, nowMs) {
+  if (delivery === "list") return { mode: "list", reason: null };
+  const recent = reports.filter((r) => r.mail && nowMs - Date.parse(r.mail.at) < PROBLEM_REPORT_DAY_MS);
+  if (recent.length >= PROBLEM_REPORT_MAILS_PER_DAY) return { mode: "list", reason: "mailLimit" };
+  if (!wantsSend) return { mode: "draft", reason: null };
+  if (delivery !== "send") return { mode: "draft", reason: "consent" };
+  if (recent.filter((r) => r.mail.mode === "sent").length >= PROBLEM_REPORT_SENDS_PER_DAY) return { mode: "draft", reason: "sendLimit" };
+  return { mode: "send", reason: null };
+}
+
+// What the assistant must tell the user, by what became of the report (outcome.mode: "sent", "draft" or "list").
+function problemReportNext(outcome) {
+  const why = {
+    consent: " It was not sent: the user has not allowed assistants to send reports (add-on's Options page, Reports from assistants).",
+    sendLimit: ` It was not sent: ${PROBLEM_REPORT_SENDS_PER_DAY} reports were sent in the last 24 hours.`,
+    mailLimit: ` No draft was made: ${PROBLEM_REPORT_MAILS_PER_DAY} reports became messages in the last 24 hours.`,
+    sendFailed: ` Sending failed (${outcome.error || "unknown error"}).`,
+    mailFailed: ` No draft could be made (${outcome.error || "unknown error"}).`,
+  }[outcome.reason] || "";
+  if (outcome.mode === "sent") {
+    return "Sent to the maintainers from the user's address, as they allowed in the Options page; a copy is in their Sent folder. Tell the user it was sent.";
+  }
+  if (outcome.mode === "draft") {
+    return "Nothing was sent. A draft addressed to the maintainers is in the user's Drafts folder: tell them to read it and send it." + why
+      + " issueUrl opens the same report as a new GitHub issue, if they prefer.";
+  }
+  return "Nothing was sent." + why + " The report waits in the add-on's Options page (Reports from assistants): tell the user. issueUrl opens it as a new GitHub issue that they read and submit themselves.";
+}
+
 // The report as the issue the user may open: English, like the repository. cut: the most characters kept of each
 // answer of the assistant (for a link that must stay short).
-function problemReportIssue(report, cut = PROBLEM_REPORT_DETAILS_MAX) {
+function problemReportIssue(report, cut = PROBLEM_REPORT_DETAILS_MAX, unread = false) {
   const part = (value) => (value.length > cut ? `${value.slice(0, cut)} [...]` : value);
   const lines = [
-    "_Written by an AI assistant with the `reportProblem` tool, then read and sent by the user._",
+    unread
+      ? "_Written by an AI assistant with the `reportProblem` tool and sent by the add-on: the user allowed reports to be sent once the assistant has asked them. They may not have read this text._"
+      : "_Written by an AI assistant with the `reportProblem` tool, then read and sent by the user._",
     "",
     `**Kind:** ${report.kind}`,
   ];
@@ -7681,9 +7736,10 @@ function problemReportIssueUrl(report) {
   return out;
 }
 
-// The report as a message to the project: plain text, the same text as the issue.
-function problemReportMail(report) {
-  const issue = problemReportIssue(report);
+// The report as a message to the project: plain text, the same text as the issue. unread: sent by the add-on,
+// without the review a draft or a window gives.
+function problemReportMail(report, unread = false) {
+  const issue = problemReportIssue(report, PROBLEM_REPORT_DETAILS_MAX, unread);
   return { to: PROBLEM_REPORT_MAIL_TO, subject: `[report] ${issue.title}`, body: issue.body };
 }
 
@@ -7699,6 +7755,7 @@ function problemReportsView(reports) {
         kind: report.kind,
         summary: report.summary,
         tool: report.tool,
+        mail: report.mail ? { mode: report.mail.mode, at: report.mail.at } : null,
         text: `${issue.title}\n\n${issue.body}`,
         issueUrl: problemReportIssueUrl(report),
       };
@@ -8711,7 +8768,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         name: "reportProblem",
         group: "system", crud: "create",
         title: "Report a Problem",
-        description: "Save a report for the maintainers when a tool of this server answers wrongly, fails without a usable reason or lacks something you needed; not for a mistake in your own call. Nothing is sent: give the user the link of the result to read and submit; it also waits in the Options page. A bug needs called, got and expected; a suggestion needs details. The add-on adds its versions, the last error and the last calls of `tool`. Put no mail content, name, address or folder name in it: describe the call, like \"saveDraft with draftId on an IMAP account\". In English.",
+        description: "Save a report for the maintainers when a tool of this server answers wrongly, fails without a usable reason or lacks something you needed; not for a mistake in your own call. It becomes a draft addressed to them (as saveDraft makes one) that the user reads and sends: tell them, never say it was sent unless the result says so. A bug needs called, got and expected; a suggestion needs details. The add-on adds its versions, the last error and the last calls of `tool`. Put no mail content, name, address or folder name in it: describe the call, like \"saveDraft with draftId on an IMAP account\". In English.",
         inputSchema: {
           type: "object",
           properties: {
@@ -8722,6 +8779,7 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             expected: { type: "string", description: "Bug: what should have come back, 500 characters at most" },
             details: { type: "string", description: "Suggestion: what you needed and what the tool could return or accept; optional for a bug. 1500 characters at most" },
             tool: { type: "string", description: "Name of the tool concerned, if one" },
+            send: { type: "boolean", description: "true only after the user, shown the report in this conversation, said yes to sending it. Sent only if they allowed it in Options; a draft otherwise" },
           },
           required: ["kind", "summary"],
         },
@@ -8872,7 +8930,17 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
       }
     }
 
-    async function reportProblem(args) {
+    function reportDeliveryPref() {
+      try {
+        return problemReportDelivery(Services.prefs.getCharPref(PREF_REPORT_DELIVERY, "draft"));
+      } catch {
+        return "draft";
+      }
+    }
+
+    // mailer: { draft(mail), send(mail) }, each resolving to { success } or { error } (the compose code of the server).
+    async function reportProblem(args, mailer) {
+      if (args.send !== undefined && args.send !== null && typeof args.send !== "boolean") return { error: "send must be true or false" };
       // The bridge of this request: rememberBridge has just dated it, so it is the last one seen.
       const bridges = [...(globalThis.__cpMcpBridgesSeen?.values() ?? [])].sort((x, y) => y.lastSeenMs - x.lastSeenMs);
       const bridgeVersion = bridges[0]?.version;
@@ -8889,15 +8957,38 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
         calls: globalThis.__cpMcpToolCalls ??= new Map(),
       }, id, Date.now());
       if (built.error) return { error: built.error };
-      const added = addProblemReport(readProblemReports(), built.report);
+      const stored = readProblemReports();
+      const added = addProblemReport(stored, built.report);
       if (added.error) return { error: added.error };
+      const plan = problemReportMailPlan(reportDeliveryPref(), args.send === true, stored, Date.now());
+      let outcome = { mode: "list", reason: plan.reason };
+      if (plan.mode !== "list") {
+        let sendError = null;
+        try {
+          if (plan.mode === "send") {
+            const sent = await mailer.send(problemReportMail(built.report, true));
+            if (sent?.success) outcome = { mode: "sent", reason: null };
+            else sendError = String(sent?.error || "unknown error");
+          }
+          if (outcome.mode !== "sent") {
+            const draft = await mailer.draft(problemReportMail(built.report));
+            outcome = draft?.success
+              ? { mode: "draft", reason: sendError ? "sendFailed" : plan.reason, error: sendError, draft: { messageId: draft.messageId, folderPath: draft.folderPath } }
+              : { mode: "list", reason: "mailFailed", error: String(draft?.error || "unknown error") };
+          }
+        } catch (e) {
+          outcome = { mode: "list", reason: "mailFailed", error: String(e) };
+        }
+      }
+      if (outcome.mode !== "list") built.report.mail = { mode: outcome.mode, at: new Date().toISOString() };
       writeProblemReports(added.reports);
       return {
         saved: true,
-        sent: false,
+        sent: outcome.mode === "sent",
+        ...(outcome.draft?.messageId ? { draft: outcome.draft } : {}),
         waiting: added.reports.length,
         issueUrl: problemReportIssueUrl(built.report),
-        next: "Give the user issueUrl as a link, unchanged: it opens the report as a new GitHub issue that they read and submit themselves. It also waits in the add-on's Options page (Reports from assistants). Do not say it was sent.",
+        next: problemReportNext(outcome),
       };
     }
     // END PROBLEM REPORT STORE
@@ -17501,6 +17592,27 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
             }
             // END OWN ADDRESSES
 
+            // Sends a report to the project without a window, from the default identity. The block of skipReview
+            // does not apply: the user allowed this one message, to this one address, in the options page.
+            function sendProblemReportMail(mail) {
+              try {
+                const params = Cc["@mozilla.org/messengercompose/composeparams;1"].createInstance(Ci.nsIMsgComposeParams);
+                const fields = Cc["@mozilla.org/messengercompose/composefields;1"].createInstance(Ci.nsIMsgCompFields);
+                fields.to = mail.to;
+                fields.subject = mail.subject;
+                params.type = Ci.nsIMsgCompType.New;
+                params.composeFields = fields;
+                const identityResult = setComposeIdentity(params, null, null);
+                if (identityResult && identityResult.error) return Promise.resolve(identityResult);
+                const { useHtml } = resolveComposeFormat(params.identity, false, Ci.nsIMsgCompType.New);
+                fields.body = newMessageBody(mail.body, false, useHtml, params.identity);
+                return sendMessageDirectly(fields, params.identity, [], null, Ci.nsIMsgCompType.New,
+                  Ci.nsIMsgCompDeliverMode.Now, useHtml ? "text/html" : "text/plain");
+              } catch (e) {
+                return Promise.resolve({ error: e.toString() });
+              }
+            }
+
             /**
              * Saves a composed message to the identity's Drafts folder without
              * sending or opening a compose window. The destination folder is
@@ -20556,7 +20668,10 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
                 case "getAccountAccess":
                   return getAccountAccess();
                 case "reportProblem":
-                  return reportProblem(args);
+                  return reportProblem(args, {
+                    draft: (mail) => saveDraft(mail.to, mail.subject, mail.body, "", "", false),
+                    send: (mail) => sendProblemReportMail(mail),
+                  });
                 default:
                   throw new Error(`Unknown tool: ${name}`);
               }
@@ -20988,6 +21103,18 @@ var commonpostMcp = class extends ExtensionCommon.ExtensionAPI {
 
         getProblemReports: async function() {
           return problemReportsView(readProblemReports());
+        },
+
+        getReportDelivery: async function() {
+          return { reportDelivery: reportDeliveryPref() };
+        },
+
+        setReportDelivery: async function(reportDelivery) {
+          if (!PROBLEM_REPORT_DELIVERIES.includes(reportDelivery)) {
+            return { error: `reportDelivery must be one of ${PROBLEM_REPORT_DELIVERIES.join(", ")}` };
+          }
+          Services.prefs.setCharPref(PREF_REPORT_DELIVERY, reportDelivery);
+          return { success: true, reportDelivery };
         },
 
         deleteProblemReport: async function(id) {
